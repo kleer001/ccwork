@@ -5,7 +5,7 @@ Claude Code in zellij with persistent sessions and desktop notifications.
 ## What it does
 
 - **Persistent tabs** — one `ccwork` command attaches to (or creates) a named zellij session. Close the terminal, come back later, everything is still there.
-- **Desktop notifications** — when Claude finishes a task or needs your input, a popup appears. Works from any tab, even when you're not looking at the terminal.
+- **Desktop notifications** — when Claude finishes a task or needs your input, a popup appears. Only fires inside zellij tabs; silent when running `claude` outside a session.
 - **Auto-named tabs** — each tab automatically renames itself to the current directory.
 
 ## Setup
