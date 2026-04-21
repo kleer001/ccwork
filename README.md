@@ -41,16 +41,15 @@ Detach with `Ctrl+o` `d`. Run `ccwork` again later. Everything is still there.
 
 ## Why not the others?
 
-| Tool | What it promises | What it actually is |
-|---|---|---|
-| **ccwork** | persistent Claude sessions | a wrapper script and an alias |
-| [CCManager](https://github.com/kbwo/ccmanager) | "manages" 8+ agent types | a TUI app you have to learn |
-| [Agent of Empires](https://github.com/njbrake/agent-of-empires) | multi-agent orchestration | tmux + git worktrees + a web dashboard + Docker + mobile access |
-| [agent-session-manager](https://github.com/izll/agent-session-manager) | live session preview | Go + Bubble Tea + tmux, compiled binary required |
-| [Agent Deck](https://github.com/asheshgoplani/agent-deck) | "real-time agent monitoring" | another TUI you didn't ask for |
-| [Canopy](https://github.com/The-Banana-Standard/canopy) | workspace organization | a whole desktop app (Tauri) |
-
-If you need to monitor 12 agents across 3 clouds from a mobile dashboard, there's a tool for that. If you just want `claude` to still be there when you come back, use ccwork.
+| | **ccwork** | [CCManager](https://github.com/kbwo/ccmanager) | [Agent of Empires](https://github.com/njbrake/agent-of-empires) | [agent-session-manager](https://github.com/izll/agent-session-manager) | [Agent Deck](https://github.com/asheshgoplani/agent-deck) |
+|---|---|---|---|---|---|
+| **No build step** | ✅ bash | ⚠️ npm install | ❌ cargo build | ❌ go build | ❌ go build |
+| **Claude session resume works on install** | ✅ | ⚠️ manual config required | ❌ [open bug #343](https://github.com/njbrake/agent-of-empires/issues/343) | ✅ claimed | ✅ |
+| **tmux not required** | ✅ zellij | ✅ | ❌ required | ❌ required | ❌ required |
+| **No background daemon** | ✅ | ✅ | ✅ | ✅ | ❌ `notify-daemon` |
+| **Terminal intact after re-attach** | ✅ | ❌ [#293 ghost rows + blank viewport](https://github.com/kbwo/ccmanager/issues/293) | ✅ | ✅ | ❌ [#708 mouse input broken](https://github.com/asheshgoplani/agent-deck/issues/708) |
+| **Bad config causes visible error** | ✅ | ✅ | ❌ [#595 silently reverts to defaults](https://github.com/njbrake/agent-of-empires/issues/595) | ✅ | ✅ |
+| **Running tests won't destroy live sessions** | ✅ | ✅ | ✅ | ✅ | ❌ [#676 confirmed](https://github.com/asheshgoplani/agent-deck/issues/676) |
 
 ## Key bindings
 
