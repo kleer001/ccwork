@@ -41,15 +41,15 @@ Detach with `Ctrl+o` `d`. Run `ccwork` again later. Everything is still there.
 
 ## Why not the others?
 
-| | **ccwork** | [CCManager](https://github.com/kbwo/ccmanager) | [Agent of Empires](https://github.com/njbrake/agent-of-empires) | [agent-session-manager](https://github.com/izll/agent-session-manager) | [Agent Deck](https://github.com/asheshgoplani/agent-deck) |
+| **Feature** | **ccwork** | [CCManager](https://github.com/kbwo/ccmanager) | [Agent of Empires](https://github.com/njbrake/agent-of-empires) | [agent-session-manager](https://github.com/izll/agent-session-manager) | [Agent Deck](https://github.com/asheshgoplani/agent-deck) |
 |---|---|---|---|---|---|
-| **No build step** | ✅ bash | ⚠️ npm install | ❌ cargo build | ❌ go build | ❌ go build |
-| **Claude session resume works on install** | ✅ | ⚠️ manual config required | ❌ [open bug #343](https://github.com/njbrake/agent-of-empires/issues/343) | ✅ claimed | ✅ |
-| **tmux not required** | ✅ zellij | ✅ | ❌ required | ❌ required | ❌ required |
-| **No background daemon** | ✅ | ✅ | ✅ | ✅ | ❌ `notify-daemon` |
-| **Terminal intact after re-attach** | ✅ | ❌ [#293 ghost rows + blank viewport](https://github.com/kbwo/ccmanager/issues/293) | ✅ | ✅ | ❌ [#708 mouse input broken](https://github.com/asheshgoplani/agent-deck/issues/708) |
-| **Bad config causes visible error** | ✅ | ✅ | ❌ [#595 silently reverts to defaults](https://github.com/njbrake/agent-of-empires/issues/595) | ✅ | ✅ |
-| **Running tests won't destroy live sessions** | ✅ | ✅ | ✅ | ✅ | ❌ [#676 confirmed](https://github.com/asheshgoplani/agent-deck/issues/676) |
+| **Install method** | shell script | npm package | compiled binary | compiled binary | compiled binary |
+| **Keybinding hints visible in UI** | ✅ zellij overlay | ✅ TUI menus | ❌ | ❌ | ❌ |
+| **Desktop notifications** | ✅ built-in | ❌ | ❌ | ❌ | ✅ via daemon |
+| **Tab auto-named to current project** | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Conversation resumes on `claude`** | ✅ automatic | ✅ with config | ✅ with config | ✅ | ✅ |
+| **Supports multiple AI agents** | Claude Code | ✅ 8 types | ✅ 5 types | ✅ 5 types | ✅ 5 types |
+| **Web dashboard** | ❌ | ❌ | ✅ | ❌ | ❌ |
 
 ## Key bindings
 
