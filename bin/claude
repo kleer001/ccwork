@@ -4,9 +4,10 @@
 _self=$(readlink -f "${BASH_SOURCE[0]}")
 _real=$(type -ap claude 2>/dev/null | grep -Fxv "$_self" | head -1)
 [ -z "$_real" ] && { echo "ccwork: claude not found in PATH" >&2; exit 1; }
-_project_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(echo "$PWD" | sed 's|/|-|g')"
-if ls "$_project_dir"/*.jsonl 2>/dev/null | grep -q .; then
-    exec "$_real" --continue "$@"
-else
-    exec "$_real" "$@"
+if [ -n "$ZELLIJ" ]; then
+    _project_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(echo "$PWD" | sed 's|/|-|g')"
+    if ls "$_project_dir"/*.jsonl 2>/dev/null | grep -q .; then
+        exec "$_real" --continue "$@"
+    fi
 fi
+exec "$_real" "$@"
