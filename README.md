@@ -5,7 +5,7 @@ Claude Code in zellij — persistent sessions, desktop notifications, and automa
 ## What it does
 
 - **One command to get back in** — `ccwork` attaches to your session or creates it. Detach with `Ctrl+o` `d` and come back later; all your tabs are where you left them.
-- **Conversations resume automatically** — `claude` picks up the last conversation for the current project. Hint appears when one exists.
+- **Conversations resume automatically** — inside zellij, `claude` picks up the last conversation for the current project. Hint appears when one exists. Outside zellij it's a normal `claude`.
 - **Desktop notifications** — a popup appears when Claude finishes or needs input. Silent outside zellij.
 - **Auto-named tabs** — tabs rename to the current directory.
 

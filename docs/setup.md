@@ -43,7 +43,7 @@ Clone this repo, then prepend its `bin/` to your PATH in `~/.bashrc`:
 export PATH="/path/to/ccwork/bin:$PATH"
 ```
 
-The wrapper intercepts `claude`, renames the zellij tab to the current directory, and passes `--continue` so the last conversation resumes. It finds and delegates to your real `claude` binary automatically.
+The wrapper intercepts `claude` and delegates to your real `claude` binary automatically. Inside a zellij session it also renames the tab to the current directory and passes `--continue` so the last conversation resumes. Outside zellij it is a transparent pass-through.
 
 ---
 
