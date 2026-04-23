@@ -236,9 +236,9 @@ hooks = settings.setdefault("hooks", {})
 
 new_hooks = {
     "Stop": [{"matcher": "*", "hooks": [{"type": "command",
-        "command": "if [ -n \"$ZELLIJ\" ]; then zellij action rename-tab \"✓ $(basename \"${CLAUDE_PROJECT_DIR:-$PWD}\")\"; notify-send -u critical \"Claude [$(basename \"${CLAUDE_PROJECT_DIR:-$PWD}\")]\" \"Task done\"; fi"}]}],
+        "command": "if [ -n \"$ZELLIJ\" ]; then notify-send -u critical \"Claude [$(basename \"${CLAUDE_PROJECT_DIR:-$PWD}\")]\" \"Task done\"; fi"}]}],
     "Notification": [{"matcher": "*", "hooks": [{"type": "command",
-        "command": "if [ -n \"$ZELLIJ\" ]; then zellij action rename-tab \"● $(basename \"${CLAUDE_PROJECT_DIR:-$PWD}\")\"; notify-send -u critical \"Claude [$(basename \"${CLAUDE_PROJECT_DIR:-$PWD}\")]\" \"Needs your input\"; fi"}]}]
+        "command": "if [ -n \"$ZELLIJ\" ]; then notify-send -u critical \"Claude [$(basename \"${CLAUDE_PROJECT_DIR:-$PWD}\")]\" \"Needs your input\"; fi"}]}]
 }
 
 added = [e for e in new_hooks if e not in hooks]
