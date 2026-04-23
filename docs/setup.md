@@ -96,7 +96,7 @@ Merge into `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -n \"$ZELLIJ\" ]; then _f=/tmp/ccwork-spinner-${ZELLIJ_PANE_ID}.pid; [ -f $_f ] && { kill $(cat $_f) 2>/dev/null; rm -f $_f; }; zellij action rename-tab \"✓ $(basename \"${CLAUDE_PROJECT_DIR:-$PWD}\")\"; notify-send -u critical \"Claude [$(basename \"${CLAUDE_PROJECT_DIR:-$PWD}\")]\" \"Task done\"; fi"
+            "command": "if [ -n \"$ZELLIJ\" ]; then zellij action rename-tab \"✓ $(basename \"${CLAUDE_PROJECT_DIR:-$PWD}\")\"; notify-send -u critical \"Claude [$(basename \"${CLAUDE_PROJECT_DIR:-$PWD}\")]\" \"Task done\"; fi"
           }
         ]
       }
@@ -107,7 +107,7 @@ Merge into `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -n \"$ZELLIJ\" ]; then _f=/tmp/ccwork-spinner-${ZELLIJ_PANE_ID}.pid; [ -f $_f ] && { kill $(cat $_f) 2>/dev/null; rm -f $_f; }; zellij action rename-tab \"● $(basename \"${CLAUDE_PROJECT_DIR:-$PWD}\")\"; notify-send -u critical \"Claude [$(basename \"${CLAUDE_PROJECT_DIR:-$PWD}\")]\" \"Needs your input\"; fi"
+            "command": "if [ -n \"$ZELLIJ\" ]; then zellij action rename-tab \"● $(basename \"${CLAUDE_PROJECT_DIR:-$PWD}\")\"; notify-send -u critical \"Claude [$(basename \"${CLAUDE_PROJECT_DIR:-$PWD}\")]\" \"Needs your input\"; fi"
           }
         ]
       }
@@ -116,7 +116,7 @@ Merge into `~/.claude/settings.json`:
 }
 ```
 
-`-u critical` makes notifications persist until dismissed. The project name is pulled from `$CLAUDE_PROJECT_DIR` (set by Claude Code) with `$PWD` as fallback. While Claude is working the tab name shows an animated braille spinner; it switches to `✓` on completion or `●` when input is needed.
+`-u critical` makes notifications persist until dismissed. The project name is pulled from `$CLAUDE_PROJECT_DIR` (set by Claude Code) with `$PWD` as fallback. The tab switches to `✓` when Claude finishes and `●` when it needs input.
 
 ---
 
