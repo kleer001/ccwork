@@ -42,15 +42,14 @@ def test_round_trip(store_path: Path, tmp_path: Path) -> None:
     r2.mkdir()
     s = RepoStore(config_path=store_path)
     assert s.add(str(r1)) is True
-    assert s.add(str(r2), persist=True) is True
+    assert s.add(str(r2)) is True
     s.save()
 
     s2 = RepoStore(config_path=store_path)
     s2.load()
     assert len(s2.repos) == 2
     assert s2.repos[0].path == str(r1)
-    assert s2.repos[0].persist is False
-    assert s2.repos[1].persist is True
+    assert s2.repos[1].path == str(r2)
 
 
 def test_add_deduplicates_by_realpath(store_path: Path, tmp_path: Path) -> None:
@@ -133,7 +132,7 @@ def test_load_skips_malformed_repo_entries(store_path: Path) -> None:
         {"path": "/ok"},
         "not-an-object",
         {"no_path_key": True},
-        {"path": "/ok2", "persist": True},
+        {"path": "/ok2"},
     ]}))
     s = RepoStore(config_path=store_path)
     s.load()

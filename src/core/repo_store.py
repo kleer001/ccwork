@@ -5,12 +5,9 @@ On-disk format: `~/.config/ccwork/repos.json`
     {
       "version": 1,
       "repos": [
-        {"path": "/home/x/repo", "persist": false}
+        {"path": "/home/x/repo"}
       ]
     }
-
-`persist` controls whether the repo's terminal session is wrapped in tmux for
-reattachment across app restarts (MVP default: off).
 
 The store is a plain value object — it does not watch the file for external
 edits. Reload by constructing a new instance.
@@ -39,7 +36,6 @@ def default_config_path() -> Path:
 @dataclass
 class Repo:
     path: str
-    persist: bool = False
 
     @property
     def name(self) -> str:
@@ -87,7 +83,7 @@ class RepoStore:
         if not isinstance(repos_raw, list):
             raise ValueError(f"{self.config_path}: 'repos' must be a list")
         self.repos = [
-            Repo(path=str(r["path"]), persist=bool(r.get("persist", False)))
+            Repo(path=str(r["path"]))
             for r in repos_raw
             if isinstance(r, dict) and "path" in r
         ]
@@ -103,7 +99,7 @@ class RepoStore:
         tmp.write_text(json.dumps(payload, indent=2) + "\n")
         os.replace(tmp, self.config_path)
 
-    def add(self, path: str, persist: bool = False) -> bool:
+    def add(self, path: str) -> bool:
         """Add a repo. Returns True if added, False if already present.
 
         The path is normalized with `os.path.realpath` before comparison so
@@ -112,7 +108,7 @@ class RepoStore:
         resolved = os.path.realpath(path)
         if any(os.path.realpath(r.path) == resolved for r in self.repos):
             return False
-        self.repos.append(Repo(path=resolved, persist=persist))
+        self.repos.append(Repo(path=resolved))
         return True
 
     def remove(self, path: str) -> bool:
