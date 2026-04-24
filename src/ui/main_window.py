@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 
 from src.core.hook_server import HookServer
 from src.core.repo_store import Repo, RepoStore
-from src.core.settings import Settings
+from src.core.settings import Settings, load_settings
 from src.core.terminal_session import build_session
 from src.ui.alerts_panel import AlertEntry, AlertsPanel
 from src.ui.preferences_dialog import PreferencesDialog
@@ -208,6 +208,37 @@ class MainWindow(QMainWindow):
         # Re-spawn.
         self._ensure_terminal(repo)
 
+    # ── zoom ──
+
+    # Matches the Preferences dialog range so a zoomed value round-trips
+    # cleanly through Save without the spinbox clamping it silently.
+    _FONT_SIZE_MIN = 6
+    _FONT_SIZE_MAX = 48
+
+    def _on_zoom_requested(self, delta: int) -> None:
+        """Handle Ctrl+=/Ctrl+-/Ctrl+0/Ctrl+scroll from any TerminalHost.
+
+        +1/-1 nudge the current font size by one point and live-apply to
+        every running terminal. 0 reloads the on-disk setting so the user
+        can bail out of a zoom session. Transient zooms are NOT persisted —
+        quit+reopen restores the saved pref, matching konsole's default.
+        """
+        if delta == 0:
+            # Reset: re-read from disk. If the file is gone or unreadable,
+            # load_settings falls back to defaults, which is fine.
+            self._settings = load_settings()
+        else:
+            cur = int(self._settings.xterm.font_size)
+            new = max(self._FONT_SIZE_MIN, min(self._FONT_SIZE_MAX, cur + delta))
+            if new == cur:
+                return  # at the clamp — nothing to do
+            self._settings.xterm.font_size = new
+
+        for host in self._terminals.values():
+            host.apply_live_settings(self._settings.xterm)
+
+        self.statusBar().showMessage(f"Font size: {self._settings.xterm.font_size}pt", 1500)
+
     # ── helpers ──
 
     def _make_empty_placeholder(self) -> QWidget:
@@ -229,6 +260,7 @@ class MainWindow(QMainWindow):
         )
         host.failed.connect(lambda msg, r=repo: self._on_terminal_failed(r, msg))
         host.finished.connect(lambda code, r=repo: self._on_terminal_finished(r, code))
+        host.zoom_requested.connect(self._on_zoom_requested)
         self._terminals[repo.path] = host
         self._stack.addWidget(host)
         # Make the host current + visible BEFORE starting xterm so the parent

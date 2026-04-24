@@ -17,6 +17,27 @@ from typing import Optional
 Display = c_void_p
 Window = c_ulong
 Status = c_int
+KeyCode = ctypes.c_ubyte
+KeySym = c_ulong
+
+# X11 event masks / modifiers we need. Values are fixed by the X protocol.
+KeyPressMask = 1 << 0
+ButtonPressMask = 1 << 2
+ControlMask = 1 << 2
+ShiftMask = 1 << 0
+LockMask = 1 << 1       # CapsLock
+Mod2Mask = 1 << 4       # NumLock on most layouts
+GrabModeAsync = 1
+
+# Mouse buttons — wheel-up / wheel-down on X11.
+Button4 = 4
+Button5 = 5
+
+# Keysyms (from /usr/include/X11/keysymdef.h) for our zoom combos.
+XK_equal = 0x003d   # '='
+XK_plus = 0x002b    # '+' (only reachable without Shift on some layouts)
+XK_minus = 0x002d   # '-'
+XK_0 = 0x0030       # '0' (reset)
 
 
 _x11: Optional[ctypes.CDLL] = None
@@ -48,9 +69,31 @@ def _lib() -> ctypes.CDLL:
     lib.XResizeWindow.restype = c_int
     lib.XMoveResizeWindow.argtypes = [Display, Window, c_int, c_int, c_uint, c_uint]
     lib.XMoveResizeWindow.restype = c_int
+    lib.XKeysymToKeycode.argtypes = [Display, KeySym]
+    lib.XKeysymToKeycode.restype = KeyCode
+    lib.XGrabKey.argtypes = [
+        Display, c_int, c_uint, Window, c_int, c_int, c_int,
+    ]
+    lib.XGrabKey.restype = c_int
+    lib.XUngrabKey.argtypes = [Display, c_int, c_uint, Window]
+    lib.XUngrabKey.restype = c_int
+    lib.XGrabButton.argtypes = [
+        Display, c_uint, c_uint, Window, c_int, c_uint, c_int, c_int,
+        Window, c_ulong,
+    ]
+    lib.XGrabButton.restype = c_int
+    lib.XUngrabButton.argtypes = [Display, c_uint, c_uint, Window]
+    lib.XUngrabButton.restype = c_int
 
     _x11 = lib
     return lib
+
+
+# The four lock-key variants we must grab alongside ControlMask so the grab
+# still triggers when NumLock/CapsLock happen to be on. X11 reports lock
+# state as part of the modifier mask, so a naive ControlMask-only grab only
+# fires when both locks are off.
+_LOCK_VARIANTS = (0, LockMask, Mod2Mask, LockMask | Mod2Mask)
 
 
 class XDisplay:
@@ -117,3 +160,56 @@ class XDisplay:
         self._lib.XMoveResizeWindow(
             self._dpy, Window(win), c_int(int(x)), c_int(int(y)), c_uint(w), c_uint(h)
         )
+
+    def keysym_to_keycode(self, keysym: int) -> int:
+        return int(self._lib.XKeysymToKeycode(self._dpy, KeySym(keysym)))
+
+    def grab_key(self, win: int, keysym: int, modifiers: int) -> None:
+        """Passive-grab `keysym`+`modifiers` on `win`. Fans out the grab
+        across lock-key combinations so it fires with NumLock or CapsLock on.
+        The grab routes matching KeyPress events to the owner of `win`
+        regardless of which descendant currently holds focus — which is how
+        we catch zoom shortcuts while an xterm child has the keyboard.
+        """
+        code = self.keysym_to_keycode(keysym)
+        if code == 0:
+            return  # keysym unmapped on this server — silently skip
+        for extra in _LOCK_VARIANTS:
+            self._lib.XGrabKey(
+                self._dpy,
+                c_int(code),
+                c_uint(modifiers | extra),
+                Window(win),
+                c_int(1),                 # owner_events: True — other
+                                          # windows still see unrelated keys
+                c_int(GrabModeAsync),     # pointer mode
+                c_int(GrabModeAsync),     # keyboard mode
+            )
+
+    def ungrab_key(self, win: int, keysym: int, modifiers: int) -> None:
+        code = self.keysym_to_keycode(keysym)
+        if code == 0:
+            return
+        for extra in _LOCK_VARIANTS:
+            self._lib.XUngrabKey(self._dpy, c_int(code), c_uint(modifiers | extra), Window(win))
+
+    def grab_button(self, win: int, button: int, modifiers: int) -> None:
+        """Passive-grab `button`+`modifiers` on `win`. Same lock-variant fan
+        out as grab_key. Used for Ctrl+scroll-wheel."""
+        for extra in _LOCK_VARIANTS:
+            self._lib.XGrabButton(
+                self._dpy,
+                c_uint(button),
+                c_uint(modifiers | extra),
+                Window(win),
+                c_int(1),                    # owner_events
+                c_uint(ButtonPressMask),
+                c_int(GrabModeAsync),        # pointer mode
+                c_int(GrabModeAsync),        # keyboard mode
+                Window(0),                   # confine_to: None
+                c_ulong(0),                  # cursor: None
+            )
+
+    def ungrab_button(self, win: int, button: int, modifiers: int) -> None:
+        for extra in _LOCK_VARIANTS:
+            self._lib.XUngrabButton(self._dpy, c_uint(button), c_uint(modifiers | extra), Window(win))
