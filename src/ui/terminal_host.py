@@ -20,9 +20,11 @@ import signal
 from typing import Sequence
 
 from PySide6.QtCore import QProcess, QTimer, Signal, Qt
+from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QWidget
 
 from src.core.settings import XtermSettings
+from src.core import x11
 from src.core.x11 import XDisplay
 from src.core import xterm_osc
 
@@ -50,6 +52,13 @@ class TerminalHost(QWidget):
     embedded = Signal()
     finished = Signal(int)
     failed = Signal(str)
+    # +1 = zoom in, -1 = zoom out, 0 = reset to saved pref.
+    zoom_requested = Signal(int)
+    # +1 = next repo, -1 = previous repo (Ctrl+Tab / Ctrl+Shift+Tab).
+    cycle_repo_requested = Signal(int)
+    # User right-clicked inside the terminal — pass the global position so
+    # MainWindow can pop a context menu.
+    context_menu_requested = Signal(object)  # QPoint
 
     def __init__(
         self,
@@ -177,6 +186,7 @@ class TerminalHost(QWidget):
             # First child: the xterm that reparented into us.
             self._xterm_win = children[0]
             self._fit_child_to_self()
+            self._install_zoom_grabs()
             self.embedded.emit()
             return
 
@@ -222,7 +232,119 @@ class TerminalHost(QWidget):
             return ["<no pid>"]
         return xterm_osc.apply_live(pid, settings)
 
+    def is_running(self) -> bool:
+        """True iff the xterm QProcess is currently running."""
+        if self._process is None:
+            return False
+        return self._process.state() != QProcess.NotRunning
+
+    def paste_text(self, text: str) -> bool:
+        """Write `text` directly to the child shell's PTY — used by the
+        context menu's Paste action. Returns True on success."""
+        if not text or self._process is None:
+            return False
+        pid = int(self._process.processId())
+        if pid <= 0:
+            return False
+        pty = xterm_osc.find_child_pty(pid)
+        if pty is None:
+            return False
+        return xterm_osc.write_to_pty(pty, text)
+
+    # ── input shortcuts (Ctrl+zoom, Ctrl+Tab repo cycle, right-click menu) ──
+
+    # Keysyms we grab under plain Ctrl. Ctrl+= is the canonical "zoom in"
+    # because it doesn't require Shift on US layouts; Ctrl++ is also grabbed
+    # so Shift+Ctrl+= keeps working for plus-key muscle memory.
+    _ZOOM_KEYS = (
+        (x11.XK_equal, +1),
+        (x11.XK_plus,  +1),
+        (x11.XK_minus, -1),
+        (x11.XK_0,      0),  # reset
+    )
+    # Right mouse button we grab for the context menu. Button3 = plain
+    # right-click; xterm's own native Ctrl+Button3 menu is left alone.
+    _RMB = 3
+
+    def _install_zoom_grabs(self) -> None:
+        """Ask the X server to route our shortcut combos to us, not the
+        embedded xterm. Safe if xdisplay isn't open — silently skips."""
+        if self._xdisplay is None:
+            return
+        wid = int(self.winId())
+        for keysym, _ in self._ZOOM_KEYS:
+            self._xdisplay.grab_key(wid, keysym, x11.ControlMask)
+        self._xdisplay.grab_button(wid, x11.Button4, x11.ControlMask)
+        self._xdisplay.grab_button(wid, x11.Button5, x11.ControlMask)
+        # Ctrl+Tab and Ctrl+Shift+Tab for repo cycling.
+        self._xdisplay.grab_key(wid, x11.XK_Tab, x11.ControlMask)
+        self._xdisplay.grab_key(wid, x11.XK_Tab, x11.ControlMask | x11.ShiftMask)
+        # Plain right-click for the context menu.
+        self._xdisplay.grab_button(wid, self._RMB, 0)
+        self._xdisplay.flush()
+
+    def _uninstall_zoom_grabs(self) -> None:
+        if self._xdisplay is None:
+            return
+        wid = int(self.winId())
+        for keysym, _ in self._ZOOM_KEYS:
+            self._xdisplay.ungrab_key(wid, keysym, x11.ControlMask)
+        self._xdisplay.ungrab_button(wid, x11.Button4, x11.ControlMask)
+        self._xdisplay.ungrab_button(wid, x11.Button5, x11.ControlMask)
+        self._xdisplay.ungrab_key(wid, x11.XK_Tab, x11.ControlMask)
+        self._xdisplay.ungrab_key(wid, x11.XK_Tab, x11.ControlMask | x11.ShiftMask)
+        self._xdisplay.ungrab_button(wid, self._RMB, 0)
+        self._xdisplay.flush()
+
     # ── event handlers ──
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
+        # Only our grabbed combos reach Qt while xterm has focus; anything
+        # else slips through to super().
+        mods = event.modifiers()
+        if mods & Qt.ControlModifier:
+            key = event.key()
+            if key in (Qt.Key_Equal, Qt.Key_Plus):
+                self.zoom_requested.emit(+1)
+                event.accept()
+                return
+            if key == Qt.Key_Minus:
+                self.zoom_requested.emit(-1)
+                event.accept()
+                return
+            if key == Qt.Key_0:
+                self.zoom_requested.emit(0)
+                event.accept()
+                return
+            if key in (Qt.Key_Tab, Qt.Key_Backtab):
+                # Qt turns Ctrl+Shift+Tab into Key_Backtab (which drops the
+                # Shift modifier). Either form means "cycle backward".
+                delta = -1 if (key == Qt.Key_Backtab or mods & Qt.ShiftModifier) else +1
+                self.cycle_repo_requested.emit(delta)
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # type: ignore[override]
+        if event.modifiers() & Qt.ControlModifier:
+            dy = event.angleDelta().y()
+            if dy > 0:
+                self.zoom_requested.emit(+1)
+            elif dy < 0:
+                self.zoom_requested.emit(-1)
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        # Our Ctrl-less right-click grab routes plain Button3 to us — use
+        # it to surface a Qt context menu. The xterm native Ctrl+Button3
+        # options menu is untouched (we only grab plain right-click).
+        if event.button() == Qt.RightButton and not (event.modifiers() & Qt.ControlModifier):
+            self.context_menu_requested.emit(event.globalPosition().toPoint())
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)

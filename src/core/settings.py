@@ -73,14 +73,22 @@ class XtermSettings:
             args += ["+sb"]  # explicitly disable
         if self.jump_scroll:
             args += ["-j"]
-        # Bind mouse wheel to scrollback lines — not all xterm builds do
-        # this by default, so be explicit.
+        # Bind mouse wheel to scrollback, and Ctrl+Shift+C / Ctrl+Shift+V
+        # to clipboard copy/paste so Ctrl+C in the shell keeps sending
+        # SIGINT. Not all xterm builds bake these in, so be explicit.
         args += [
             "-xrm",
             "XTerm*VT100.translations: #override"
             " <Btn4Down>: scroll-back(3,line) \\n"
-            " <Btn5Down>: scroll-forw(3,line)",
+            " <Btn5Down>: scroll-forw(3,line) \\n"
+            " Ctrl Shift <Key>C: copy-selection(CLIPBOARD) \\n"
+            " Ctrl Shift <Key>V: insert-selection(CLIPBOARD)",
         ]
+        # Let OSC 50 resize/reface the font at runtime. xterm's default is
+        # false (a shared-tty hardening); we embed our own xterm per repo so
+        # the threat model is fine. Using the specific class path leaves
+        # extra_args free to override.
+        args += ["-xrm", "XTerm.vt100.allowFontOps: true"]
         args.extend(self.extra_args)
         return args
 

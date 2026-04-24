@@ -13,10 +13,12 @@ We deliver them by writing to the xterm's child-shell PTY slave
 consumes OSC codes instead of displaying them. This is the same channel
 the `xtermcontrol` utility uses; we just avoid the binary dependency.
 
-Settings that xterm reads only at startup (scrollback, scrollbar, faceSize
-in some builds, -xrm options) cannot be applied live — the caller must
-respawn the terminal. `apply_live()` returns the list of knobs it could
-NOT apply so callers can prompt the user.
+Settings that xterm reads only at startup (scrollback, scrollbar, -xrm
+options) cannot be applied live — the caller must respawn the terminal.
+`apply_live()` returns the list of knobs it could NOT apply so callers
+can prompt the user. font_size rides along with OSC 50 as a fontconfig
+`:size=N` suffix and DOES apply live, provided allowFontOps was enabled
+at spawn time (which we do by default).
 """
 
 from __future__ import annotations
@@ -106,9 +108,10 @@ def apply_live(xterm_pid: int, settings: XtermSettings) -> list[str]:
     parts.append(osc(10, settings.fg))   # foreground
     parts.append(osc(11, settings.bg))   # background
     parts.append(osc(12, settings.fg))   # cursor (mirror fg)
-    # Font face — OSC 50. Some xterm builds disable this via allowFontOps;
-    # if it's off, xterm quietly ignores the sequence.
-    parts.append(osc(50, settings.font_family))
+    # Font face + size — OSC 50 with a fontconfig pattern. xterm gates this
+    # on allowFontOps (default false), but we flip it on at spawn time (see
+    # XtermSettings.to_xterm_args), so the resize actually lands.
+    parts.append(osc(50, f"{settings.font_family}:size={settings.font_size}"))
 
     if not write_to_pty(pty, "".join(parts)):
         return [
@@ -117,11 +120,9 @@ def apply_live(xterm_pid: int, settings: XtermSettings) -> list[str]:
         ]
 
     # These require a full xterm restart:
-    # - font_size: OSC 50 carries only a face name, not a size; xterm's
-    #   face size is fixed at startup by -fs / faceSize resource.
     # - scrollback: saveLines resource is read once at startup.
     # - scrollbar: -sb/-rightbar can't be toggled via OSC.
     # - jump_scroll: -j is a startup flag.
     # - extra_args: by definition, startup-only.
-    unapplied.extend(["font_size", "scrollback", "scrollbar", "jump_scroll", "extra_args"])
+    unapplied.extend(["scrollback", "scrollbar", "jump_scroll", "extra_args"])
     return unapplied

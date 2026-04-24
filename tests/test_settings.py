@@ -46,6 +46,15 @@ def test_to_xterm_args_extras_appended_last() -> None:
     assert args[-2:] == extras
 
 
+def test_to_xterm_args_enables_allow_font_ops() -> None:
+    """OSC 50 font-change requires allowFontOps=true (xterm default is false),
+    so the live-apply path in the GUI is dead without this flag."""
+    args = S.XtermSettings().to_xterm_args()
+    # Scan every -xrm pair for the allowFontOps declaration.
+    xrm_values = [args[i + 1] for i, v in enumerate(args[:-1]) if v == "-xrm"]
+    assert any("allowFontOps" in v and "true" in v for v in xrm_values), xrm_values
+
+
 def test_load_missing_file_returns_defaults(tmp_path: Path) -> None:
     s = S.load_settings(tmp_path / "nope.json")
     assert s.xterm == S.XtermSettings()

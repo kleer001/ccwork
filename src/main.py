@@ -18,6 +18,7 @@ from src.core.hook_server import HookServer  # noqa: E402
 from src.core.repo_store import RepoStore  # noqa: E402
 from src.core.settings import load_settings, write_default_settings_file  # noqa: E402
 from src.ui.main_window import MainWindow  # noqa: E402
+from src.ui.qt_theme import apply_theme  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,6 +36,10 @@ def main(argv: list[str] | None = None) -> int:
     # Drop a defaults file on first run so users have something to edit.
     write_default_settings_file()
     settings = load_settings()
+
+    # Mirror the terminal palette onto the GUI chrome before any window is
+    # shown, so first paint is already themed.
+    apply_theme(app, settings)
 
     hooks = HookServer()
     hooks.start()

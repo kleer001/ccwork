@@ -47,15 +47,26 @@ def test_apply_live_returns_restart_only_fields_when_pty_reachable(tmp_path: Pat
     sink.touch()
     monkeypatch.setattr(xterm_osc, "find_child_pty", lambda pid: sink)
     unapplied = xterm_osc.apply_live(1234, XtermSettings(bg="#112233", fg="#aabbcc"))
-    # Colors + font face applied; startup-only knobs remain.
+    # Colors + font face + size applied; only startup-only knobs remain.
     assert "bg" not in unapplied
     assert "fg" not in unapplied
     assert "font_family" not in unapplied
-    assert "font_size" in unapplied
+    assert "font_size" not in unapplied
     assert "scrollback" in unapplied
     assert "scrollbar" in unapplied
-    # And the bytes actually landed.
+    # And the bytes actually landed — default font is Monospace at 10pt.
     data = sink.read_bytes().decode("utf-8")
     assert "\x1b]10;#aabbcc\x07" in data
     assert "\x1b]11;#112233\x07" in data
-    assert "\x1b]50;Monospace\x07" in data
+    assert "\x1b]50;Monospace:size=10\x07" in data
+
+
+def test_osc_50_carries_font_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """OSC 50 encodes size via a fontconfig `:size=N` suffix, so a font_size
+    change can reach a running xterm without respawn."""
+    sink = tmp_path / "sink"
+    sink.touch()
+    monkeypatch.setattr(xterm_osc, "find_child_pty", lambda pid: sink)
+    xterm_osc.apply_live(1234, XtermSettings(font_family="FiraCode", font_size=14))
+    data = sink.read_bytes().decode("utf-8")
+    assert "\x1b]50;FiraCode:size=14\x07" in data
