@@ -39,6 +39,17 @@ Clones into `~/ccwork` (override with `CCWORK_DEST=…`), creates a venv,
 installs dependencies, wires up PATH + hooks + a `.desktop` launcher, and
 is safe to re-run for upgrades.
 
+```bash
+# Preview without touching anything:
+bash -c "$(curl -sSfL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh)" -- --dry-run
+
+# Full flag list:
+bash -c "$(curl -sSfL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh)" -- --help
+
+# Clean uninstall:
+bash -c "$(curl -sSfL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh)" -- --uninstall
+```
+
 <details>
 <summary><b>Manual install</b></summary>
 
