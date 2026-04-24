@@ -157,13 +157,27 @@ class RepoDelegate(QStyledItemDelegate):
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         return QSize(option.rect.width(), self.ROW_HEIGHT)
 
+    # Left-edge stripe width for the active/selected row. Thin enough to
+    # not crowd the text, thick enough to read at a glance.
+    ACTIVE_STRIPE_W = 3
+
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         painter.save()
 
-        # Background: honor selection state.
-        if option.state & option.state.State_Selected:
+        # Background: honor selection state. The selected row IS the active
+        # repo because selecting switches the stack. Paint the Active palette
+        # unconditionally so xterm stealing focus doesn't dim the highlight.
+        selected = bool(option.state & option.state.State_Selected)
+        if selected:
             painter.fillRect(option.rect, option.palette.highlight())
             text_color = option.palette.highlightedText().color()
+            # Thin accent stripe on the left edge for extra glance-ability.
+            # Uses highlightedText for contrast against the highlight bg.
+            stripe_rect = QRect(
+                option.rect.left(), option.rect.top(),
+                self.ACTIVE_STRIPE_W, option.rect.height(),
+            )
+            painter.fillRect(stripe_rect, option.palette.highlightedText())
         else:
             painter.fillRect(option.rect, option.palette.base())
             text_color = option.palette.text().color()

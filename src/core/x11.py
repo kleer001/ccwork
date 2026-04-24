@@ -38,6 +38,7 @@ XK_equal = 0x003d   # '='
 XK_plus = 0x002b    # '+' (only reachable without Shift on some layouts)
 XK_minus = 0x002d   # '-'
 XK_0 = 0x0030       # '0' (reset)
+XK_Tab = 0xff09     # Tab (for Ctrl+Tab repo cycling)
 
 
 _x11: Optional[ctypes.CDLL] = None

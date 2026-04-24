@@ -58,6 +58,10 @@ class _RecordingHost:
         # Called by MainWindow.closeEvent during test teardown.
         pass
 
+    def is_running(self) -> bool:
+        # Test stand-in: never "running" so closeEvent doesn't prompt.
+        return False
+
 
 def test_zoom_in_increments_font_size(main_window) -> None:
     host = _RecordingHost()

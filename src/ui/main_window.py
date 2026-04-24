@@ -114,6 +114,7 @@ class MainWindow(QMainWindow):
         self._sidebar.repo_added.connect(self._on_repo_added)
         self._sidebar.reload_requested.connect(self._reload_terminal)
         self._sidebar.repo_removed.connect(self._on_repo_removed)
+        self._alerts.repo_requested.connect(self._jump_to_repo_path)
         self._hook_server.event_received.connect(self._on_hook_event)
 
     # ── menu ──
@@ -239,6 +240,61 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage(f"Font size: {self._settings.xterm.font_size}pt", 1500)
 
+    # ── repo cycling (Ctrl+Tab / Ctrl+Shift+Tab) ──
+
+    def _on_cycle_repo_requested(self, delta: int) -> None:
+        """Move the sidebar selection by `delta` (wrapping). Empty sidebar
+        or delta=0 is a no-op."""
+        model = self._sidebar.model
+        n = model.rowCount()
+        if n <= 1 or delta == 0:
+            return
+        cur = self._current_repo_path()
+        cur_row = model.index_of(cur) if cur else -1
+        next_row = (cur_row + delta) % n
+        repo = model.repo_at(next_row)
+        if repo is not None:
+            self._sidebar.select_path(repo.path)
+
+    # ── terminal context menu ──
+
+    def _on_terminal_context_menu(self, repo: Repo, global_pos) -> None:
+        """Right-click-in-terminal menu: Paste, Reload, Prefs, plus a
+        disabled hint row pointing at Ctrl+Shift+C for Copy (xterm owns the
+        selection so only it can write it to the clipboard)."""
+        from PySide6.QtGui import QAction
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+
+        paste_act = QAction("Paste", menu)
+        paste_act.setToolTip("Send clipboard text to the terminal (Ctrl+Shift+V)")
+        paste_act.triggered.connect(lambda _=False, r=repo: self._paste_clipboard_to(r))
+        menu.addAction(paste_act)
+
+        copy_hint = QAction("Copy selection   Ctrl+Shift+C", menu)
+        copy_hint.setEnabled(False)
+        menu.addAction(copy_hint)
+
+        menu.addSeparator()
+
+        reload_act = QAction("Reload terminal", menu)
+        reload_act.triggered.connect(lambda _=False, r=repo: self._sidebar._confirm_reload(r))
+        menu.addAction(reload_act)
+
+        prefs_act = QAction("Preferences…", menu)
+        prefs_act.triggered.connect(self._open_preferences)
+        menu.addAction(prefs_act)
+
+        menu.exec(global_pos)
+
+    def _paste_clipboard_to(self, repo: Repo) -> None:
+        from PySide6.QtWidgets import QApplication
+        host = self._terminals.get(repo.path)
+        if host is None:
+            return
+        host.paste_text(QApplication.clipboard().text())
+
     # ── helpers ──
 
     def _make_empty_placeholder(self) -> QWidget:
@@ -261,6 +317,10 @@ class MainWindow(QMainWindow):
         host.failed.connect(lambda msg, r=repo: self._on_terminal_failed(r, msg))
         host.finished.connect(lambda code, r=repo: self._on_terminal_finished(r, code))
         host.zoom_requested.connect(self._on_zoom_requested)
+        host.cycle_repo_requested.connect(self._on_cycle_repo_requested)
+        host.context_menu_requested.connect(
+            lambda pos, r=repo: self._on_terminal_context_menu(r, pos)
+        )
         self._terminals[repo.path] = host
         self._stack.addWidget(host)
         # Make the host current + visible BEFORE starting xterm so the parent
@@ -287,6 +347,7 @@ class MainWindow(QMainWindow):
             repo_name=repo.name,
             message=repo.path,
             ts=time.time(),
+            cwd=repo.path,
         ))
 
     def _on_terminal_failed(self, repo: Repo, msg: str) -> None:
@@ -318,13 +379,17 @@ class MainWindow(QMainWindow):
                     repo_name=os.path.basename(str(cwd).rstrip("/")) or str(cwd),
                     message=str(cwd),
                     ts=ts,
+                    cwd=str(cwd),
                 ))
             return
 
         if event in ("Stop", "Notification"):
             repo_name = os.path.basename(str(cwd).rstrip("/")) if cwd else "?"
             msg = _short_message(event, payload)
-            self._alerts.add_alert(AlertEntry(event=event, repo_name=repo_name, message=msg, ts=ts))
+            self._alerts.add_alert(AlertEntry(
+                event=event, repo_name=repo_name, message=msg, ts=ts,
+                cwd=str(cwd) if cwd else None,
+            ))
             # Bump unread for the matching repo, if we know it and it's not
             # the one the user is currently looking at.
             if cwd:
@@ -341,9 +406,32 @@ class MainWindow(QMainWindow):
                 return path
         return None
 
+    def _jump_to_repo_path(self, path: str) -> None:
+        """Select `path` in the sidebar (if known) — the sidebar's
+        currentChanged signal drives terminal switching."""
+        if self._sidebar.model.index_of(path) >= 0:
+            self._sidebar.select_path(path)
+
     # ── lifecycle ──
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        running = [p for p, h in self._terminals.items() if h.is_running()]
+        if running:
+            names = ", ".join(os.path.basename(p.rstrip("/")) or p for p in running)
+            ans = QMessageBox.question(
+                self,
+                "Quit ccwork?",
+                f"{len(running)} terminal(s) still running: {names}.\n\n"
+                "Quitting kills those shells and any active Claude session. "
+                "The conversation transcripts are preserved — Claude will "
+                "resume where it left off next launch — but any in-flight "
+                "response is lost.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if ans != QMessageBox.Yes:
+                event.ignore()
+                return
         for host in list(self._terminals.values()):
             host.stop()
         self._terminals.clear()
