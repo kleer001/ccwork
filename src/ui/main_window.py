@@ -69,6 +69,10 @@ class MainWindow(QMainWindow):
         self._settings = settings if settings is not None else Settings()
         # One TerminalHost per repo path; created lazily on first selection.
         self._terminals: dict[str, TerminalHost] = {}
+        # Repos whose Claude session is mid-turn (UserPromptSubmit fired,
+        # Stop/Notification hasn't yet). Drives the quit-confirm prompt so we
+        # only nag when there's actual in-flight work to lose.
+        self._working: set[str] = set()
 
         # ── top strip: centered repo · branch + right-side icon cluster ──
         self._title = TitleLabel(self)
@@ -214,6 +218,7 @@ class MainWindow(QMainWindow):
 
     def _on_repo_removed(self, path: str) -> None:
         """A repo was removed from the sidebar — also tear down its terminal."""
+        self._working.discard(path)
         host = self._terminals.pop(path, None)
         if host is not None:
             was_current = self._stack.currentWidget() is host
@@ -400,6 +405,7 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, f"xterm failed for {repo.name}", msg)
 
     def _on_terminal_finished(self, repo: Repo, code: int) -> None:
+        self._working.discard(repo.path)
         host = self._terminals.pop(repo.path, None)
         was_current = host is not None and self._stack.currentWidget() is host
         if host is not None:
@@ -416,6 +422,19 @@ class MainWindow(QMainWindow):
         payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else {}
         cwd = obj.get("cwd") or (payload.get("cwd") if isinstance(payload, dict) else None)
         ts = float(obj.get("ts") or time.time())
+
+        # Track Claude's mid-turn state. UserPromptSubmit means the user
+        # just sent a prompt; Stop/Notification mean Claude is done or
+        # waiting for input. Drives both the close-confirmation prompt and
+        # the per-repo status badge in the sidebar.
+        if cwd:
+            if event == "UserPromptSubmit":
+                self._working.add(str(cwd))
+                # User just engaged this repo — clear any stale status dot.
+                self._sidebar.clear_status(str(cwd))
+                return  # nothing to surface in the alerts panel
+            if event in ("Stop", "Notification"):
+                self._working.discard(str(cwd))
 
         if event == "RepoAdded" and cwd:
             if self._sidebar.model.add_repo(cwd):
@@ -435,14 +454,13 @@ class MainWindow(QMainWindow):
                 event=event, repo_name=repo_name, message=msg, ts=ts,
                 cwd=str(cwd) if cwd else None,
             ))
-            # Bump unread for the matching repo, if we know it and it's not
-            # the one the user is currently looking at.
-            if cwd:
-                row = self._sidebar.model.index_of(str(cwd))
-                if row >= 0:
-                    repo = self._sidebar.model.repo_at(row)
-                    if repo is not None and self._current_repo_path() != repo.path:
-                        self._sidebar.bump_unread(repo.path)
+            # Status dot on the sidebar — fires for every repo, including
+            # the active one. Cleared on next UserPromptSubmit or when the
+            # user re-clicks the row.
+            if cwd and self._sidebar.model.index_of(str(cwd)) >= 0:
+                from src.ui.repo_sidebar import STATUS_ATTENTION, STATUS_DONE
+                status = STATUS_ATTENTION if event == "Notification" else STATUS_DONE
+                self._sidebar.set_status(str(cwd), status)
 
     def _current_repo_path(self) -> str | None:
         w = self._stack.currentWidget()
@@ -460,17 +478,20 @@ class MainWindow(QMainWindow):
     # ── lifecycle ──
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
-        running = [p for p, h in self._terminals.items() if h.is_running()]
-        if running:
-            names = ", ".join(os.path.basename(p.rstrip("/")) or p for p in running)
+        # Only nag when Claude is mid-turn somewhere — an idle shell sitting
+        # at a prompt is fine to kill silently. Working state is tracked via
+        # UserPromptSubmit / Stop / Notification hooks.
+        working = [p for p in self._working if p in self._terminals
+                   and self._terminals[p].is_running()]
+        if working:
+            names = ", ".join(os.path.basename(p.rstrip("/")) or p for p in working)
             ans = QMessageBox.question(
                 self,
                 "Quit ccwork?",
-                f"{len(running)} terminal(s) still running: {names}.\n\n"
-                "Quitting kills those shells and any active Claude session. "
-                "The conversation transcripts are preserved — Claude will "
-                "resume where it left off next launch — but any in-flight "
-                "response is lost.",
+                f"Claude is working in {len(working)} repo(s): {names}.\n\n"
+                "Quitting kills those sessions mid-response. The conversation "
+                "transcripts are preserved — Claude will resume where it left "
+                "off next launch — but any in-flight response is lost.",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )

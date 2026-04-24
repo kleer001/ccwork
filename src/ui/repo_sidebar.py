@@ -32,10 +32,15 @@ from src.core.repo_store import Repo, RepoStore
 
 
 # Custom roles — keep the model backed by a single Repo per row plus branch
-# + unread. The view's delegate reads these directly.
+# + status. The view's delegate reads these directly. STATUS is one of:
+# "" (no badge), "done" (Claude finished a turn), "attention" (Claude needs
+# input). Color-coded by the delegate.
 ROLE_REPO   = Qt.UserRole + 1
 ROLE_BRANCH = Qt.UserRole + 2
-ROLE_UNREAD = Qt.UserRole + 3
+ROLE_STATUS = Qt.UserRole + 3
+
+STATUS_DONE      = "done"
+STATUS_ATTENTION = "attention"
 
 
 class RepoListModel(QAbstractListModel):
@@ -45,7 +50,7 @@ class RepoListModel(QAbstractListModel):
         super().__init__(parent)
         self._store = store
         self._branches: dict[str, str | None] = {}
-        self._unread: dict[str, int] = {}
+        self._status: dict[str, str] = {}
 
     # ── Qt model API ──
 
@@ -64,8 +69,8 @@ class RepoListModel(QAbstractListModel):
             return repo
         if role == ROLE_BRANCH:
             return self._branches.get(repo.path)
-        if role == ROLE_UNREAD:
-            return self._unread.get(repo.path, 0)
+        if role == ROLE_STATUS:
+            return self._status.get(repo.path, "")
         if role == Qt.ToolTipRole:
             return repo.path
         return None
@@ -97,18 +102,19 @@ class RepoListModel(QAbstractListModel):
             bot = self.index(len(self._store.repos) - 1)
             self.dataChanged.emit(top, bot, [ROLE_BRANCH])
 
-    def set_unread(self, path: str, value: int) -> None:
-        self._unread[path] = max(0, value)
+    def set_status(self, path: str, status: str) -> None:
+        """Set the per-repo status badge ("done", "attention", or "" to clear)."""
+        if status:
+            self._status[path] = status
+        else:
+            self._status.pop(path, None)
         row = self.index_of(path)
         if row >= 0:
             idx = self.index(row)
-            self.dataChanged.emit(idx, idx, [ROLE_UNREAD])
+            self.dataChanged.emit(idx, idx, [ROLE_STATUS])
 
-    def bump_unread(self, path: str) -> None:
-        self.set_unread(path, self._unread.get(path, 0) + 1)
-
-    def clear_unread(self, path: str) -> None:
-        self.set_unread(path, 0)
+    def clear_status(self, path: str) -> None:
+        self.set_status(path, "")
 
     # ── add/remove piped from the store ──
 
@@ -141,7 +147,7 @@ class RepoListModel(QAbstractListModel):
         self._store.remove(path)
         self.endRemoveRows()
         self._branches.pop(path, None)
-        self._unread.pop(path, None)
+        self._status.pop(path, None)
         self._store.save()
         return True
 
@@ -151,7 +157,11 @@ class RepoDelegate(QStyledItemDelegate):
 
     ROW_HEIGHT = 52
     PADDING_X = 10
-    BADGE_COLOR = QColor(220, 80, 80)
+    # Solarized-ish: red = needs attention (urgent), green = done (calmer).
+    STATUS_COLORS = {
+        STATUS_ATTENTION: QColor(220, 50, 47),   # solarized red
+        STATUS_DONE:      QColor(133, 153, 0),   # solarized green
+    }
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         return QSize(option.rect.width(), self.ROW_HEIGHT)
@@ -183,7 +193,7 @@ class RepoDelegate(QStyledItemDelegate):
 
         repo: Repo = index.data(ROLE_REPO)
         branch: str | None = index.data(ROLE_BRANCH)
-        unread: int = index.data(ROLE_UNREAD) or 0
+        status: str = index.data(ROLE_STATUS) or ""
 
         rect = option.rect.adjusted(self.PADDING_X, 4, -self.PADDING_X, -4)
 
@@ -204,10 +214,10 @@ class RepoDelegate(QStyledItemDelegate):
         sub_rect = QRect(rect.left(), rect.top() + rect.height() // 2, rect.width(), rect.height() // 2)
         painter.drawText(sub_rect, Qt.AlignLeft | Qt.AlignVCenter, sub_text)
 
-        # Unread dot. Only one alert per repo is meaningful (a Notification
-        # supersedes any prior one), so render presence/absence as a plain
-        # filled circle — no count, no text.
-        if unread > 0:
+        # Status dot — color-coded: red for "needs attention", green for
+        # "done". One state per repo (each event supersedes the previous).
+        color = self.STATUS_COLORS.get(status)
+        if color is not None:
             dot_d = 10
             dot_rect = QRect(
                 rect.right() - dot_d,
@@ -216,7 +226,7 @@ class RepoDelegate(QStyledItemDelegate):
                 dot_d,
             )
             painter.setPen(Qt.NoPen)
-            painter.setBrush(self.BADGE_COLOR)
+            painter.setBrush(color)
             painter.setRenderHint(QPainter.Antialiasing, True)
             painter.drawEllipse(dot_rect)
 
@@ -275,18 +285,18 @@ class RepoSidebar(QWidget):
     def refresh_branches(self) -> None:
         self._model.refresh_branches()
 
-    def bump_unread(self, path: str) -> None:
-        self._model.bump_unread(path)
+    def set_status(self, path: str, status: str) -> None:
+        self._model.set_status(path, status)
 
-    def clear_unread(self, path: str) -> None:
-        self._model.clear_unread(path)
+    def clear_status(self, path: str) -> None:
+        self._model.clear_status(path)
 
     # ── signals ──
 
     def _on_current_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
         repo = self._model.repo_at(current.row()) if current.isValid() else None
         if repo is not None:
-            self._model.clear_unread(repo.path)
+            self._model.clear_status(repo.path)
             self.repo_selected.emit(repo)
 
     def _on_add_clicked(self) -> None:

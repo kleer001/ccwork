@@ -249,11 +249,11 @@ fi
 # ── 3. Claude Code hooks ──────────────────────────────────────────────────────
 
 section "3/4  Claude Code hooks — $CLAUDE_SETTINGS"
-info "Adds Stop and Notification hooks that pipe the payload to ccwork-hook-sink"
+info "Adds Stop, Notification, UserPromptSubmit hooks that pipe the payload to ccwork-hook-sink"
 info "Appends to existing hook lists — does not overwrite user hooks"
 
 if $DRY_RUN; then
-    dryrun "Would merge Stop and Notification hooks into $CLAUDE_SETTINGS"
+    dryrun "Would merge Stop, Notification, UserPromptSubmit hooks into $CLAUDE_SETTINGS"
 else
     hooks_result=$(python3 - "$CLAUDE_SETTINGS" "$HOOK_SINK" "$HOOK_MARKER" << 'PYEOF'
 import json, sys, os
@@ -294,8 +294,9 @@ def cmd(event: str) -> str:
     return f"CCWORK_EVENT={event} {sink}"
 
 new_hooks = {
-    "Stop":         [{"matcher": "*", "hooks": [{"type": "command", "command": cmd("Stop")}]}],
-    "Notification": [{"matcher": "*", "hooks": [{"type": "command", "command": cmd("Notification")}]}],
+    "Stop":              [{"matcher": "*", "hooks": [{"type": "command", "command": cmd("Stop")}]}],
+    "Notification":      [{"matcher": "*", "hooks": [{"type": "command", "command": cmd("Notification")}]}],
+    "UserPromptSubmit":  [{"matcher": "*", "hooks": [{"type": "command", "command": cmd("UserPromptSubmit")}]}],
 }
 
 for event, hook_list in new_hooks.items():
@@ -309,8 +310,8 @@ print("replaced" if removed_any else "added")
 PYEOF
 )
     case "$hooks_result" in
-        replaced) ok "Replaced stale hooks and installed Stop/Notification" ;;
-        added)    ok "Installed Stop and Notification hooks" ;;
+        replaced) ok "Replaced stale hooks and installed Stop/Notification/UserPromptSubmit" ;;
+        added)    ok "Installed Stop, Notification, UserPromptSubmit hooks" ;;
         *)        ok "Updated $CLAUDE_SETTINGS ($hooks_result)" ;;
     esac
 fi
