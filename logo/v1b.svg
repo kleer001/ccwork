@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 76">
+  <!-- v1b: full dark badge, >>> left panel, divider, ccwork right panel -->
+  <rect x="0" y="0" width="380" height="76" rx="20" fill="#1a1a1a"/>
+
+  <text x="16" y="50" font-family="'Courier New',Courier,monospace"
+        font-size="44" font-weight="bold" fill="#666666">&gt;</text>
+  <text x="43" y="50" font-family="'Courier New',Courier,monospace"
+        font-size="44" font-weight="bold" fill="#e07820">&gt;</text>
+  <text x="70" y="50" font-family="'Courier New',Courier,monospace"
+        font-size="44" font-weight="bold" fill="#c9a84c">&gt;</text>
+
+  <line x1="104" y1="14" x2="104" y2="62"
+        stroke="#888888" stroke-width="1.5" opacity="0.5"/>
+
+  <text x="242" y="50" text-anchor="middle"
+        font-family="'Courier New',Courier,monospace"
+        font-size="34" font-weight="bold" fill="#f0ede6">ccwork</text>
+</svg>

@@ -1,16 +1,62 @@
 #!/usr/bin/env bash
-# ccwork wrapper: renames the zellij tab and resumes the last conversation.
-# Note: zellij action rename-tab targets the focused tab, not the calling pane's tab,
-# so renaming is only done synchronously (at startup and in hooks) — never from a
-# background process — to avoid renaming whichever tab the user has open.
-[ -n "$ZELLIJ" ] && zellij action rename-tab "$(basename "$PWD")"
+# ccwork wrapper for the `claude` CLI.
+#
+# Responsibilities (post-GUI retool):
+#   1. Resume the last conversation for the current project directory.
+#      If a .jsonl transcript exists under Claude Code's project dir,
+#      delegate to `claude --continue "$@"` instead of `claude "$@"`.
+#   2. When invoked from inside the ccwork GUI (CCWORK_GUI=1), and the
+#      current working directory is a git root we have not yet registered,
+#      ping the ccwork socket so the GUI can auto-add the repo.
+#
+# No tmux / zellij / spinner / notification logic remains here. That moved
+# to the Qt app and the ccwork-hook-sink script.
+
+set -u
+
+# Locate the real claude binary. $PATH contains our bin/ first; skip ourselves.
 _self=$(readlink -f "${BASH_SOURCE[0]}")
-_real=$(type -ap claude 2>/dev/null | grep -Fxv "$_self" | head -1)
-[ -z "$_real" ] && { echo "ccwork: claude not found in PATH" >&2; exit 1; }
-if [ -n "$ZELLIJ" ]; then
-    _project_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(echo "$PWD" | sed 's|/|-|g')"
-    if ls "$_project_dir"/*.jsonl 2>/dev/null | grep -q .; then
-        exec "$_real" --continue "$@"
+_real=$(type -ap claude 2>/dev/null | while read -r p; do
+    [ "$(readlink -f "$p")" != "$_self" ] && { printf '%s\n' "$p"; break; }
+done)
+if [ -z "${_real:-}" ]; then
+    printf 'ccwork: no real `claude` found on PATH (only this wrapper)\n' >&2
+    exit 1
+fi
+
+# ── Optional: register this repo with the GUI ─────────────────────────────
+# Only fires from inside the GUI (CCWORK_GUI=1). Silent, best-effort.
+if [ "${CCWORK_GUI:-0}" = "1" ] && command -v git >/dev/null 2>&1; then
+    _top=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    if [ -n "${_top:-}" ] && [ "$(readlink -f "$PWD")" = "$(readlink -f "$_top")" ]; then
+        _sock_dir="${XDG_RUNTIME_DIR:-$HOME/.cache}/ccwork"
+        _sock="$_sock_dir/ccwork.sock"
+        if [ -S "$_sock" ]; then
+            # JSON-escape PWD inline: backslash, dquote, and common C0 controls.
+            _cwd_esc=$PWD
+            _cwd_esc=${_cwd_esc//\\/\\\\}
+            _cwd_esc=${_cwd_esc//\"/\\\"}
+            _cwd_esc=${_cwd_esc//$'\n'/\\n}
+            _cwd_esc=${_cwd_esc//$'\r'/\\r}
+            _cwd_esc=${_cwd_esc//$'\t'/\\t}
+            _ts=$(date +%s)
+            _line="{\"event\":\"RepoAdded\",\"cwd\":\"$_cwd_esc\",\"ts\":$_ts}"
+            if command -v socat >/dev/null 2>&1; then
+                printf '%s\n' "$_line" | timeout 1 socat - "UNIX-CONNECT:$_sock" >/dev/null 2>&1 || true
+            elif command -v nc >/dev/null 2>&1; then
+                printf '%s\n' "$_line" | timeout 1 nc -UN "$_sock" >/dev/null 2>&1 \
+                    || printf '%s\n' "$_line" | timeout 1 nc -U "$_sock" >/dev/null 2>&1 \
+                    || true
+            fi
+        fi
     fi
 fi
+
+# ── Resume the last conversation if a transcript exists ───────────────────
+# Claude Code slugs a project path by replacing /, _, . with -.
+_project_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf '%s' "$PWD" | sed 's|[/_.]|-|g')"
+if compgen -G "$_project_dir/*.jsonl" >/dev/null; then
+    exec "$_real" --continue "$@"
+fi
+
 exec "$_real" "$@"

@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# ccwork-hook-sink — Claude Code Stop/Notification hook → ccwork GUI.
+#
+# Reads the hook payload from stdin, wraps it as
+#   {"event":"$CCWORK_EVENT","cwd":"$PWD","ts":<epoch>,"payload":<stdin>}
+# and writes one newline-terminated line to the ccwork Unix socket.
+#
+# The event type is passed through $CCWORK_EVENT (set via the hooks config).
+# Defaults to "Unknown" so a misconfigured hook still logs something useful.
+#
+# The GUI may not be running — writing silently fails in that case (by
+# design: hooks must never break the user's claude session). socat exits
+# non-zero but stdin of the hook is already drained, so Claude Code moves on.
+
+set -u
+
+_sock_dir="${XDG_RUNTIME_DIR:-$HOME/.cache}/ccwork"
+_sock="$_sock_dir/ccwork.sock"
+_event="${CCWORK_EVENT:-Unknown}"
+_ts=$(date +%s)
+_cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
+
+# Drain stdin. Claude Code provides a small JSON object per hook call.
+_payload=$(cat)
+# Default to null if caller gave us nothing; keeps the line valid JSON.
+[ -z "$_payload" ] && _payload="null"
+# Strip a single trailing newline from the payload (command substitution
+# already does this, but be explicit). Any embedded newlines inside a JSON
+# string are already escaped by the producer (Claude Code) as \n, so
+# $_payload is safe to embed as-is.
+_payload=${_payload%$'\n'}
+
+# Escape strings for JSON in bash: handle \, ", and the C0 controls that
+# can legitimately appear in a filesystem path (newline, CR, tab). Anything
+# else below 0x20 is extremely rare; if a path contains it, the server will
+# drop the line as malformed JSON (acceptable degradation).
+_json_escape() {
+    local s=$1
+    s=${s//\\/\\\\}          # \  → \\
+    s=${s//\"/\\\"}          # "  → \"
+    s=${s//$'\n'/\\n}        # LF → \n
+    s=${s//$'\r'/\\r}        # CR → \r
+    s=${s//$'\t'/\\t}        # TAB → \t
+    printf '%s' "$s"
+}
+_cwd_esc=$(_json_escape "$_cwd")
+_event_esc=$(_json_escape "$_event")
+
+_line="{\"event\":\"$_event_esc\",\"cwd\":\"$_cwd_esc\",\"ts\":$_ts,\"payload\":$_payload}"
+
+# Best-effort send. Short timeout so a dead socket doesn't stall Claude Code.
+if command -v socat >/dev/null 2>&1; then
+    printf '%s\n' "$_line" | timeout 1 socat - "UNIX-CONNECT:$_sock" >/dev/null 2>&1 || true
+elif command -v nc >/dev/null 2>&1; then
+    # nc -UN: UNIX + don't wait for server close.
+    printf '%s\n' "$_line" | timeout 1 nc -UN "$_sock" >/dev/null 2>&1 \
+        || printf '%s\n' "$_line" | timeout 1 nc -U "$_sock" >/dev/null 2>&1 \
+        || true
+fi
+
+exit 0

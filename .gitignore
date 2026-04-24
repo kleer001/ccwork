@@ -205,3 +205,7 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ccwork — launcher is generated per-machine by install.sh with the
+# absolute repo path baked in; never commit it.
+bin/ccwork

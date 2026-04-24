@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 310 90">
+  <!-- v4a: two circular-arrow Cs as "cc", gradient "work" text -->
+  <!--
+    C shape: arc from lower-right to upper-right, clockwise (SVG), large arc.
+    Center (cx,cy), radius r=26. r*sin45=r*cos45=18.38≈18.4
+    Start: (cx+18.4, cy+18.4)  End: (cx+18.4, cy-18.4)
+    Path:  M start A 26,26 0 1,1 end
+  -->
+  <defs>
+    <marker id="ah-orange" markerWidth="8" markerHeight="8"
+            refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <polygon points="0,0 8,4 0,8" fill="#e07820"/>
+    </marker>
+    <marker id="ah-khaki" markerWidth="8" markerHeight="8"
+            refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <polygon points="0,0 8,4 0,8" fill="#c9a84c"/>
+    </marker>
+    <linearGradient id="tgrd" gradientUnits="userSpaceOnUse" x1="148" y1="0" x2="295" y2="0">
+      <stop offset="0%"   stop-color="#e07820"/>
+      <stop offset="100%" stop-color="#c9a84c"/>
+    </linearGradient>
+  </defs>
+
+  <!-- First C: orange, center (38, 45), r=26 -->
+  <path d="M 56.4,63.4 A 26,26 0 1,1 56.4,26.6"
+        stroke="#e07820" stroke-width="4.5" fill="none"
+        marker-end="url(#ah-orange)"/>
+
+  <!-- Second C: khaki, center (100, 45), r=26 -->
+  <path d="M 118.4,63.4 A 26,26 0 1,1 118.4,26.6"
+        stroke="#c9a84c" stroke-width="4.5" fill="none"
+        marker-end="url(#ah-khaki)"/>
+
+  <!-- work -->
+  <text x="148" y="61" font-family="'Courier New',Courier,monospace"
+        font-size="38" font-weight="bold" fill="url(#tgrd)">work</text>
+</svg>
