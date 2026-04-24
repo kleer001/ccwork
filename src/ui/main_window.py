@@ -3,45 +3,43 @@
 Structure:
 
     ┌──────────────────────────────────────────────────────────┐
-    │           repo · branch              🔔   ⚙              │  ← thin top bar
+    │           repo · branch                   🔔   ⚙          │  ← thin top bar
     ├──────────┬───────────────────────────────────────────────┤
     │  Repo    │              Terminal stack                   │
     │ Sidebar  │   (one TerminalHost per repo, swapped         │
     │          │    by QStackedWidget on selection)            │
     └──────────┴───────────────────────────────────────────────┘
 
-Alerts live behind the bell icon (popover). Preferences/Add-Repo/Quit
-remain reachable via Ctrl+,/Ctrl+O/Ctrl+Q — registered as window-level
-QActions so the menu bar can stay gone.
+The 🔔 is a visual-only indicator — a red dot appears when Stop/Notification
+events arrive; clicking clears the dot. There's no popover list (desktop
+notify-send handles the text). Preferences/Add-Repo/Quit reachable via
+Ctrl+,/Ctrl+O/Ctrl+Q — registered as window-level QActions so the menu bar
+can stay gone.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import time
 
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QAction, QKeySequence, QPainter, QColor
+from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QSplitter,
     QStackedWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
-    QWidgetAction,
 )
 
 from src.core.hook_server import HookServer
 from src.core.repo_store import Repo, RepoStore
 from src.core.settings import Settings, load_settings
 from src.core.terminal_session import build_session
-from src.ui.alerts_panel import AlertEntry, AlertsPanel
 from src.ui.preferences_dialog import PreferencesDialog
 from src.ui.qt_theme import apply_theme
 from src.ui.repo_sidebar import RepoSidebar
@@ -76,13 +74,10 @@ class MainWindow(QMainWindow):
 
         # ── top strip: centered repo · branch + right-side icon cluster ──
         self._title = TitleLabel(self)
-        self._alerts = AlertsPanel(self)        # lives inside the bell popover
-        self._alerts_popup: QMenu | None = None
-        self._unseen_alerts = 0
 
         self._bell_btn = _BellButton(self)
-        self._bell_btn.setToolTip("Alerts")
-        self._bell_btn.clicked.connect(self._open_alerts_popup)
+        self._bell_btn.setToolTip("Unread alerts — click to clear")
+        self._bell_btn.clicked.connect(lambda: self._bell_btn.set_unseen(False))
 
         self._gear_btn = QToolButton(self)
         self._gear_btn.setText("⚙")        # ⚙
@@ -130,7 +125,6 @@ class MainWindow(QMainWindow):
         self._sidebar.repo_added.connect(self._on_repo_added)
         self._sidebar.reload_requested.connect(self._reload_terminal)
         self._sidebar.repo_removed.connect(self._on_repo_removed)
-        self._alerts.repo_requested.connect(self._jump_to_repo_path)
         self._hook_server.event_received.connect(self._on_hook_event)
 
     # ── shortcuts ──
@@ -152,26 +146,6 @@ class MainWindow(QMainWindow):
             act.setShortcutContext(Qt.ApplicationShortcut)
             act.triggered.connect(slot)
             self.addAction(act)
-
-    # ── alerts popover ──
-
-    def _open_alerts_popup(self) -> None:
-        """Show the AlertsPanel as a popover hanging off the bell button."""
-        if self._alerts_popup is None:
-            self._alerts_popup = QMenu(self)
-            wa = QWidgetAction(self._alerts_popup)
-            # Reparent the panel into the action so QMenu owns its placement.
-            self._alerts.setParent(self._alerts_popup)
-            self._alerts.setMinimumSize(360, 240)
-            wa.setDefaultWidget(self._alerts)
-            self._alerts_popup.addAction(wa)
-        # Mark all current alerts as seen.
-        self._unseen_alerts = 0
-        self._bell_btn.set_unseen(False)
-        # Anchor below the bell, right edges aligned.
-        anchor = self._bell_btn.mapToGlobal(QPoint(0, self._bell_btn.height()))
-        anchor.setX(anchor.x() + self._bell_btn.width() - 360)
-        self._alerts_popup.exec(anchor)
 
     def _open_preferences(self) -> None:
         dlg = PreferencesDialog(self._settings, self)
@@ -373,6 +347,17 @@ class MainWindow(QMainWindow):
         # pre-existing host we still need to swap to it.
         host = self._ensure_terminal(repo)
         self._stack.setCurrentWidget(host)
+        host.focus_child()
+
+    def changeEvent(self, event) -> None:
+        # When the window gains activation (alt-tab, taskbar click), forward
+        # X input focus to the currently selected repo's xterm. Deferred to
+        # the next tick so Qt's own activation bookkeeping has settled.
+        super().changeEvent(event)
+        if event.type() == QEvent.ActivationChange and self.isActiveWindow():
+            current = self._stack.currentWidget()
+            if isinstance(current, TerminalHost):
+                QTimer.singleShot(0, current.focus_child)
 
     def _branch_for(self, path: str) -> str | None:
         """Pull the cached branch for `path` from the sidebar model."""
@@ -384,21 +369,6 @@ class MainWindow(QMainWindow):
 
     def _on_repo_added(self, repo: Repo) -> None:
         self._sidebar.refresh_branches()
-        self._push_alert(AlertEntry(
-            event="RepoAdded",
-            repo_name=repo.name,
-            message=repo.path,
-            ts=time.time(),
-            cwd=repo.path,
-        ))
-
-    def _push_alert(self, entry: AlertEntry) -> None:
-        """Add an alert and light the bell if the popover isn't already open."""
-        self._alerts.add_alert(entry)
-        popup_open = self._alerts_popup is not None and self._alerts_popup.isVisible()
-        if not popup_open:
-            self._unseen_alerts += 1
-            self._bell_btn.set_unseen(True)
 
     def _on_terminal_failed(self, repo: Repo, msg: str) -> None:
         log.warning("terminal for %s failed: %s", repo.path, msg)
@@ -406,6 +376,7 @@ class MainWindow(QMainWindow):
 
     def _on_terminal_finished(self, repo: Repo, code: int) -> None:
         self._working.discard(repo.path)
+        self._sidebar.set_working(repo.path, False)
         host = self._terminals.pop(repo.path, None)
         was_current = host is not None and self._stack.currentWidget() is host
         if host is not None:
@@ -421,7 +392,6 @@ class MainWindow(QMainWindow):
         event = str(obj.get("event", ""))
         payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else {}
         cwd = obj.get("cwd") or (payload.get("cwd") if isinstance(payload, dict) else None)
-        ts = float(obj.get("ts") or time.time())
 
         # Track Claude's mid-turn state. UserPromptSubmit means the user
         # just sent a prompt; Stop/Notification mean Claude is done or
@@ -430,30 +400,23 @@ class MainWindow(QMainWindow):
         if cwd:
             if event == "UserPromptSubmit":
                 self._working.add(str(cwd))
-                # User just engaged this repo — clear any stale status dot.
+                # User just engaged this repo — clear any stale status dot
+                # and start the spinner.
                 self._sidebar.clear_status(str(cwd))
-                return  # nothing to surface in the alerts panel
+                self._sidebar.set_working(str(cwd), True)
+                return
             if event in ("Stop", "Notification"):
                 self._working.discard(str(cwd))
+                self._sidebar.set_working(str(cwd), False)
 
         if event == "RepoAdded" and cwd:
-            if self._sidebar.model.add_repo(cwd):
-                self._push_alert(AlertEntry(
-                    event="RepoAdded",
-                    repo_name=os.path.basename(str(cwd).rstrip("/")) or str(cwd),
-                    message=str(cwd),
-                    ts=ts,
-                    cwd=str(cwd),
-                ))
+            self._sidebar.model.add_repo(cwd)
             return
 
         if event in ("Stop", "Notification"):
-            repo_name = os.path.basename(str(cwd).rstrip("/")) if cwd else "?"
-            msg = _short_message(event, payload)
-            self._push_alert(AlertEntry(
-                event=event, repo_name=repo_name, message=msg, ts=ts,
-                cwd=str(cwd) if cwd else None,
-            ))
+            # Light the bell dot so the user has a glanceable "something
+            # happened" signal even if the per-repo sidebar dot is off-screen.
+            self._bell_btn.set_unseen(True)
             # Status dot on the sidebar — fires for every repo, including
             # the active one. Cleared on next UserPromptSubmit or when the
             # user re-clicks the row.
@@ -468,12 +431,6 @@ class MainWindow(QMainWindow):
             if host is w:
                 return path
         return None
-
-    def _jump_to_repo_path(self, path: str) -> None:
-        """Select `path` in the sidebar (if known) — the sidebar's
-        currentChanged signal drives terminal switching."""
-        if self._sidebar.model.index_of(path) >= 0:
-            self._sidebar.select_path(path)
 
     # ── lifecycle ──
 
@@ -531,18 +488,3 @@ class _BellButton(QToolButton):
         p.setBrush(self.DOT_COLOR)
         d = self.DOT_D
         p.drawEllipse(self.width() - d - 2, 2, d, d)
-
-
-def _short_message(event: str, payload: dict) -> str:
-    """Extract a one-line description from a hook payload."""
-    if not isinstance(payload, dict):
-        return event
-    # Claude Code's Notification hook typically has {"message": ...}.
-    msg = payload.get("message")
-    if isinstance(msg, str) and msg:
-        return msg
-    if event == "Stop":
-        return "task done"
-    if event == "Notification":
-        return "needs your input"
-    return event

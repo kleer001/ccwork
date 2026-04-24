@@ -28,6 +28,8 @@ ShiftMask = 1 << 0
 LockMask = 1 << 1       # CapsLock
 Mod2Mask = 1 << 4       # NumLock on most layouts
 GrabModeAsync = 1
+RevertToParent = 2
+CurrentTime = 0
 
 # Mouse buttons — wheel-up / wheel-down on X11.
 Button4 = 4
@@ -85,6 +87,8 @@ def _lib() -> ctypes.CDLL:
     lib.XGrabButton.restype = c_int
     lib.XUngrabButton.argtypes = [Display, c_uint, c_uint, Window]
     lib.XUngrabButton.restype = c_int
+    lib.XSetInputFocus.argtypes = [Display, Window, c_int, c_ulong]
+    lib.XSetInputFocus.restype = c_int
 
     _x11 = lib
     return lib
@@ -214,3 +218,12 @@ class XDisplay:
     def ungrab_button(self, win: int, button: int, modifiers: int) -> None:
         for extra in _LOCK_VARIANTS:
             self._lib.XUngrabButton(self._dpy, c_uint(button), c_uint(modifiers | extra), Window(win))
+
+    def set_input_focus(self, win: int) -> None:
+        """XSetInputFocus(win, RevertToParent, CurrentTime). No-op if win==0."""
+        if not win:
+            return
+        self._lib.XSetInputFocus(
+            self._dpy, Window(win), c_int(RevertToParent), c_ulong(CurrentTime)
+        )
+        self._lib.XFlush(self._dpy)

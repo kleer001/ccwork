@@ -11,6 +11,7 @@ from PySide6.QtCore import (
     QRect,
     QSize,
     Qt,
+    QTimer,
     Signal,
 )
 from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
@@ -35,12 +36,17 @@ from src.core.repo_store import Repo, RepoStore
 # + status. The view's delegate reads these directly. STATUS is one of:
 # "" (no badge), "done" (Claude finished a turn), "attention" (Claude needs
 # input). Color-coded by the delegate.
-ROLE_REPO   = Qt.UserRole + 1
-ROLE_BRANCH = Qt.UserRole + 2
-ROLE_STATUS = Qt.UserRole + 3
+ROLE_REPO    = Qt.UserRole + 1
+ROLE_BRANCH  = Qt.UserRole + 2
+ROLE_STATUS  = Qt.UserRole + 3
+ROLE_WORKING = Qt.UserRole + 4  # bool — Claude mid-turn in this repo
 
 STATUS_DONE      = "done"
 STATUS_ATTENTION = "attention"
+
+# Standard 10-frame braille spinner. Advanced by a QTimer on the sidebar.
+SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+SPINNER_INTERVAL_MS = 100
 
 
 class RepoListModel(QAbstractListModel):
@@ -51,6 +57,7 @@ class RepoListModel(QAbstractListModel):
         self._store = store
         self._branches: dict[str, str | None] = {}
         self._status: dict[str, str] = {}
+        self._working: set[str] = set()
 
     # ── Qt model API ──
 
@@ -71,6 +78,8 @@ class RepoListModel(QAbstractListModel):
             return self._branches.get(repo.path)
         if role == ROLE_STATUS:
             return self._status.get(repo.path, "")
+        if role == ROLE_WORKING:
+            return repo.path in self._working
         if role == Qt.ToolTipRole:
             return repo.path
         return None
@@ -116,6 +125,23 @@ class RepoListModel(QAbstractListModel):
     def clear_status(self, path: str) -> None:
         self.set_status(path, "")
 
+    def set_working(self, path: str, working: bool) -> None:
+        """Toggle the spinner for `path`. No-op if state already matches."""
+        was = path in self._working
+        if working == was:
+            return
+        if working:
+            self._working.add(path)
+        else:
+            self._working.discard(path)
+        row = self.index_of(path)
+        if row >= 0:
+            idx = self.index(row)
+            self.dataChanged.emit(idx, idx, [ROLE_WORKING])
+
+    def any_working(self) -> bool:
+        return bool(self._working)
+
     # ── add/remove piped from the store ──
 
     def reload(self) -> None:
@@ -148,6 +174,7 @@ class RepoListModel(QAbstractListModel):
         self.endRemoveRows()
         self._branches.pop(path, None)
         self._status.pop(path, None)
+        self._working.discard(path)
         self._store.save()
         return True
 
@@ -162,6 +189,14 @@ class RepoDelegate(QStyledItemDelegate):
         STATUS_ATTENTION: QColor(220, 50, 47),   # solarized red
         STATUS_DONE:      QColor(133, 153, 0),   # solarized green
     }
+    # Muted cyan for the working spinner — distinct from the red/green
+    # status dots so glance-state is unambiguous.
+    SPINNER_COLOR = QColor(38, 139, 210)  # solarized blue
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        # Advanced by RepoSidebar's QTimer; read every paint.
+        self.spinner_frame = 0
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         return QSize(option.rect.width(), self.ROW_HEIGHT)
@@ -194,6 +229,7 @@ class RepoDelegate(QStyledItemDelegate):
         repo: Repo = index.data(ROLE_REPO)
         branch: str | None = index.data(ROLE_BRANCH)
         status: str = index.data(ROLE_STATUS) or ""
+        working: bool = bool(index.data(ROLE_WORKING))
 
         rect = option.rect.adjusted(self.PADDING_X, 4, -self.PADDING_X, -4)
 
@@ -214,21 +250,34 @@ class RepoDelegate(QStyledItemDelegate):
         sub_rect = QRect(rect.left(), rect.top() + rect.height() // 2, rect.width(), rect.height() // 2)
         painter.drawText(sub_rect, Qt.AlignLeft | Qt.AlignVCenter, sub_text)
 
-        # Status dot — color-coded: red for "needs attention", green for
-        # "done". One state per repo (each event supersedes the previous).
-        color = self.STATUS_COLORS.get(status)
-        if color is not None:
-            dot_d = 10
-            dot_rect = QRect(
-                rect.right() - dot_d,
-                rect.top() + (rect.height() - dot_d) // 2,
-                dot_d,
-                dot_d,
-            )
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(color)
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            painter.drawEllipse(dot_rect)
+        # Right-edge glyph: braille spinner when working (preempts dot), else
+        # color-coded status dot. Working state is mutually exclusive with
+        # done/attention in the hook flow — UserPromptSubmit clears status
+        # before setting working; Stop/Notification clears working before
+        # setting status.
+        if working:
+            spin_font = QFont(option.font)
+            spin_font.setPointSizeF(option.font.pointSizeF() * 1.4)
+            spin_font.setBold(True)
+            painter.setFont(spin_font)
+            painter.setPen(QPen(self.SPINNER_COLOR))
+            frame = SPINNER_FRAMES[self.spinner_frame % len(SPINNER_FRAMES)]
+            spin_rect = QRect(rect.right() - 16, rect.top(), 16, rect.height())
+            painter.drawText(spin_rect, Qt.AlignRight | Qt.AlignVCenter, frame)
+        else:
+            color = self.STATUS_COLORS.get(status)
+            if color is not None:
+                dot_d = 10
+                dot_rect = QRect(
+                    rect.right() - dot_d,
+                    rect.top() + (rect.height() - dot_d) // 2,
+                    dot_d,
+                    dot_d,
+                )
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(color)
+                painter.setRenderHint(QPainter.Antialiasing, True)
+                painter.drawEllipse(dot_rect)
 
         painter.restore()
 
@@ -248,7 +297,15 @@ class RepoSidebar(QWidget):
 
         self._view = QListView(self)
         self._view.setModel(self._model)
-        self._view.setItemDelegate(RepoDelegate(self._view))
+        self._delegate = RepoDelegate(self._view)
+        self._view.setItemDelegate(self._delegate)
+
+        # Braille-spinner ticker. Only runs while at least one repo is in
+        # the "working" state — otherwise it would repaint the viewport 10×
+        # per second for no reason.
+        self._spinner_timer = QTimer(self)
+        self._spinner_timer.setInterval(SPINNER_INTERVAL_MS)
+        self._spinner_timer.timeout.connect(self._advance_spinner)
         self._view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._view.setSelectionMode(QAbstractItemView.SingleSelection)
         self._view.setUniformItemSizes(True)
@@ -290,6 +347,22 @@ class RepoSidebar(QWidget):
 
     def clear_status(self, path: str) -> None:
         self._model.clear_status(path)
+
+    def set_working(self, path: str, working: bool) -> None:
+        self._model.set_working(path, working)
+        if self._model.any_working():
+            if not self._spinner_timer.isActive():
+                self._spinner_timer.start()
+        else:
+            self._spinner_timer.stop()
+
+    def _advance_spinner(self) -> None:
+        self._delegate.spinner_frame += 1
+        # Repaint only rows that are currently working.
+        for row in range(self._model.rowCount()):
+            idx = self._model.index(row)
+            if idx.data(ROLE_WORKING):
+                self._view.update(idx)
 
     # ── signals ──
 

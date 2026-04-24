@@ -125,6 +125,11 @@ class TerminalHost(QWidget):
         self._poll_elapsed = 0
         QTimer.singleShot(_POLL_INTERVAL_MS, self._poll_for_child)
 
+    def focus_child(self) -> None:
+        """Move X input focus to the embedded xterm, if attached yet."""
+        if self._xterm_win and self._xdisplay is not None:
+            self._xdisplay.set_input_focus(self._xterm_win)
+
     def stop(self) -> None:
         """Terminate xterm. The shell underneath dies with it."""
         if self._process is None:
