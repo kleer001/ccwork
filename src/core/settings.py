@@ -81,6 +81,11 @@ class XtermSettings:
             " <Btn4Down>: scroll-back(3,line) \\n"
             " <Btn5Down>: scroll-forw(3,line)",
         ]
+        # Let OSC 50 resize/reface the font at runtime. xterm's default is
+        # false (a shared-tty hardening); we embed our own xterm per repo so
+        # the threat model is fine. Using the specific class path leaves
+        # extra_args free to override.
+        args += ["-xrm", "XTerm.vt100.allowFontOps: true"]
         args.extend(self.extra_args)
         return args
 

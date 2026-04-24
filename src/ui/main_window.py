@@ -22,6 +22,7 @@ import time
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QMainWindow,
@@ -40,6 +41,7 @@ from src.core.settings import Settings
 from src.core.terminal_session import build_session
 from src.ui.alerts_panel import AlertEntry, AlertsPanel
 from src.ui.preferences_dialog import PreferencesDialog
+from src.ui.qt_theme import apply_theme
 from src.ui.repo_sidebar import RepoSidebar
 from src.ui.terminal_host import TerminalHost
 from src.ui.title_label import TitleLabel
@@ -146,8 +148,14 @@ class MainWindow(QMainWindow):
         # Keep the reference in sync so new terminal spawns pick it up.
         self._settings = settings
 
-        # Live-apply what we can (colors + font face) to every running
-        # terminal. OSC-50 font-size and startup-only settings need respawn.
+        # Repaint the Qt chrome with the same palette as the terminal.
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, settings)
+
+        # Live-apply what we can (colors + font face + size) to every running
+        # terminal. Startup-only settings (scrollback, scrollbar, …) still
+        # need respawn.
         needs_restart_fields: set[str] = set()
         live_applied = 0
         for host in self._terminals.values():
