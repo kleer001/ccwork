@@ -58,4 +58,16 @@ elif command -v nc >/dev/null 2>&1; then
         || true
 fi
 
+# Desktop notification — fires regardless of whether the GUI window is
+# visible, focused, or even running. The in-GUI alerts panel is good when
+# you're looking at it; this catches the case where you're on another
+# workspace or the window is buried.
+if command -v notify-send >/dev/null 2>&1; then
+    _repo=$(basename "$_cwd")
+    case "$_event" in
+        Notification) notify-send -u critical "Claude [$_repo]" "Needs your input" >/dev/null 2>&1 || true ;;
+        Stop)         notify-send -u critical "Claude [$_repo]" "Task done"        >/dev/null 2>&1 || true ;;
+    esac
+fi
+
 exit 0

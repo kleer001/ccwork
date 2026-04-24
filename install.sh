@@ -160,10 +160,11 @@ command -v git     &>/dev/null || fail "git not found"
 _warn=""
 command -v xterm &>/dev/null || _warn="$_warn xterm"
 command -v socat &>/dev/null || command -v nc &>/dev/null || _warn="$_warn socat_or_nc"
+command -v notify-send &>/dev/null || _warn="$_warn notify-send"
 if [ -n "$_warn" ]; then
-    skip "Runtime deps missing:$_warn — install before launching ccwork (e.g. sudo apt install xterm socat)"
+    skip "Runtime deps missing:$_warn — install before launching ccwork (e.g. sudo apt install xterm socat libnotify-bin)"
 else
-    ok "python3, git, xterm, socat/nc present"
+    ok "python3, git, xterm, socat/nc, notify-send present"
 fi
 
 # ── 1. Create bin/ccwork launcher ────────────────────────────────────────────

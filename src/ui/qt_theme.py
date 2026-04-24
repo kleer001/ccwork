@@ -106,9 +106,19 @@ def build_stylesheet(xt: XtermSettings) -> str:
     handle = t["button"].name()
     track = t["base"].name()
     border = t["mid"].name()
+    tooltip_bg = t["tooltip_bg"].name()
+    fg = t["fg"].name()
+    # QToolTip ignores QPalette::ToolTipBase/Text on Fusion in many environments
+    # (it inherits the system tooltip palette instead). Setting bg + color in
+    # QSS forces our derived theme to actually take effect.
     return f"""
 QMenu::separator {{ background: {border}; height: 1px; margin: 4px 8px; }}
-QToolTip {{ border: 1px solid {border}; }}
+QToolTip {{
+    background: {tooltip_bg};
+    color: {fg};
+    border: 1px solid {border};
+    padding: 2px 4px;
+}}
 
 QScrollBar:vertical, QScrollBar:horizontal {{
     background: {track};

@@ -152,7 +152,6 @@ class RepoDelegate(QStyledItemDelegate):
     ROW_HEIGHT = 52
     PADDING_X = 10
     BADGE_COLOR = QColor(220, 80, 80)
-    BADGE_TEXT  = QColor("white")
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         return QSize(option.rect.width(), self.ROW_HEIGHT)
@@ -205,23 +204,21 @@ class RepoDelegate(QStyledItemDelegate):
         sub_rect = QRect(rect.left(), rect.top() + rect.height() // 2, rect.width(), rect.height() // 2)
         painter.drawText(sub_rect, Qt.AlignLeft | Qt.AlignVCenter, sub_text)
 
-        # Unread badge.
+        # Unread dot. Only one alert per repo is meaningful (a Notification
+        # supersedes any prior one), so render presence/absence as a plain
+        # filled circle — no count, no text.
         if unread > 0:
-            label = str(unread) if unread < 100 else "99+"
-            metrics = painter.fontMetrics()
-            badge_w = max(metrics.horizontalAdvance(label) + 12, 20)
-            badge_h = 18
-            badge_rect = QRect(
-                rect.right() - badge_w,
-                rect.top() + (rect.height() - badge_h) // 2,
-                badge_w,
-                badge_h,
+            dot_d = 10
+            dot_rect = QRect(
+                rect.right() - dot_d,
+                rect.top() + (rect.height() - dot_d) // 2,
+                dot_d,
+                dot_d,
             )
             painter.setPen(Qt.NoPen)
             painter.setBrush(self.BADGE_COLOR)
-            painter.drawRoundedRect(badge_rect, 9, 9)
-            painter.setPen(QPen(self.BADGE_TEXT))
-            painter.drawText(badge_rect, Qt.AlignCenter, label)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.drawEllipse(dot_rect)
 
         painter.restore()
 
