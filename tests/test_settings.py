@@ -46,6 +46,24 @@ def test_to_xterm_args_extras_appended_last() -> None:
     assert args[-2:] == extras
 
 
+def test_to_xterm_args_rebinds_scrollbar_btn1_to_drag() -> None:
+    """Xaw's default Btn1-on-scrollbar is line-down, not thumb-drag — which
+    confuses every user. We override it to behave like a normal scrollbar.
+    Scoped to the `scrollbar` widget so terminal-area selection (Btn1) and
+    paste-on-middle-click (Btn2) stay at xterm defaults."""
+    args = S.XtermSettings().to_xterm_args()
+    xrm_values = [args[i + 1] for i, v in enumerate(args[:-1]) if v == "-xrm"]
+    sb_overrides = [v for v in xrm_values if v.startswith("XTerm*scrollbar.translations")]
+    assert sb_overrides, "scrollbar Btn1 rebind missing"
+    body = sb_overrides[0]
+    # Must rebind Btn1 specifically, and use proportional thumb actions.
+    assert "<Btn1Down>" in body and "<Btn1Motion>" in body and "<Btn1Up>" in body
+    assert "MoveThumb" in body and "NotifyThumb" in body
+    # Must NOT mention Btn2 — that would step on paste in the VT100 area
+    # if a user mistakenly broadens the resource.
+    assert "Btn2" not in body
+
+
 def test_to_xterm_args_enables_allow_font_ops() -> None:
     """OSC 50 font-change requires allowFontOps=true (xterm default is false),
     so the live-apply path in the GUI is dead without this flag."""
@@ -95,6 +113,52 @@ def test_round_trip_preserves_unknown_keys(tmp_path: Path) -> None:
     S.save_settings(loaded, p)
     saved = json.loads(p.read_text())
     assert saved.get("future_feature", {}).get("color_scheme") == "solarized"
+
+
+def test_ui_settings_defaults() -> None:
+    u = S.UISettings()
+    assert u.sidebar_side == "left"
+    assert u.sidebar_width >= 120
+    assert u.restore_last_repo is True
+    assert u.desktop_notifications is True
+
+
+def test_ui_settings_round_trip(tmp_path: Path) -> None:
+    p = tmp_path / "s.json"
+    orig = S.Settings(ui=S.UISettings(
+        sidebar_side="right", sidebar_width=310,
+        restore_last_repo=False, desktop_notifications=False,
+    ))
+    S.save_settings(orig, p)
+    loaded = S.load_settings(p)
+    assert loaded.ui.sidebar_side == "right"
+    assert loaded.ui.sidebar_width == 310
+    assert loaded.ui.restore_last_repo is False
+    assert loaded.ui.desktop_notifications is False
+
+
+def test_ui_settings_invalid_side_falls_back_to_default(tmp_path: Path) -> None:
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"ui": {"sidebar_side": "top"}}))
+    loaded = S.load_settings(p)
+    assert loaded.ui.sidebar_side == "left"
+
+
+def test_ui_settings_min_width_enforced_on_load(tmp_path: Path) -> None:
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"ui": {"sidebar_width": 30}}))
+    loaded = S.load_settings(p)
+    assert loaded.ui.sidebar_width >= 60
+
+
+def test_ui_settings_max_width_enforced_on_load(tmp_path: Path) -> None:
+    """Bound on load matches the dialog spinbox so a hand-edited overshoot
+    doesn't silently get clamped (and persisted) the next time the user
+    opens Preferences."""
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"ui": {"sidebar_width": 5000}}))
+    loaded = S.load_settings(p)
+    assert loaded.ui.sidebar_width <= 600
 
 
 def test_write_default_settings_file_creates_once(tmp_path: Path) -> None:

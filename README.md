@@ -20,6 +20,55 @@ driven by Claude Code's Stop/Notification hooks.
   Dracula, Gruvbox Dark, GitHub Light, Tomorrow), font/scrollback/
   scrollbar controls, and live OSC-based apply for colors and fonts.
 
+<details>
+<summary><b>Preferences reference</b></summary>
+
+Open with the gear button or `Ctrl+,`. Settings persist to
+`~/.config/ccwork/settings.json`.
+
+**Text tab**
+
+- **Font family / size** — applied live to running terminals via OSC.
+
+**Colors tab**
+
+- **Color scheme** — preset palette dropdown (Solarized Dark/Light, Dracula,
+  Gruvbox Dark, GitHub Light, Tomorrow). Picking one updates the bg/fg
+  swatches; setting bg/fg by hand falls the scheme back to "Custom".
+- **Background / foreground** — direct color pickers, applied live.
+
+**Scrolling tab**
+
+- **Scrollback** — lines retained in xterm history.
+- **Scrollbar** — `right`, `left`, or `off`.
+- **Jump scroll** — xterm's fast-redraw mode for bursts of output.
+
+**UI tab**
+
+- **Sidebar position** — left or right.
+- **Status badge** — `Colored dot` (default) or `Glyph (! ✓ ·)`. The glyph
+  variant is more legible at narrow sidebar widths and colorblind-friendlier.
+  Hover any row for a tooltip describing the current state.
+- **Reopen the last-used repo on launch** — restores focus + terminal on
+  startup.
+- **Show desktop notifications** — gates `notify-send` pop-ups from
+  `ccwork-hook-sink`. In-window indicators (badges, sidebar colors) stay
+  on regardless.
+
+Sidebar width isn't in the dialog — drag the splitter; the new width
+persists. Drag floor is ~6 characters wide; the badge auto-hides before
+text is squeezed below ~4 chars.
+
+**Advanced tab**
+
+- **Extra xterm args** — raw flags appended to every xterm spawn, parsed
+  with shell quoting rules. See `man xterm`.
+
+Unknown keys in `settings.json` round-trip on save, so hand-edited fields
+not exposed by the dialog aren't dropped when ccwork rewrites the file.
+
+</details>
+
 ## Install
 
 Linux with X11 or XWayland. Requires `git`, `python3`, `python3-venv`,

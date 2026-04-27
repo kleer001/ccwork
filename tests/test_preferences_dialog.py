@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from src.core.settings import Settings, XtermSettings, load_settings
+from src.core.settings import Settings, UISettings, XtermSettings, load_settings
 from src.ui import preferences_dialog as PD
 
 
@@ -121,3 +121,32 @@ def test_dialog_round_trip_via_save(qapp: QApplication, monkeypatch: pytest.Monk
         assert loaded.xterm.scrollback == 55_555
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_ui_tab_round_trip_via_save(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+    tmp = tempfile.mkdtemp()
+    try:
+        monkeypatch.setenv("XDG_CONFIG_HOME", tmp)
+        # sidebar_width is no longer in the dialog — it's only set via
+        # splitter drag — but the dialog must preserve it through save.
+        dlg = PD.PreferencesDialog(Settings(ui=UISettings(sidebar_width=280)))
+        dlg._sidebar_side.setCurrentText("right")
+        dlg._restore_last.setChecked(False)
+        dlg._desktop_notifs.setChecked(False)
+        dlg._on_save()
+        loaded = load_settings()
+        assert loaded.ui.sidebar_side == "right"
+        assert loaded.ui.sidebar_width == 280
+        assert loaded.ui.restore_last_repo is False
+        assert loaded.ui.desktop_notifications is False
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_ui_tab_initialized_from_settings(qapp: QApplication) -> None:
+    s = Settings(ui=UISettings(sidebar_side="right", sidebar_width=333,
+                               restore_last_repo=False, desktop_notifications=False))
+    dlg = PD.PreferencesDialog(s)
+    assert dlg._sidebar_side.currentText() == "right"
+    assert dlg._restore_last.isChecked() is False
+    assert dlg._desktop_notifs.isChecked() is False

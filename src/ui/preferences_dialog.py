@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.core.settings import Settings, XtermSettings, save_settings
+from src.core.settings import Settings, UISettings, XtermSettings, save_settings
 
 
 # ── Color-scheme presets ────────────────────────────────────────────────────
@@ -159,6 +159,7 @@ class PreferencesDialog(QDialog):
         tabs.addTab(self._build_text_tab(), "Text")
         tabs.addTab(self._build_colors_tab(), "Colors")
         tabs.addTab(self._build_scrolling_tab(), "Scrolling")
+        tabs.addTab(self._build_ui_tab(), "UI")
         tabs.addTab(self._build_advanced_tab(), "Advanced")
 
         hint = QLabel(
@@ -283,6 +284,47 @@ class PreferencesDialog(QDialog):
 
         return w
 
+    # ── UI tab ──
+
+    def _build_ui_tab(self) -> QWidget:
+        w = QWidget(self)
+        form = QFormLayout(w)
+        ui = self._settings.ui
+
+        self._sidebar_side = QComboBox(w)
+        self._sidebar_side.addItems(["left", "right"])
+        self._sidebar_side.setCurrentText(ui.sidebar_side)
+        form.addRow("Sidebar position", self._sidebar_side)
+
+        self._badge_style = QComboBox(w)
+        self._badge_style.addItem("Colored dot", "dot")
+        self._badge_style.addItem("Glyph (! ✓ ·)", "glyph")
+        idx = self._badge_style.findData(ui.status_badge_style)
+        self._badge_style.setCurrentIndex(idx if idx >= 0 else 0)
+        form.addRow("Status badge", self._badge_style)
+
+        self._restore_last = QCheckBox("Reopen the last-used repo on launch", w)
+        self._restore_last.setChecked(ui.restore_last_repo)
+        form.addRow("", self._restore_last)
+
+        self._desktop_notifs = QCheckBox("Show desktop notifications (Stop / Notification)", w)
+        self._desktop_notifs.setChecked(ui.desktop_notifications)
+        form.addRow("", self._desktop_notifs)
+
+        help_lbl = QLabel(
+            "Sidebar width is set by dragging the splitter — drags persist. "
+            "Desktop notifications are "
+            "fired by ccwork-hook-sink — disabling them here suppresses the "
+            "notify-send pop-ups but keeps in-window indicators (bell dot, "
+            "sidebar status colors) intact.",
+            w,
+        )
+        help_lbl.setWordWrap(True)
+        help_lbl.setStyleSheet("color: #888;")
+        form.addRow("", help_lbl)
+
+        return w
+
     # ── Advanced tab ──
 
     def _build_advanced_tab(self) -> QWidget:
@@ -373,6 +415,12 @@ class PreferencesDialog(QDialog):
 
     def _on_restore_defaults(self) -> None:
         d = XtermSettings()
+        du = UISettings()
+        self._sidebar_side.setCurrentText(du.sidebar_side)
+        bidx = self._badge_style.findData(du.status_badge_style)
+        self._badge_style.setCurrentIndex(bidx if bidx >= 0 else 0)
+        self._restore_last.setChecked(du.restore_last_repo)
+        self._desktop_notifs.setChecked(du.desktop_notifications)
         self._font.setCurrentText(d.font_family)
         self._font_size.setValue(d.font_size)
         self._scrollback.setValue(d.scrollback)
@@ -406,6 +454,15 @@ class PreferencesDialog(QDialog):
             extra_args=extras,
         )
         self._settings.xterm = new_x
+        # sidebar_width is set live by splitter drag — preserve whatever the
+        # user last dragged it to.
+        self._settings.ui = UISettings(
+            sidebar_side=self._sidebar_side.currentText(),
+            sidebar_width=int(self._settings.ui.sidebar_width),
+            restore_last_repo=bool(self._restore_last.isChecked()),
+            desktop_notifications=bool(self._desktop_notifs.isChecked()),
+            status_badge_style=str(self._badge_style.currentData() or "dot"),
+        )
 
         try:
             save_settings(self._settings)

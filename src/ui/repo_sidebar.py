@@ -41,8 +41,30 @@ ROLE_BRANCH  = Qt.UserRole + 2
 ROLE_STATUS  = Qt.UserRole + 3
 ROLE_WORKING = Qt.UserRole + 4  # bool — Claude mid-turn in this repo
 
-STATUS_DONE      = "done"
-STATUS_ATTENTION = "attention"
+STATUS_DONE          = "done"
+STATUS_ATTENTION     = "attention"
+STATUS_LAST_FOCUSED  = "last_focused"
+
+# Human-readable labels for the row tooltip — paired with the colored badge
+# so users don't have to memorize the dot palette.
+STATUS_LABELS = {
+    STATUS_ATTENTION:    "Claude needs input",
+    STATUS_DONE:         "Claude finished a turn",
+    STATUS_LAST_FOCUSED: "Last focused",
+}
+WORKING_LABEL = "Claude is working…"
+
+
+def _norm(path: str) -> str:
+    """Canonicalize a path so set-membership checks agree no matter how the
+    path was supplied (trailing slash, symlink, relative segment).
+
+    Used as the single key shape for `_working`. Without this, a hook that
+    reports `/symlink/repo` while the sidebar holds `/real/repo` would
+    silently fail to flip the spinner on — the bug we hit while clicking
+    off a working repo.
+    """
+    return os.path.realpath(path) if path else ""
 
 # Standard 10-frame braille spinner. Advanced by a QTimer on the sidebar.
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -79,8 +101,16 @@ class RepoListModel(QAbstractListModel):
         if role == ROLE_STATUS:
             return self._status.get(repo.path, "")
         if role == ROLE_WORKING:
-            return repo.path in self._working
+            return _norm(repo.path) in self._working
         if role == Qt.ToolTipRole:
+            # Prepend a human-readable status line so hovering a row tells
+            # the user what the badge means without having to memorize the
+            # color palette. Path stays as the second line for context.
+            if _norm(repo.path) in self._working:
+                return f"{WORKING_LABEL}\n{repo.path}"
+            label = STATUS_LABELS.get(self._status.get(repo.path, ""))
+            if label:
+                return f"{label}\n{repo.path}"
             return repo.path
         return None
 
@@ -125,15 +155,33 @@ class RepoListModel(QAbstractListModel):
     def clear_status(self, path: str) -> None:
         self.set_status(path, "")
 
+    def set_last_focused(self, path: str) -> None:
+        """Mark `path` as the most-recently-focused repo.
+
+        Lower priority than Stop/Notification: if the row already has one of
+        those status dots, it stays — Claude-side signals matter more than
+        "you were here." The violet dot only lights on rows whose status is
+        otherwise empty. Also clears LAST_FOCUSED from any other row so the
+        dot is unique.
+        """
+        # Strip prior last-focused from any other row.
+        for other in [p for p, s in self._status.items()
+                      if s == STATUS_LAST_FOCUSED and p != path]:
+            self.clear_status(other)
+        # Only set on the target if nothing higher-priority is there.
+        if not self._status.get(path):
+            self.set_status(path, STATUS_LAST_FOCUSED)
+
     def set_working(self, path: str, working: bool) -> None:
         """Toggle the spinner for `path`. No-op if state already matches."""
-        was = path in self._working
+        key = _norm(path)
+        was = key in self._working
         if working == was:
             return
         if working:
-            self._working.add(path)
+            self._working.add(key)
         else:
-            self._working.discard(path)
+            self._working.discard(key)
         row = self.index_of(path)
         if row >= 0:
             idx = self.index(row)
@@ -174,7 +222,7 @@ class RepoListModel(QAbstractListModel):
         self.endRemoveRows()
         self._branches.pop(path, None)
         self._status.pop(path, None)
-        self._working.discard(path)
+        self._working.discard(_norm(path))
         self._store.save()
         return True
 
@@ -184,19 +232,37 @@ class RepoDelegate(QStyledItemDelegate):
 
     ROW_HEIGHT = 52
     PADDING_X = 10
+    # Right-edge glyph column (status dot or spinner). The glyph is dropped
+    # when the remaining text width would fall below MIN_TEXT_CHARS — that
+    # way narrow sidebars keep showing the first chars of name/branch
+    # rather than getting overlapped by the badge.
+    GLYPH_W = 14
+    GLYPH_GAP = 4
+    MIN_TEXT_CHARS = 4
     # Solarized-ish: red = needs attention (urgent), green = done (calmer).
     STATUS_COLORS = {
-        STATUS_ATTENTION: QColor(220, 50, 47),   # solarized red
-        STATUS_DONE:      QColor(133, 153, 0),   # solarized green
+        STATUS_ATTENTION:    QColor(220, 50, 47),   # solarized red
+        STATUS_DONE:         QColor(133, 153, 0),   # solarized green
+        STATUS_LAST_FOCUSED: QColor(108, 113, 196), # solarized violet
     }
     # Muted cyan for the working spinner — distinct from the red/green
     # status dots so glance-state is unambiguous.
     SPINNER_COLOR = QColor(38, 139, 210)  # solarized blue
 
+    # Single-glyph variants of the badge — same column, more self-explanatory
+    # than a colored circle. Stays color-coded for users who like the palette.
+    STATUS_GLYPHS = {
+        STATUS_ATTENTION:    "!",
+        STATUS_DONE:         "✓",
+        STATUS_LAST_FOCUSED: "·",
+    }
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         # Advanced by RepoSidebar's QTimer; read every paint.
         self.spinner_frame = 0
+        # "dot" or "glyph". Toggled live by RepoSidebar.set_badge_style.
+        self.badge_style = "dot"
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         return QSize(option.rect.width(), self.ROW_HEIGHT)
@@ -226,6 +292,18 @@ class RepoDelegate(QStyledItemDelegate):
             painter.fillRect(option.rect, option.palette.base())
             text_color = option.palette.text().color()
 
+        # Thin border around the row so each repo reads as a discrete button
+        # rather than a continuous list. palette.mid() is the Qt-blessed
+        # subtle-separator color — auto-adjusts for light/dark themes.
+        # Drawn one pixel inside option.rect so adjacent rows share an edge
+        # without a visible double-line.
+        border_pen = QPen(option.palette.mid().color(), 1)
+        painter.setPen(border_pen)
+        painter.setBrush(Qt.NoBrush)
+        # QRect's right/bottom are inclusive — subtract 1 so the stroke fits.
+        border_rect = option.rect.adjusted(0, 0, -1, -1)
+        painter.drawRect(border_rect)
+
         repo: Repo = index.data(ROLE_REPO)
         branch: str | None = index.data(ROLE_BRANCH)
         status: str = index.data(ROLE_STATUS) or ""
@@ -233,22 +311,40 @@ class RepoDelegate(QStyledItemDelegate):
 
         rect = option.rect.adjusted(self.PADDING_X, 4, -self.PADDING_X, -4)
 
-        # Repo name (bold) on line 1.
+        # Decide whether the right-edge glyph fits. Use the bold name font
+        # for char-width since it's the wider of the two lines — guarantees
+        # both lines keep ≥MIN_TEXT_CHARS visible when the glyph is shown.
         name_font = QFont(option.font)
         name_font.setBold(True)
+        char_w = max(1, painter.fontMetrics().averageCharWidth())
+        has_glyph = working or (status in self.STATUS_COLORS)
+        glyph_room = self.GLYPH_W + self.GLYPH_GAP
+        show_glyph = has_glyph and (rect.width() - glyph_room) >= self.MIN_TEXT_CHARS * char_w
+        text_w = rect.width() - (glyph_room if show_glyph else 0)
+
+        # Repo name (bold) on line 1. Elide at the right so we don't bleed
+        # under the glyph column.
         painter.setFont(name_font)
         painter.setPen(QPen(text_color))
-        name_rect = QRect(rect.left(), rect.top(), rect.width(), rect.height() // 2)
-        painter.drawText(name_rect, Qt.AlignLeft | Qt.AlignVCenter, repo.name if repo else "")
+        name_rect = QRect(rect.left(), rect.top(), text_w, rect.height() // 2)
+        name_text = painter.fontMetrics().elidedText(
+            repo.name if repo else "", Qt.ElideRight, text_w,
+        )
+        painter.drawText(name_rect, Qt.AlignLeft | Qt.AlignVCenter, name_text)
 
         # Branch subtitle on line 2.
         sub_font = QFont(option.font)
         sub_font.setPointSizeF(option.font.pointSizeF() * 0.9)
         painter.setFont(sub_font)
         painter.setPen(QPen(text_color.lighter(130) if text_color.lightness() < 128 else text_color.darker(140)))
-        sub_text = branch if branch else "(detached)" if repo else ""
-        sub_rect = QRect(rect.left(), rect.top() + rect.height() // 2, rect.width(), rect.height() // 2)
+        sub_text_raw = branch if branch else "(detached)" if repo else ""
+        sub_rect = QRect(rect.left(), rect.top() + rect.height() // 2, text_w, rect.height() // 2)
+        sub_text = painter.fontMetrics().elidedText(sub_text_raw, Qt.ElideRight, text_w)
         painter.drawText(sub_rect, Qt.AlignLeft | Qt.AlignVCenter, sub_text)
+
+        if not show_glyph:
+            painter.restore()
+            return
 
         # Right-edge glyph: braille spinner when working (preempts dot), else
         # color-coded status dot. Working state is mutually exclusive with
@@ -267,17 +363,34 @@ class RepoDelegate(QStyledItemDelegate):
         else:
             color = self.STATUS_COLORS.get(status)
             if color is not None:
-                dot_d = 10
-                dot_rect = QRect(
-                    rect.right() - dot_d,
-                    rect.top() + (rect.height() - dot_d) // 2,
-                    dot_d,
-                    dot_d,
-                )
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(color)
-                painter.setRenderHint(QPainter.Antialiasing, True)
-                painter.drawEllipse(dot_rect)
+                if self.badge_style == "glyph":
+                    glyph = self.STATUS_GLYPHS.get(status, "")
+                    g_font = QFont(option.font)
+                    g_font.setPointSizeF(option.font.pointSizeF() * 1.4)
+                    g_font.setBold(True)
+                    painter.setFont(g_font)
+                    painter.setPen(QPen(color))
+                    g_rect = QRect(rect.right() - self.GLYPH_W, rect.top(),
+                                   self.GLYPH_W, rect.height())
+                    painter.drawText(g_rect, Qt.AlignRight | Qt.AlignVCenter, glyph)
+                else:
+                    dot_d = 10
+                    dot_rect = QRect(
+                        rect.right() - dot_d,
+                        rect.top() + (rect.height() - dot_d) // 2,
+                        dot_d,
+                        dot_d,
+                    )
+                    # 1px contrast stroke in the row's text color — Qt palette
+                    # already guarantees that color contrasts with the row bg
+                    # (selected or not), so the dot stays legible on turquoise
+                    # highlights, dark themes, light themes, etc. without any
+                    # color guessing on our part.
+                    stroke = QPen(text_color, 1)
+                    painter.setPen(stroke)
+                    painter.setBrush(color)
+                    painter.setRenderHint(QPainter.Antialiasing, True)
+                    painter.drawEllipse(dot_rect)
 
         painter.restore()
 
@@ -321,7 +434,10 @@ class RepoSidebar(QWidget):
         lay.addWidget(self._view, 1)
         lay.addWidget(self._add_btn, 0)
 
-        self.setMinimumWidth(200)
+        # Allow the splitter to drag the sidebar down to ~6 characters wide.
+        # The delegate hides the status dot before text gets squeezed below
+        # ~4 chars, so very thin widths stay readable.
+        self.setMinimumWidth(60)
         self.setMaximumWidth(320)
 
         self._model.reload()
@@ -348,6 +464,18 @@ class RepoSidebar(QWidget):
     def clear_status(self, path: str) -> None:
         self._model.clear_status(path)
 
+    def set_last_focused(self, path: str) -> None:
+        self._model.set_last_focused(path)
+
+    def set_badge_style(self, style: str) -> None:
+        """Switch between the colored dot and single-glyph badge."""
+        if style not in ("dot", "glyph"):
+            return
+        if self._delegate.badge_style == style:
+            return
+        self._delegate.badge_style = style
+        self._view.viewport().update()
+
     def set_working(self, path: str, working: bool) -> None:
         self._model.set_working(path, working)
         if self._model.any_working():
@@ -366,7 +494,13 @@ class RepoSidebar(QWidget):
 
     # ── signals ──
 
-    def _on_current_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
+    def _on_current_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
+        # Mark the row we're leaving as "last focused" so the user can spot
+        # where they were before. Subject to priority rules in
+        # RepoListModel.set_last_focused — won't overwrite Stop/Notification.
+        prev_repo = self._model.repo_at(previous.row()) if previous.isValid() else None
+        if prev_repo is not None:
+            self._model.set_last_focused(prev_repo.path)
         repo = self._model.repo_at(current.row()) if current.isValid() else None
         if repo is not None:
             self._model.clear_status(repo.path)

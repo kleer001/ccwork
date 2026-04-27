@@ -12,6 +12,12 @@ File: `~/.config/ccwork/settings.json`
         "bg": "#1e1e1e",
         "fg": "#d0d0d0",
         "extra_args": []
+      },
+      "ui": {
+        "sidebar_side": "left",
+        "sidebar_width": 240,
+        "restore_last_repo": true,
+        "desktop_notifications": true
       }
     }
 
@@ -84,6 +90,20 @@ class XtermSettings:
             " Ctrl Shift <Key>C: copy-selection(CLIPBOARD) \\n"
             " Ctrl Shift <Key>V: insert-selection(CLIPBOARD)",
         ]
+        # Make the Athena scrollbar drag with Btn1 like every other GUI on
+        # earth. xterm's default is Xaw's quirky "Btn1=line-down, Btn2=drag,
+        # Btn3=line-up" — left-click-drag does nothing, which is the #1
+        # confused-user complaint. Scoped to the scrollbar widget only, so
+        # Btn1 in the VT100 area (selection) and Btn2 anywhere (paste) are
+        # untouched. Btn3 line-scroll-up stays at the Xaw default since we
+        # only #override Btn1.
+        args += [
+            "-xrm",
+            "XTerm*scrollbar.translations: #override"
+            " <Btn1Down>: StartScroll(Continuous) MoveThumb() NotifyThumb() \\n"
+            " <Btn1Motion>: MoveThumb() NotifyThumb() \\n"
+            " <Btn1Up>: NotifyScroll(Proportional) EndScroll()",
+        ]
         # Let OSC 50 resize/reface the font at runtime. xterm's default is
         # false (a shared-tty hardening); we embed our own xterm per repo so
         # the threat model is fine. Using the specific class path leaves
@@ -94,8 +114,24 @@ class XtermSettings:
 
 
 @dataclass
+class UISettings:
+    sidebar_side: str = "left"           # "left" | "right"
+    sidebar_width: int = 240             # px; persisted across sessions
+    restore_last_repo: bool = True       # auto-open last_focused_repo at launch
+    desktop_notifications: bool = True   # gate ccwork-hook-sink's notify-send
+    # "dot" = colored circle (default); "glyph" = colored "!"/"✓"/"·" — the
+    # glyph variant is more legible at a glance and colorblind-friendlier.
+    status_badge_style: str = "dot"
+
+
+@dataclass
 class Settings:
     xterm: XtermSettings = field(default_factory=XtermSettings)
+    ui: UISettings = field(default_factory=UISettings)
+    # Path of the repo whose row was most recently selected. Drives the
+    # violet "last-focused" dot so the user can spot where they left off
+    # after closing and reopening ccwork.
+    last_focused_repo: str | None = None
     # Raw loaded JSON so unknown keys round-trip on save.
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -126,7 +162,26 @@ def load_settings(path: Path | None = None) -> Settings:
         fg=str(x_raw.get("fg", defaults.fg)),
         extra_args=list(x_raw.get("extra_args", defaults.extra_args)),
     )
-    return Settings(xterm=xterm, _raw=data)
+    u_raw = data.get("ui", {}) if isinstance(data.get("ui"), dict) else {}
+    u_def = UISettings()
+    side = str(u_raw.get("sidebar_side", u_def.sidebar_side)).lower()
+    if side not in ("left", "right"):
+        side = u_def.sidebar_side
+    badge_style = str(u_raw.get("status_badge_style", u_def.status_badge_style)).lower()
+    if badge_style not in ("dot", "glyph"):
+        badge_style = u_def.status_badge_style
+    ui = UISettings(
+        sidebar_side=side,
+        sidebar_width=max(60, min(600, int(u_raw.get("sidebar_width", u_def.sidebar_width)))),
+        restore_last_repo=bool(u_raw.get("restore_last_repo", u_def.restore_last_repo)),
+        desktop_notifications=bool(u_raw.get("desktop_notifications", u_def.desktop_notifications)),
+        status_badge_style=badge_style,
+    )
+
+    last_focused = data.get("last_focused_repo")
+    if not isinstance(last_focused, str):
+        last_focused = None
+    return Settings(xterm=xterm, ui=ui, last_focused_repo=last_focused, _raw=data)
 
 
 def save_settings(settings: Settings, path: Path | None = None) -> None:
@@ -137,6 +192,11 @@ def save_settings(settings: Settings, path: Path | None = None) -> None:
     payload: dict[str, Any] = dict(settings._raw)
     payload["version"] = SCHEMA_VERSION
     payload["xterm"] = asdict(settings.xterm)
+    payload["ui"] = asdict(settings.ui)
+    if settings.last_focused_repo:
+        payload["last_focused_repo"] = settings.last_focused_repo
+    else:
+        payload.pop("last_focused_repo", None)
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2) + "\n")
     os.replace(tmp, p)

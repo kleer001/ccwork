@@ -38,11 +38,11 @@ from PySide6.QtWidgets import (
 
 from src.core.hook_server import HookServer
 from src.core.repo_store import Repo, RepoStore
-from src.core.settings import Settings, load_settings
+from src.core.settings import Settings, load_settings, save_settings
 from src.core.terminal_session import build_session
 from src.ui.preferences_dialog import PreferencesDialog
 from src.ui.qt_theme import apply_theme
-from src.ui.repo_sidebar import RepoSidebar
+from src.ui.repo_sidebar import RepoSidebar, _norm as _norm_path
 from src.ui.terminal_host import TerminalHost
 from src.ui.title_label import TitleLabel
 
@@ -102,11 +102,16 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentWidget(self._empty_placeholder)
 
         splitter = QSplitter(Qt.Horizontal, self)
-        splitter.addWidget(self._sidebar)
-        splitter.addWidget(self._stack)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([240, 1000])
+        self._splitter = splitter
+        # Debounce sidebar-width persistence: drags fire splitterMoved many
+        # times per second, but we only need to write the final value.
+        self._sidebar_save_timer = QTimer(self)
+        self._sidebar_save_timer.setInterval(300)
+        self._sidebar_save_timer.setSingleShot(True)
+        self._sidebar_save_timer.timeout.connect(self._persist_settings_now)
+        self._apply_sidebar_layout()
+        self._sidebar.set_badge_style(self._settings.ui.status_badge_style)
+        splitter.splitterMoved.connect(self._on_splitter_moved)
 
         # ── assemble ──
         central = QWidget(self)
@@ -126,6 +131,22 @@ class MainWindow(QMainWindow):
         self._sidebar.reload_requested.connect(self._reload_terminal)
         self._sidebar.repo_removed.connect(self._on_repo_removed)
         self._hook_server.event_received.connect(self._on_hook_event)
+
+        # Light the "last focused" violet dot on the repo the user was on
+        # when they last closed ccwork. Visible until they click that row
+        # (which clears it as part of normal selection-change behavior).
+        if self._settings.last_focused_repo:
+            self._sidebar.set_last_focused(self._settings.last_focused_repo)
+
+        # Optionally re-open that repo's terminal so the user lands where
+        # they left off. Defer one tick so the window is shown first
+        # (xterm reparents into a mapped X window).
+        if (
+            self._settings.ui.restore_last_repo
+            and self._settings.last_focused_repo
+            and self._sidebar.model.index_of(self._settings.last_focused_repo) >= 0
+        ):
+            QTimer.singleShot(0, lambda: self._sidebar.select_path(self._settings.last_focused_repo))
 
     # ── shortcuts ──
 
@@ -147,6 +168,57 @@ class MainWindow(QMainWindow):
             act.triggered.connect(slot)
             self.addAction(act)
 
+    # ── sidebar layout (side + width) ──
+
+    def _apply_sidebar_layout(self) -> None:
+        """(Re)wire the splitter to honor ui.sidebar_side and sidebar_width.
+
+        QSplitter lays children left→right in insertion order; "right side"
+        means the stack goes first, sidebar second. We use insertWidget so
+        an already-parented widget is *moved* rather than re-parented —
+        critical for the TerminalHost's embedded xterm, which would lose
+        its XEmbed if we briefly setParent(None) it.
+        """
+        sp = self._splitter
+        side = self._settings.ui.sidebar_side
+        width = max(60, min(600, int(self._settings.ui.sidebar_width)))
+        if side == "right":
+            sp.insertWidget(0, self._stack)
+            sp.insertWidget(1, self._sidebar)
+            sp.setStretchFactor(0, 1)
+            sp.setStretchFactor(1, 0)
+            total = max(sp.width(), width + 600)
+            sp.setSizes([total - width, width])
+        else:
+            sp.insertWidget(0, self._sidebar)
+            sp.insertWidget(1, self._stack)
+            sp.setStretchFactor(0, 0)
+            sp.setStretchFactor(1, 1)
+            total = max(sp.width(), width + 600)
+            sp.setSizes([width, total - width])
+
+    def _on_splitter_moved(self, *_: object) -> None:
+        """Note the dragged sidebar width and queue a debounced persist.
+
+        splitterMoved fires once per drag pixel; without coalescing we'd
+        rewrite settings.json dozens of times per drag.
+        """
+        sizes = self._splitter.sizes()
+        if len(sizes) != 2:
+            return
+        side = self._settings.ui.sidebar_side
+        new_width = sizes[1] if side == "right" else sizes[0]
+        if new_width <= 0 or new_width == self._settings.ui.sidebar_width:
+            return
+        self._settings.ui.sidebar_width = int(new_width)
+        self._sidebar_save_timer.start()  # restart resets the 300ms window
+
+    def _persist_settings_now(self) -> None:
+        try:
+            save_settings(self._settings)
+        except OSError as e:
+            log.warning("could not persist settings: %s", e)
+
     def _open_preferences(self) -> None:
         dlg = PreferencesDialog(self._settings, self)
         dlg.applied.connect(self._on_settings_changed)
@@ -155,6 +227,11 @@ class MainWindow(QMainWindow):
     def _on_settings_changed(self, settings: Settings) -> None:
         # Keep the reference in sync so new terminal spawns pick it up.
         self._settings = settings
+
+        # Re-apply sidebar side / width — cheap, and the only way the user
+        # sees their UI-tab edits without restarting.
+        self._apply_sidebar_layout()
+        self._sidebar.set_badge_style(settings.ui.status_badge_style)
 
         # Repaint the Qt chrome with the same palette as the terminal.
         app = QApplication.instance()
@@ -192,7 +269,7 @@ class MainWindow(QMainWindow):
 
     def _on_repo_removed(self, path: str) -> None:
         """A repo was removed from the sidebar — also tear down its terminal."""
-        self._working.discard(path)
+        self._working.discard(_norm_path(path))
         host = self._terminals.pop(path, None)
         if host is not None:
             was_current = self._stack.currentWidget() is host
@@ -348,6 +425,14 @@ class MainWindow(QMainWindow):
         host = self._ensure_terminal(repo)
         self._stack.setCurrentWidget(host)
         host.focus_child()
+        # Persist so the violet dot can be restored next launch. Best-effort:
+        # a write failure here shouldn't block the click.
+        if self._settings.last_focused_repo != repo.path:
+            self._settings.last_focused_repo = repo.path
+            try:
+                save_settings(self._settings)
+            except OSError as e:
+                log.warning("could not persist last_focused_repo: %s", e)
 
     def changeEvent(self, event) -> None:
         # When the window gains activation (alt-tab, taskbar click), forward
@@ -375,7 +460,7 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, f"xterm failed for {repo.name}", msg)
 
     def _on_terminal_finished(self, repo: Repo, code: int) -> None:
-        self._working.discard(repo.path)
+        self._working.discard(_norm_path(repo.path))
         self._sidebar.set_working(repo.path, False)
         host = self._terminals.pop(repo.path, None)
         was_current = host is not None and self._stack.currentWidget() is host
@@ -392,21 +477,27 @@ class MainWindow(QMainWindow):
         event = str(obj.get("event", ""))
         payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else {}
         cwd = obj.get("cwd") or (payload.get("cwd") if isinstance(payload, dict) else None)
+        log.info(
+            "hook event=%s cwd=%r matched_row=%s",
+            event, cwd,
+            self._sidebar.model.index_of(str(cwd)) if cwd else "no-cwd",
+        )
 
         # Track Claude's mid-turn state. UserPromptSubmit means the user
         # just sent a prompt; Stop/Notification mean Claude is done or
         # waiting for input. Drives both the close-confirmation prompt and
         # the per-repo status badge in the sidebar.
         if cwd:
+            cwd_key = _norm_path(str(cwd))
             if event == "UserPromptSubmit":
-                self._working.add(str(cwd))
+                self._working.add(cwd_key)
                 # User just engaged this repo — clear any stale status dot
                 # and start the spinner.
                 self._sidebar.clear_status(str(cwd))
                 self._sidebar.set_working(str(cwd), True)
                 return
             if event in ("Stop", "Notification"):
-                self._working.discard(str(cwd))
+                self._working.discard(cwd_key)
                 self._sidebar.set_working(str(cwd), False)
 
         if event == "RepoAdded" and cwd:
@@ -438,8 +529,12 @@ class MainWindow(QMainWindow):
         # Only nag when Claude is mid-turn somewhere — an idle shell sitting
         # at a prompt is fine to kill silently. Working state is tracked via
         # UserPromptSubmit / Stop / Notification hooks.
-        working = [p for p in self._working if p in self._terminals
-                   and self._terminals[p].is_running()]
+        # _working is keyed by realpath; _terminals is keyed by the raw
+        # repo.path the sidebar handed us. Map back to the raw key so the
+        # is_running check lines up.
+        norm_to_raw = {_norm_path(k): k for k in self._terminals}
+        working = [norm_to_raw[p] for p in self._working
+                   if p in norm_to_raw and self._terminals[norm_to_raw[p]].is_running()]
         if working:
             names = ", ".join(os.path.basename(p.rstrip("/")) or p for p in working)
             ans = QMessageBox.question(
