@@ -24,8 +24,12 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_settings.py::tes
 CCWORK_LOG=DEBUG ./bin/ccwork
 ```
 
-There is no separate lint/format step configured. Dependencies are pinned in
-`requirements.txt` (`PySide6>=6.6`, `pytest`, `pytest-cov`).
+Code-quality checks run via `bin/ccwork-check` (ruff + mypy strict +
+pylint duplicate-code). `bin/ccwork-check --fix` also applies ruff
+auto-fixes and `ruff format`. Dev tools live in `requirements-dev.txt`
+(`.venv/bin/python -m pip install -r requirements-dev.txt`); runtime
+dependencies stay pinned in `requirements.txt` (`PySide6>=6.6`, `pytest`,
+`pytest-cov`). The check is manual-only — CI still runs only `pytest`.
 
 ## Platform constraint
 

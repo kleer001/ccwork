@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
-
 from src.core import xterm_osc
 from src.core.settings import XtermSettings
 
@@ -41,7 +39,9 @@ def test_write_to_pty_writes_to_real_file(tmp_path: Path) -> None:
     assert p.read_bytes() == b"hello"
 
 
-def test_apply_live_returns_restart_only_fields_when_pty_reachable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_live_returns_restart_only_fields_when_pty_reachable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Force find_child_pty + write_to_pty to succeed with a fake PTY."""
     sink = tmp_path / "sink"
     sink.touch()

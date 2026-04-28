@@ -6,8 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from src.core import settings as S
+from src.core import settings as S  # noqa: N812
 
 
 def test_defaults_are_sensible() -> None:
@@ -78,7 +77,9 @@ def test_load_missing_file_returns_defaults(tmp_path: Path) -> None:
     assert s.xterm == S.XtermSettings()
 
 
-def test_load_corrupt_json_returns_defaults(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_load_corrupt_json_returns_defaults(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     p = tmp_path / "settings.json"
     p.write_text("{not json")
     import logging

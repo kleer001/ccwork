@@ -18,10 +18,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from dataclasses import dataclass, field, asdict
+from collections.abc import Iterator
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterator
-
 
 SCHEMA_VERSION = 1
 
@@ -145,6 +144,7 @@ def is_git_root(path: str | os.PathLike[str]) -> bool:
             capture_output=True,
             text=True,
             timeout=2,
+            check=False,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
@@ -168,6 +168,7 @@ def current_branch(path: str | os.PathLike[str]) -> str | None:
             capture_output=True,
             text=True,
             timeout=2,
+            check=False,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None

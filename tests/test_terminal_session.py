@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from src.core import terminal_session
 from src.core.repo_store import Repo
 

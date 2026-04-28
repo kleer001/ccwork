@@ -17,7 +17,7 @@ import copy
 import shlex
 from dataclasses import dataclass
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.settings import Settings, UISettings, XtermSettings, save_settings
-
+from src.ui.qt_theme import LIGHTNESS_MIDPOINT
 
 # ── Color-scheme presets ────────────────────────────────────────────────────
 # Curated: three dark and three light well-known schemes. Users can always
@@ -100,7 +100,7 @@ class _ColorButton(QPushButton):
     def _refresh(self) -> None:
         name = self._color.name(QColor.HexRgb)
         self.setText(name)
-        fg = "#000" if self._color.lightness() > 128 else "#fff"
+        fg = "#000" if self._color.lightness() > LIGHTNESS_MIDPOINT else "#fff"
         self.setStyleSheet(f"background: {name}; color: {fg}; border: 1px solid #888;")
 
     def _pick(self) -> None:
@@ -220,7 +220,9 @@ class PreferencesDialog(QDialog):
         self._scheme = QComboBox(w)
         self._populate_scheme_combo()
         # Select scheme matching current bg/fg, else "Custom".
-        self._scheme.setCurrentText(self._match_scheme_name(self._settings.xterm.bg, self._settings.xterm.fg))
+        self._scheme.setCurrentText(
+            self._match_scheme_name(self._settings.xterm.bg, self._settings.xterm.fg)
+        )
         self._scheme.currentIndexChanged.connect(self._on_scheme_picked)
         form.addRow("Preset", self._scheme)
 

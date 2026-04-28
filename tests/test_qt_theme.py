@@ -4,20 +4,14 @@ from __future__ import annotations
 
 import os
 
-import pytest
-
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
-
 from src.core.settings import Settings, XtermSettings
 from src.ui import qt_theme
 
-
-@pytest.fixture(scope="session")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
+# The shared `qapp` fixture lives in tests/conftest.py.
 
 
 def _hex(color: QColor) -> str:

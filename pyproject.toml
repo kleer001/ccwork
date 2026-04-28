@@ -1,0 +1,68 @@
+# Tool configuration for ccwork. Build/packaging metadata is intentionally
+# omitted — this project is run from a checkout, not installed as a wheel.
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "B",    # flake8-bugbear (real bug patterns)
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify (DRY-adjacent)
+    "UP",   # pyupgrade
+    "RET",  # flake8-return
+    "ARG",  # flake8-unused-arguments
+    "N",    # pep8-naming
+    "C90",  # mccabe complexity
+    "PL",   # pylint subset (SOLID-flavored design smells)
+    "RUF",  # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests routinely use literal expected values and unused fixture args.
+"tests/*" = ["PLR2004", "ARG"]
+# Qt overrides force camelCase method names (closeEvent, paintEvent,
+# mousePressEvent, etc.) and pass framework-supplied args we may not use.
+# QModelIndex()-as-default and idx.row()-as-default match Qt's own model API.
+"src/ui/*" = ["N802", "ARG002", "B008"]
+# Qt model data() dispatches by role; refactoring its branch chain
+# obscures the role table without improving safety.
+"src/ui/repo_sidebar.py" = ["N802", "ARG002", "B008", "PLR0911"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-args = 6
+max-branches = 12
+max-statements = 50
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+# `from src.core...` style imports — `src` is the package name.
+# We pass `src tests` on the CLI from bin/ccwork-check, so no `files` here.
+
+[[tool.mypy.overrides]]
+# PySide6 ships PEP 561 stubs, but its dynamic signal/slot machinery still
+# trips strict mypy in places. Keep this override available; tighten later.
+module = "PySide6.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# PySide6 6.x stubs only expose scoped enum names (e.g. Qt.AlignmentFlag.AlignLeft).
+# The flat aliases (Qt.AlignLeft, Qt.UserRole, QPalette.Window, etc.) work at
+# runtime via shiboken's compat shim but aren't in the stubs. Rewriting every
+# call site to the verbose scoped form is churn for no real bug-detection
+# value — a typo on either form blows up at first widget paint and is caught
+# by the test suite. We keep the rest of strict mypy (missing annotations,
+# type mismatches, Optional handling, Liskov, no-any-return) which is where
+# the actual bugs live.
+module = ["src.ui.*", "tests.test_qt_theme", "tests.test_zoom", "tests.test_preferences_dialog"]
+disable_error_code = ["attr-defined"]

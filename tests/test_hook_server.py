@@ -13,17 +13,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer
 from PySide6.QtNetwork import QLocalSocket
-from PySide6.QtWidgets import QApplication
-
 from src.core.hook_server import HookServer, default_socket_path
 
-
-@pytest.fixture(scope="session")
-def qapp() -> QCoreApplication:
-    # Use QApplication (superset of QCoreApplication) so GUI tests elsewhere
-    # in the session can share the same instance — Qt forbids switching
-    # from QCoreApplication to QApplication within a single process.
-    return QApplication.instance() or QApplication([])
+# The shared `qapp` fixture lives in tests/conftest.py.
 
 
 def _spin(app: QCoreApplication, ms: int = 200) -> None:
@@ -33,7 +25,7 @@ def _spin(app: QCoreApplication, ms: int = 200) -> None:
     loop.exec()
 
 
-def _send(sock_path: Path, obj: dict) -> None:
+def _send(sock_path: Path, obj: dict[str, object]) -> None:
     client = QLocalSocket()
     client.connectToServer(str(sock_path))
     assert client.waitForConnected(1000), f"client connect failed: {client.errorString()}"
@@ -44,7 +36,9 @@ def _send(sock_path: Path, obj: dict) -> None:
     client.close()
 
 
-def test_default_socket_path_prefers_xdg_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_default_socket_path_prefers_xdg_runtime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     assert default_socket_path() == tmp_path / "ccwork" / "ccwork.sock"
 
@@ -57,7 +51,7 @@ def test_default_socket_path_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_server_starts_and_receives_event(qapp: QCoreApplication, tmp_path: Path) -> None:
     sock = tmp_path / "ccwork.sock"
     srv = HookServer(socket_path=sock)
-    events: list[dict] = []
+    events: list[dict[str, object]] = []
     srv.event_received.connect(events.append)
     srv.start()
     assert sock.exists()
@@ -74,7 +68,7 @@ def test_server_starts_and_receives_event(qapp: QCoreApplication, tmp_path: Path
 def test_server_handles_multiple_lines_in_one_send(qapp: QCoreApplication, tmp_path: Path) -> None:
     sock = tmp_path / "ccwork.sock"
     srv = HookServer(socket_path=sock)
-    events: list[dict] = []
+    events: list[dict[str, object]] = []
     srv.event_received.connect(events.append)
     srv.start()
 
@@ -99,7 +93,7 @@ def test_server_handles_split_writes(qapp: QCoreApplication, tmp_path: Path) -> 
     """A single JSON line split across two socket writes still dispatches once."""
     sock = tmp_path / "ccwork.sock"
     srv = HookServer(socket_path=sock)
-    events: list[dict] = []
+    events: list[dict[str, object]] = []
     srv.event_received.connect(events.append)
     srv.start()
 
@@ -122,7 +116,7 @@ def test_server_handles_split_writes(qapp: QCoreApplication, tmp_path: Path) -> 
 def test_server_ignores_malformed_json(qapp: QCoreApplication, tmp_path: Path) -> None:
     sock = tmp_path / "ccwork.sock"
     srv = HookServer(socket_path=sock)
-    events: list[dict] = []
+    events: list[dict[str, object]] = []
     srv.event_received.connect(events.append)
     srv.start()
 
@@ -153,10 +147,12 @@ def test_server_cleans_stale_socket_file(qapp: QCoreApplication, tmp_path: Path)
     srv.stop()
 
 
-def test_server_accepts_trailing_line_without_newline(qapp: QCoreApplication, tmp_path: Path) -> None:
+def test_server_accepts_trailing_line_without_newline(
+    qapp: QCoreApplication, tmp_path: Path
+) -> None:
     sock = tmp_path / "ccwork.sock"
     srv = HookServer(socket_path=sock)
-    events: list[dict] = []
+    events: list[dict[str, object]] = []
     srv.event_received.connect(events.append)
     srv.start()
 
