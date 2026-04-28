@@ -21,9 +21,17 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Any
 
-from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QColor,
+    QKeySequence,
+    QPainter,
+    QPaintEvent,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -42,12 +50,15 @@ from src.core.settings import Settings, load_settings, save_settings
 from src.core.terminal_session import build_session
 from src.ui.preferences_dialog import PreferencesDialog
 from src.ui.qt_theme import apply_theme
-from src.ui.repo_sidebar import RepoSidebar, _norm as _norm_path
+from src.ui.repo_sidebar import RepoSidebar
+from src.ui.repo_sidebar import _norm as _norm_path
 from src.ui.terminal_host import TerminalHost
 from src.ui.title_label import TitleLabel
 
-
 log = logging.getLogger(__name__)
+
+# Sidebar + stack — QSplitter.sizes() always returns exactly two panes here.
+_SPLITTER_PANE_COUNT = 2
 
 
 class MainWindow(QMainWindow):
@@ -56,7 +67,7 @@ class MainWindow(QMainWindow):
         store: RepoStore,
         hook_server: HookServer,
         settings: Settings | None = None,
-        parent=None,
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("ccwork")
@@ -72,7 +83,15 @@ class MainWindow(QMainWindow):
         # only nag when there's actual in-flight work to lose.
         self._working: set[str] = set()
 
-        # ── top strip: centered repo · branch + right-side icon cluster ──
+        top = self._build_top_strip()
+        self._build_body()
+        self._assemble_central(top)
+        self._install_shortcuts()
+        self._wire_signals()
+        self._restore_last_focused()
+
+    def _build_top_strip(self) -> QWidget:
+        """Centered repo · branch label + right-side icon cluster."""
         self._title = TitleLabel(self)
 
         self._bell_btn = _BellButton(self)
@@ -80,7 +99,7 @@ class MainWindow(QMainWindow):
         self._bell_btn.clicked.connect(lambda: self._bell_btn.set_unseen(False))
 
         self._gear_btn = QToolButton(self)
-        self._gear_btn.setText("⚙")        # ⚙
+        self._gear_btn.setText("⚙")
         self._gear_btn.setToolTip("Preferences (Ctrl+,)")
         self._gear_btn.setAutoRaise(True)
         self._gear_btn.clicked.connect(self._open_preferences)
@@ -93,16 +112,17 @@ class MainWindow(QMainWindow):
         top_lay.addWidget(self._bell_btn, 0)
         top_lay.addWidget(self._gear_btn, 0)
         top.setFixedHeight(32)
+        return top
 
-        # ── body: sidebar + terminal stack ──
+    def _build_body(self) -> None:
+        """Sidebar + terminal stack inside a debounced-persist QSplitter."""
         self._sidebar = RepoSidebar(self._store, self)
         self._stack = QStackedWidget(self)
         self._empty_placeholder = self._make_empty_placeholder()
         self._stack.addWidget(self._empty_placeholder)
         self._stack.setCurrentWidget(self._empty_placeholder)
 
-        splitter = QSplitter(Qt.Horizontal, self)
-        self._splitter = splitter
+        self._splitter = QSplitter(Qt.Horizontal, self)
         # Debounce sidebar-width persistence: drags fire splitterMoved many
         # times per second, but we only need to write the final value.
         self._sidebar_save_timer = QTimer(self)
@@ -111,27 +131,25 @@ class MainWindow(QMainWindow):
         self._sidebar_save_timer.timeout.connect(self._persist_settings_now)
         self._apply_sidebar_layout()
         self._sidebar.set_badge_style(self._settings.ui.status_badge_style)
-        splitter.splitterMoved.connect(self._on_splitter_moved)
+        self._splitter.splitterMoved.connect(self._on_splitter_moved)
 
-        # ── assemble ──
+    def _assemble_central(self, top: QWidget) -> None:
         central = QWidget(self)
         v = QVBoxLayout(central)
         v.setContentsMargins(6, 6, 6, 6)
         v.setSpacing(4)
         v.addWidget(top)
-        v.addWidget(splitter, 1)
+        v.addWidget(self._splitter, 1)
         self.setCentralWidget(central)
 
-        # ── shortcuts (no menu bar — actions are window-level) ──
-        self._install_shortcuts()
-
-        # ── wiring ──
+    def _wire_signals(self) -> None:
         self._sidebar.repo_selected.connect(self._on_repo_selected)
         self._sidebar.repo_added.connect(self._on_repo_added)
         self._sidebar.reload_requested.connect(self._reload_terminal)
         self._sidebar.repo_removed.connect(self._on_repo_removed)
         self._hook_server.event_received.connect(self._on_hook_event)
 
+    def _restore_last_focused(self) -> None:
         # Light the "last focused" violet dot on the repo the user was on
         # when they last closed ccwork. Visible until they click that row
         # (which clears it as part of normal selection-change behavior).
@@ -141,12 +159,13 @@ class MainWindow(QMainWindow):
         # Optionally re-open that repo's terminal so the user lands where
         # they left off. Defer one tick so the window is shown first
         # (xterm reparents into a mapped X window).
+        last = self._settings.last_focused_repo
         if (
             self._settings.ui.restore_last_repo
-            and self._settings.last_focused_repo
-            and self._sidebar.model.index_of(self._settings.last_focused_repo) >= 0
+            and last
+            and self._sidebar.model.index_of(last) >= 0
         ):
-            QTimer.singleShot(0, lambda: self._sidebar.select_path(self._settings.last_focused_repo))
+            QTimer.singleShot(0, lambda: self._sidebar.select_path(last))
 
     # ── shortcuts ──
 
@@ -204,7 +223,7 @@ class MainWindow(QMainWindow):
         rewrite settings.json dozens of times per drag.
         """
         sizes = self._splitter.sizes()
-        if len(sizes) != 2:
+        if len(sizes) != _SPLITTER_PANE_COUNT:
             return
         side = self._settings.ui.sidebar_side
         new_width = sizes[1] if side == "right" else sizes[0]
@@ -235,7 +254,7 @@ class MainWindow(QMainWindow):
 
         # Repaint the Qt chrome with the same palette as the terminal.
         app = QApplication.instance()
-        if app is not None:
+        if isinstance(app, QApplication):
             apply_theme(app, settings)
 
         # Live-apply what we can (colors + font face + size) to every running
@@ -258,7 +277,8 @@ class MainWindow(QMainWindow):
         # open terminal might want a reload to fully match. Keep the hint
         # brief; users who care will right-click → Reload.
         bar = self.statusBar()
-        if needs_restart_fields & {"font_size", "scrollback", "scrollbar", "jump_scroll", "extra_args"}:
+        restart_only_fields = {"font_size", "scrollback", "scrollbar", "jump_scroll", "extra_args"}
+        if needs_restart_fields & restart_only_fields:
             bar.showMessage(
                 "Colors applied live. Right-click a repo → Reload terminal to "
                 "pick up font-size / scrollback / scrollbar changes.",
@@ -343,7 +363,7 @@ class MainWindow(QMainWindow):
 
     # ── terminal context menu ──
 
-    def _on_terminal_context_menu(self, repo: Repo, global_pos) -> None:
+    def _on_terminal_context_menu(self, repo: Repo, global_pos: QPoint) -> None:
         """Right-click-in-terminal menu: Paste, Reload, Prefs, plus a
         disabled hint row pointing at Ctrl+Shift+C for Copy (xterm owns the
         selection so only it can write it to the clipboard)."""
@@ -434,7 +454,7 @@ class MainWindow(QMainWindow):
             except OSError as e:
                 log.warning("could not persist last_focused_repo: %s", e)
 
-    def changeEvent(self, event) -> None:
+    def changeEvent(self, event: QEvent) -> None:
         # When the window gains activation (alt-tab, taskbar click), forward
         # X input focus to the currently selected repo's xterm. Deferred to
         # the next tick so Qt's own activation bookkeeping has settled.
@@ -450,7 +470,8 @@ class MainWindow(QMainWindow):
         row = self._sidebar.model.index_of(path)
         if row < 0:
             return None
-        return self._sidebar.model.data(self._sidebar.model.index(row), ROLE_BRANCH)
+        result = self._sidebar.model.data(self._sidebar.model.index(row), ROLE_BRANCH)
+        return result if isinstance(result, str) else None
 
     def _on_repo_added(self, repo: Repo) -> None:
         self._sidebar.refresh_branches()
@@ -473,7 +494,7 @@ class MainWindow(QMainWindow):
             self._stack.setCurrentWidget(self._empty_placeholder)
         log.info("terminal for %s exited (code=%d)", repo.path, code)
 
-    def _on_hook_event(self, obj: dict) -> None:
+    def _on_hook_event(self, obj: dict[str, Any]) -> None:
         event = str(obj.get("event", ""))
         payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else {}
         cwd = obj.get("cwd") or (payload.get("cwd") if isinstance(payload, dict) else None)
@@ -525,7 +546,7 @@ class MainWindow(QMainWindow):
 
     # ── lifecycle ──
 
-    def closeEvent(self, event) -> None:  # type: ignore[override]
+    def closeEvent(self, event: QCloseEvent) -> None:
         # Only nag when Claude is mid-turn somewhere — an idle shell sitting
         # at a prompt is fine to kill silently. Working state is tracked via
         # UserPromptSubmit / Stop / Notification hooks.
@@ -562,7 +583,7 @@ class _BellButton(QToolButton):
     DOT_COLOR = QColor(220, 80, 80)
     DOT_D = 7
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setText("🔔")
         self.setAutoRaise(True)
@@ -573,7 +594,7 @@ class _BellButton(QToolButton):
             self._unseen = on
             self.update()
 
-    def paintEvent(self, ev) -> None:  # type: ignore[override]
+    def paintEvent(self, ev: QPaintEvent) -> None:
         super().paintEvent(ev)
         if not self._unseen:
             return

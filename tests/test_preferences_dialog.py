@@ -15,14 +15,10 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
-
 from src.core.settings import Settings, UISettings, XtermSettings, load_settings
-from src.ui import preferences_dialog as PD
+from src.ui import preferences_dialog as PD  # noqa: N812
 
-
-@pytest.fixture(scope="session")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
+# The shared `qapp` fixture lives in tests/conftest.py.
 
 
 def test_three_dark_three_light_exactly() -> None:

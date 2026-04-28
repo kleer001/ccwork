@@ -8,7 +8,9 @@ TerminalHost need a real X server, so they're excluded.
 from __future__ import annotations
 
 import os
-import tempfile
+from collections.abc import Iterator
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -16,22 +18,26 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
-
+from src.core.hook_server import HookServer
 from src.core.repo_store import RepoStore
 from src.core.settings import Settings, XtermSettings, save_settings
+
+# The shared `qapp` fixture lives in tests/conftest.py.
+
+if TYPE_CHECKING:
+    from src.ui.main_window import MainWindow
 
 
 class _StubHookServer(QObject):
     event_received = Signal(dict)
 
 
-@pytest.fixture(scope="session")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture
-def main_window(qapp: QApplication, tmp_path, monkeypatch: pytest.MonkeyPatch):
+def main_window(
+    qapp: QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[MainWindow]:
     # Redirect the settings path so load_settings() in _on_zoom_requested
     # doesn't touch the user's real config.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -40,7 +46,12 @@ def main_window(qapp: QApplication, tmp_path, monkeypatch: pytest.MonkeyPatch):
     store = RepoStore()
     store.load()
     from src.ui.main_window import MainWindow  # import after env override
-    win = MainWindow(store=store, hook_server=_StubHookServer(), settings=Settings(xterm=XtermSettings(font_size=10)))
+    settings = Settings(xterm=XtermSettings(font_size=10))
+    win = MainWindow(
+        store=store,
+        hook_server=cast(HookServer, _StubHookServer()),
+        settings=settings,
+    )
     yield win
     win.close()
 
@@ -63,7 +74,7 @@ class _RecordingHost:
         return False
 
 
-def test_zoom_in_increments_font_size(main_window) -> None:
+def test_zoom_in_increments_font_size(main_window: MainWindow) -> None:
     host = _RecordingHost()
     main_window._terminals["/fake"] = host  # type: ignore[assignment]
     main_window._on_zoom_requested(+1)
@@ -71,7 +82,7 @@ def test_zoom_in_increments_font_size(main_window) -> None:
     assert host.applied == [11]
 
 
-def test_zoom_out_decrements_font_size(main_window) -> None:
+def test_zoom_out_decrements_font_size(main_window: MainWindow) -> None:
     host = _RecordingHost()
     main_window._terminals["/fake"] = host  # type: ignore[assignment]
     main_window._on_zoom_requested(-1)
@@ -79,7 +90,7 @@ def test_zoom_out_decrements_font_size(main_window) -> None:
     assert host.applied == [9]
 
 
-def test_zoom_clamps_at_upper_bound(main_window) -> None:
+def test_zoom_clamps_at_upper_bound(main_window: MainWindow) -> None:
     main_window._settings.xterm.font_size = 48
     host = _RecordingHost()
     main_window._terminals["/fake"] = host  # type: ignore[assignment]
@@ -89,7 +100,7 @@ def test_zoom_clamps_at_upper_bound(main_window) -> None:
     assert host.applied == []
 
 
-def test_zoom_clamps_at_lower_bound(main_window) -> None:
+def test_zoom_clamps_at_lower_bound(main_window: MainWindow) -> None:
     main_window._settings.xterm.font_size = 6
     host = _RecordingHost()
     main_window._terminals["/fake"] = host  # type: ignore[assignment]
@@ -98,7 +109,7 @@ def test_zoom_clamps_at_lower_bound(main_window) -> None:
     assert host.applied == []
 
 
-def test_zoom_reset_reloads_from_disk(main_window, tmp_path) -> None:
+def test_zoom_reset_reloads_from_disk(main_window: MainWindow, tmp_path: Path) -> None:
     # Persist a known size, then nudge in-memory to something else, then
     # reset and confirm we're back to the persisted value.
     save_settings(Settings(xterm=XtermSettings(font_size=13)))
@@ -110,7 +121,7 @@ def test_zoom_reset_reloads_from_disk(main_window, tmp_path) -> None:
     assert host.applied == [13]
 
 
-def test_zoom_applies_to_every_terminal(main_window) -> None:
+def test_zoom_applies_to_every_terminal(main_window: MainWindow) -> None:
     h1, h2, h3 = _RecordingHost(), _RecordingHost(), _RecordingHost()
     main_window._terminals["/a"] = h1  # type: ignore[assignment]
     main_window._terminals["/b"] = h2  # type: ignore[assignment]

@@ -13,21 +13,20 @@ MVP limitations:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import shutil
 import signal
-from typing import Sequence
+from collections.abc import Sequence
 
-from PySide6.QtCore import QProcess, QTimer, Signal, Qt
-from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent
+from PySide6.QtCore import QProcess, Qt, QTimer, Signal
+from PySide6.QtGui import QCloseEvent, QKeyEvent, QMouseEvent, QResizeEvent, QWheelEvent
 from PySide6.QtWidgets import QWidget
 
+from src.core import x11, xterm_osc
 from src.core.settings import XtermSettings
-from src.core import x11
 from src.core.x11 import XDisplay
-from src.core import xterm_osc
-
 
 log = logging.getLogger(__name__)
 
@@ -136,14 +135,10 @@ class TerminalHost(QWidget):
             return
         # Disconnect BEFORE tearing down so a late queued finished/errorOccurred
         # can't re-enter our slots after _process is None.
-        try:
+        with contextlib.suppress(RuntimeError, TypeError):
             self._process.finished.disconnect(self._on_finished)
-        except (RuntimeError, TypeError):
-            pass
-        try:
+        with contextlib.suppress(RuntimeError, TypeError):
             self._process.errorOccurred.disconnect(self._on_error)
-        except (RuntimeError, TypeError):
-            pass
         if self._process.state() != QProcess.NotRunning:
             self._process.terminate()
             if not self._process.waitForFinished(2000):
@@ -155,7 +150,7 @@ class TerminalHost(QWidget):
             self._xdisplay.close()
             self._xdisplay = None
 
-    def closeEvent(self, event) -> None:  # type: ignore[override]
+    def closeEvent(self, event: QCloseEvent) -> None:
         self.stop()
         super().closeEvent(event)
 
@@ -219,10 +214,8 @@ class TerminalHost(QWidget):
         pid = int(self._process.processId())
         if pid <= 0:
             return
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.kill(pid, signal.SIGWINCH)
-        except ProcessLookupError:
-            pass
 
     # ── live settings ──
 
@@ -241,7 +234,7 @@ class TerminalHost(QWidget):
         """True iff the xterm QProcess is currently running."""
         if self._process is None:
             return False
-        return self._process.state() != QProcess.NotRunning
+        return bool(self._process.state() != QProcess.NotRunning)
 
     def paste_text(self, text: str) -> bool:
         """Write `text` directly to the child shell's PTY — used by the
@@ -303,7 +296,7 @@ class TerminalHost(QWidget):
 
     # ── event handlers ──
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
+    def keyPressEvent(self, event: QKeyEvent) -> None:
         # Only our grabbed combos reach Qt while xterm has focus; anything
         # else slips through to super().
         mods = event.modifiers()
@@ -330,7 +323,7 @@ class TerminalHost(QWidget):
                 return
         super().keyPressEvent(event)
 
-    def wheelEvent(self, event: QWheelEvent) -> None:  # type: ignore[override]
+    def wheelEvent(self, event: QWheelEvent) -> None:
         if event.modifiers() & Qt.ControlModifier:
             dy = event.angleDelta().y()
             if dy > 0:
@@ -341,7 +334,7 @@ class TerminalHost(QWidget):
             return
         super().wheelEvent(event)
 
-    def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         # Our Ctrl-less right-click grab routes plain Button3 to us — use
         # it to surface a Qt context menu. The xterm native Ctrl+Button3
         # options menu is untouched (we only grab plain right-click).
@@ -351,7 +344,7 @@ class TerminalHost(QWidget):
             return
         super().mousePressEvent(event)
 
-    def resizeEvent(self, event) -> None:  # type: ignore[override]
+    def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._fit_child_to_self()
 

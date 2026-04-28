@@ -10,9 +10,8 @@ fatal environment error — embedding xterm is Linux/X11-only by design.
 from __future__ import annotations
 
 import ctypes
-from ctypes import c_int, c_uint, c_ulong, c_void_p, POINTER, byref
-from typing import Optional
-
+from ctypes import POINTER, byref, c_int, c_uint, c_ulong, c_void_p
+from functools import cache
 
 Display = c_void_p
 Window = c_ulong
@@ -43,13 +42,9 @@ XK_0 = 0x0030       # '0' (reset)
 XK_Tab = 0xff09     # Tab (for Ctrl+Tab repo cycling)
 
 
-_x11: Optional[ctypes.CDLL] = None
-
-
+@cache
 def _lib() -> ctypes.CDLL:
-    global _x11
-    if _x11 is not None:
-        return _x11
+    """Load libX11 once and configure all argtypes/restypes used in this module."""
     lib = ctypes.CDLL("libX11.so.6", use_errno=True)
 
     lib.XOpenDisplay.argtypes = [ctypes.c_char_p]
@@ -90,7 +85,6 @@ def _lib() -> ctypes.CDLL:
     lib.XSetInputFocus.argtypes = [Display, Window, c_int, c_ulong]
     lib.XSetInputFocus.restype = c_int
 
-    _x11 = lib
     return lib
 
 
@@ -106,9 +100,10 @@ class XDisplay:
 
     def __init__(self, name: bytes | None = None) -> None:
         self._lib = _lib()
-        self._dpy = self._lib.XOpenDisplay(name)
-        if not self._dpy:
+        dpy: c_void_p | None = self._lib.XOpenDisplay(name)
+        if not dpy:
             raise RuntimeError("XOpenDisplay returned NULL — is $DISPLAY set?")
+        self._dpy: c_void_p | None = dpy
 
     def close(self) -> None:
         if self._dpy:
@@ -126,6 +121,7 @@ class XDisplay:
 
     @property
     def handle(self) -> Display:
+        assert self._dpy is not None, "XDisplay handle used after close()"
         return self._dpy
 
     def flush(self) -> None:
@@ -217,7 +213,9 @@ class XDisplay:
 
     def ungrab_button(self, win: int, button: int, modifiers: int) -> None:
         for extra in _LOCK_VARIANTS:
-            self._lib.XUngrabButton(self._dpy, c_uint(button), c_uint(modifiers | extra), Window(win))
+            self._lib.XUngrabButton(
+                self._dpy, c_uint(button), c_uint(modifiers | extra), Window(win)
+            )
 
     def set_input_focus(self, win: int) -> None:
         """XSetInputFocus(win, RevertToParent, CurrentTime). No-op if win==0."""

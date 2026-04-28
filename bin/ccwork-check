@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# ccwork-check — run all configured code-quality checks (ruff, mypy, pylint).
+# Usage: ccwork-check [--fix]
+#
+# --fix: also run `ruff check --fix` and `ruff format`. Safe to re-run on a
+# clean tree (no-op).
+#
+# Prefers .venv/bin/python so dev tools resolve from the project venv.
+# Each check runs independently so one failure does not mask others; the
+# script exits non-zero if any check failed.
+
+set -u
+
+ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+PY="$ROOT/.venv/bin/python"
+if [ ! -x "$PY" ]; then
+    PY=$(command -v python3) || { echo "ccwork-check: no python found" >&2; exit 2; }
+fi
+
+FIX=0
+case "${1:-}" in
+    --fix) FIX=1 ;;
+    "") ;;
+    -h|--help)
+        echo "Usage: ccwork-check [--fix]"
+        exit 0
+        ;;
+    *)
+        echo "ccwork-check: unknown arg: $1" >&2
+        exit 2
+        ;;
+esac
+
+cd "$ROOT" || exit 2
+status=0
+
+run() {
+    local name=$1
+    shift
+    printf '\n=== %s ===\n' "$name"
+    if ! "$@"; then
+        status=1
+    fi
+}
+
+if [ "$FIX" -eq 1 ]; then
+    run "ruff (fix)"    "$PY" -m ruff check --fix src tests
+    run "ruff (format)" "$PY" -m ruff format src tests
+else
+    run "ruff"          "$PY" -m ruff check src tests
+fi
+run "mypy"              "$PY" -m mypy src tests
+run "pylint dup-code"   "$PY" -m pylint --disable=all --enable=duplicate-code \
+                                        --score=n src tests
+
+echo
+if [ "$status" -eq 0 ]; then
+    echo "ccwork-check: all checks passed."
+else
+    echo "ccwork-check: failures above." >&2
+fi
+exit "$status"

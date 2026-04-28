@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+from typing import Any, ClassVar
 
 from PySide6.QtCore import (
     QAbstractListModel,
     QModelIndex,
+    QPersistentModelIndex,
     QPoint,
     QRect,
     QSize,
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QVBoxLayout,
@@ -30,7 +33,7 @@ from PySide6.QtWidgets import (
 
 from src.core import repo_store
 from src.core.repo_store import Repo, RepoStore
-
+from src.ui.qt_theme import LIGHTNESS_MIDPOINT
 
 # Custom roles — keep the model backed by a single Repo per row plus branch
 # + status. The view's delegate reads these directly. STATUS is one of:
@@ -74,7 +77,7 @@ SPINNER_INTERVAL_MS = 100
 class RepoListModel(QAbstractListModel):
     """Model backed by a RepoStore plus per-repo branch + unread counters."""
 
-    def __init__(self, store: RepoStore, parent=None) -> None:
+    def __init__(self, store: RepoStore, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._store = store
         self._branches: dict[str, str | None] = {}
@@ -83,12 +86,18 @@ class RepoListModel(QAbstractListModel):
 
     # ── Qt model API ──
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def rowCount(
+        self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()
+    ) -> int:
         if parent.isValid():
             return 0
         return len(self._store.repos)
 
-    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
+    def data(
+        self,
+        index: QModelIndex | QPersistentModelIndex,
+        role: int = Qt.DisplayRole,
+    ) -> Any:
         if not index.isValid() or index.row() >= len(self._store.repos):
             return None
         repo = self._store.repos[index.row()]
@@ -240,7 +249,7 @@ class RepoDelegate(QStyledItemDelegate):
     GLYPH_GAP = 4
     MIN_TEXT_CHARS = 4
     # Solarized-ish: red = needs attention (urgent), green = done (calmer).
-    STATUS_COLORS = {
+    STATUS_COLORS: ClassVar[dict[str, QColor]] = {
         STATUS_ATTENTION:    QColor(220, 50, 47),   # solarized red
         STATUS_DONE:         QColor(133, 153, 0),   # solarized green
         STATUS_LAST_FOCUSED: QColor(108, 113, 196), # solarized violet
@@ -251,33 +260,42 @@ class RepoDelegate(QStyledItemDelegate):
 
     # Single-glyph variants of the badge — same column, more self-explanatory
     # than a colored circle. Stays color-coded for users who like the palette.
-    STATUS_GLYPHS = {
+    STATUS_GLYPHS: ClassVar[dict[str, str]] = {
         STATUS_ATTENTION:    "!",
-        STATUS_DONE:         "✓",
+        STATUS_DONE:         "✓",   # ✓ check mark
         STATUS_LAST_FOCUSED: "·",
     }
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         # Advanced by RepoSidebar's QTimer; read every paint.
         self.spinner_frame = 0
         # "dot" or "glyph". Toggled live by RepoSidebar.set_badge_style.
         self.badge_style = "dot"
 
-    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
+    def sizeHint(
+        self,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ) -> QSize:
         return QSize(option.rect.width(), self.ROW_HEIGHT)
 
     # Left-edge stripe width for the active/selected row. Thin enough to
     # not crowd the text, thick enough to read at a glance.
     ACTIVE_STRIPE_W = 3
 
-    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+    def paint(  # noqa: PLR0915 — sequential paint draws don't decompose cleanly
+        self,
+        painter: QPainter,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ) -> None:
         painter.save()
 
         # Background: honor selection state. The selected row IS the active
         # repo because selecting switches the stack. Paint the Active palette
         # unconditionally so xterm stealing focus doesn't dim the highlight.
-        selected = bool(option.state & option.state.State_Selected)
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
         if selected:
             painter.fillRect(option.rect, option.palette.highlight())
             text_color = option.palette.highlightedText().color()
@@ -336,7 +354,12 @@ class RepoDelegate(QStyledItemDelegate):
         sub_font = QFont(option.font)
         sub_font.setPointSizeF(option.font.pointSizeF() * 0.9)
         painter.setFont(sub_font)
-        painter.setPen(QPen(text_color.lighter(130) if text_color.lightness() < 128 else text_color.darker(140)))
+        sub_pen_color = (
+            text_color.lighter(130)
+            if text_color.lightness() < LIGHTNESS_MIDPOINT
+            else text_color.darker(140)
+        )
+        painter.setPen(QPen(sub_pen_color))
         sub_text_raw = branch if branch else "(detached)" if repo else ""
         sub_rect = QRect(rect.left(), rect.top() + rect.height() // 2, text_w, rect.height() // 2)
         sub_text = painter.fontMetrics().elidedText(sub_text_raw, Qt.ElideRight, text_w)
@@ -403,7 +426,7 @@ class RepoSidebar(QWidget):
     repo_removed = Signal(str)  # emits the removed path
     reload_requested = Signal(Repo)  # user asked to respawn the terminal
 
-    def __init__(self, store: RepoStore, parent=None) -> None:
+    def __init__(self, store: RepoStore, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._store = store
         self._model = RepoListModel(store, self)
@@ -414,7 +437,7 @@ class RepoSidebar(QWidget):
         self._view.setItemDelegate(self._delegate)
 
         # Braille-spinner ticker. Only runs while at least one repo is in
-        # the "working" state — otherwise it would repaint the viewport 10×
+        # the "working" state — otherwise it would repaint the viewport 10x
         # per second for no reason.
         self._spinner_timer = QTimer(self)
         self._spinner_timer.setInterval(SPINNER_INTERVAL_MS)
@@ -533,7 +556,10 @@ class RepoSidebar(QWidget):
 
         menu.addSeparator()
         remove_act = QAction("Remove from sidebar", menu)
-        remove_act.triggered.connect(lambda _=False, r=repo, row=idx.row(): self._confirm_remove(r, row))
+        remove_row = idx.row()
+        remove_act.triggered.connect(
+            lambda _=False, r=repo, row=remove_row: self._confirm_remove(r, row)
+        )
         menu.addAction(remove_act)
 
         menu.exec(self._view.viewport().mapToGlobal(pos))

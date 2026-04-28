@@ -22,9 +22,11 @@ from PySide6.QtWidgets import QApplication
 
 from src.core.settings import Settings, XtermSettings
 
-
 _DARK_ACCENT = "#268bd2"   # Solarized blue — readable on every bundled dark bg
 _LIGHT_ACCENT = "#2aa198"  # Solarized cyan — readable on the bundled light bgs
+
+# QColor.lightness() midpoint on Qt's 0-255 HSL scale: below = dark theme.
+LIGHTNESS_MIDPOINT = 128
 
 
 def _tones(bg: QColor, fg: QColor) -> dict[str, QColor]:
@@ -34,7 +36,7 @@ def _tones(bg: QColor, fg: QColor) -> dict[str, QColor]:
     stand out against the window); for light bgs we go darker. Ratios picked
     to keep contrast above AA at every preset.
     """
-    is_dark = bg.lightness() < 128
+    is_dark = bg.lightness() < LIGHTNESS_MIDPOINT
 
     def step(factor_dark: int, factor_light: int) -> QColor:
         return bg.lighter(factor_dark) if is_dark else bg.darker(factor_light)
@@ -66,8 +68,10 @@ def build_palette(xt: XtermSettings) -> QPalette:
     fg = QColor(xt.fg)
     t = _tones(bg, fg)
 
-    highlighted_text = QColor("#ffffff") if t["highlight"].lightness() < 128 else QColor("#000000")
-    bright_text = QColor("#ffffff") if bg.lightness() < 128 else QColor("#000000")
+    highlighted_text = (
+        QColor("#ffffff") if t["highlight"].lightness() < LIGHTNESS_MIDPOINT else QColor("#000000")
+    )
+    bright_text = QColor("#ffffff") if bg.lightness() < LIGHTNESS_MIDPOINT else QColor("#000000")
 
     pal = QPalette()
     for group in (QPalette.Active, QPalette.Inactive):

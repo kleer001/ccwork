@@ -12,13 +12,13 @@ import sys
 if os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("QT_QPA_PLATFORM"):
     os.environ["QT_QPA_PLATFORM"] = "xcb"
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication
 
-from src.core.hook_server import HookServer  # noqa: E402
-from src.core.repo_store import RepoStore  # noqa: E402
-from src.core.settings import load_settings, write_default_settings_file  # noqa: E402
-from src.ui.main_window import MainWindow  # noqa: E402
-from src.ui.qt_theme import apply_theme  # noqa: E402
+from src.core.hook_server import HookServer
+from src.core.repo_store import RepoStore
+from src.core.settings import load_settings, write_default_settings_file
+from src.ui.main_window import MainWindow
+from src.ui.qt_theme import apply_theme
 
 
 def main(argv: list[str] | None = None) -> int:
