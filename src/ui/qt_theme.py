@@ -49,7 +49,12 @@ def _tones(bg: QColor, fg: QColor) -> dict[str, QColor]:
         "dark": step(90, 120),      # "dark" role is BELOW button for shadow edges
         "shadow": step(70, 135),
         "tooltip_bg": step(150, 115),
-        "highlight": QColor(_DARK_ACCENT if is_dark else _LIGHT_ACCENT),
+        # Tonal selection: a quiet shade of the surface, not a hue accent.
+        # Slightly lighter in dark mode, slightly darker in light mode.
+        # Vivid color is reserved for `accent` (links, focus rings) where
+        # the user's eye actually needs to be pulled.
+        "highlight": step(130, 106),
+        "accent": QColor(_DARK_ACCENT if is_dark else _LIGHT_ACCENT),
         "fg": QColor(fg),
     }
 
@@ -66,7 +71,9 @@ def build_palette(xt: XtermSettings) -> QPalette:
     fg = QColor(xt.fg)
     t = _tones(bg, fg)
 
-    highlighted_text = QColor("#ffffff") if t["highlight"].lightness() < 128 else QColor("#000000")
+    # Tonal highlight is close to bg lightness, so regular fg already
+    # contrasts. No need to flip to white/black like a vivid highlight needs.
+    highlighted_text = QColor(fg)
     bright_text = QColor("#ffffff") if bg.lightness() < 128 else QColor("#000000")
 
     pal = QPalette()
@@ -88,8 +95,10 @@ def build_palette(xt: XtermSettings) -> QPalette:
         pal.setColor(group, QPalette.ToolTipBase, t["tooltip_bg"])
         pal.setColor(group, QPalette.ToolTipText, t["fg"])
         pal.setColor(group, QPalette.PlaceholderText, _with_alpha(t["fg"], 0.55))
-        pal.setColor(group, QPalette.Link, t["highlight"])
-        pal.setColor(group, QPalette.LinkVisited, t["highlight"].darker(120))
+        # Links + visited links use the saturated accent — that's where
+        # vivid color earns its keep, not on selection backgrounds.
+        pal.setColor(group, QPalette.Link, t["accent"])
+        pal.setColor(group, QPalette.LinkVisited, t["accent"].darker(120))
 
     # Disabled group: fade text roles so disabled widgets read as such.
     for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
