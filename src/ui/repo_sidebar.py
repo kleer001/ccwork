@@ -232,13 +232,12 @@ class RepoDelegate(QStyledItemDelegate):
 
     ROW_HEIGHT = 52
     PADDING_X = 10
-    # Right-edge glyph column (status dot or spinner). The glyph is dropped
-    # when the remaining text width would fall below MIN_TEXT_CHARS — that
-    # way narrow sidebars keep showing the first chars of name/branch
-    # rather than getting overlapped by the badge.
+    # Right-edge glyph column (status dot or spinner). Reserved whenever the
+    # row has a status to show — text elides to fit. The badge is a
+    # first-class UI element: glance-state matters more than seeing an
+    # extra character or two of the repo name on a very narrow sidebar.
     GLYPH_W = 14
     GLYPH_GAP = 4
-    MIN_TEXT_CHARS = 4
     # Solarized-ish: red = needs attention (urgent), green = done (calmer).
     STATUS_COLORS = {
         STATUS_ATTENTION:    QColor(220, 50, 47),   # solarized red
@@ -311,16 +310,13 @@ class RepoDelegate(QStyledItemDelegate):
 
         rect = option.rect.adjusted(self.PADDING_X, 4, -self.PADDING_X, -4)
 
-        # Decide whether the right-edge glyph fits. Use the bold name font
-        # for char-width since it's the wider of the two lines — guarantees
-        # both lines keep ≥MIN_TEXT_CHARS visible when the glyph is shown.
+        # Reserve the right-edge glyph column whenever the row has a status
+        # to show. Text elides to fit; the badge stays put.
         name_font = QFont(option.font)
         name_font.setBold(True)
-        char_w = max(1, painter.fontMetrics().averageCharWidth())
-        has_glyph = working or (status in self.STATUS_COLORS)
+        show_glyph = working or (status in self.STATUS_COLORS)
         glyph_room = self.GLYPH_W + self.GLYPH_GAP
-        show_glyph = has_glyph and (rect.width() - glyph_room) >= self.MIN_TEXT_CHARS * char_w
-        text_w = rect.width() - (glyph_room if show_glyph else 0)
+        text_w = max(0, rect.width() - (glyph_room if show_glyph else 0))
 
         # Repo name (bold) on line 1. Elide at the right so we don't bleed
         # under the glyph column.
@@ -434,9 +430,8 @@ class RepoSidebar(QWidget):
         lay.addWidget(self._view, 1)
         lay.addWidget(self._add_btn, 0)
 
-        # Allow the splitter to drag the sidebar down to ~6 characters wide.
-        # The delegate hides the status dot before text gets squeezed below
-        # ~4 chars, so very thin widths stay readable.
+        # Allow the splitter to drag the sidebar narrow. The status badge is
+        # always reserved when present; text elides to fit.
         self.setMinimumWidth(60)
         self.setMaximumWidth(320)
 
