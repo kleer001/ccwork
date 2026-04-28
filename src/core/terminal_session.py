@@ -3,11 +3,13 @@
 Isolates the "which command to run inside xterm" decision so the UI doesn't
 need to know about shell selection or the user's claude launch preference.
 
-Design note: ccwork always drops into an interactive shell. Users type
-`claude` (or anything else) themselves. Earlier versions auto-`claude
---continue`'d when a transcript existed, but that stole the "new session"
-option and forced users into a bash shim if they wanted a plain shell —
-net loss of control for a small convenience win. YAGNI'd.
+Design note: ccwork drops into an interactive shell. Users type `claude`
+(or anything else) themselves. The `claude` wrapper at bin/claude handles
+auto --continue when a transcript exists, so typing `claude` resumes the
+last conversation in that repo without stealing the "new session" option
+(`claude` with `-r`/explicit args bypasses --continue via the wrapper).
+For bash, we launch via --rcfile bin/ccwork-bashrc to guarantee ccwork/bin
+wins on PATH regardless of the user's .bashrc layout — see _inner_command.
 """
 
 from __future__ import annotations
@@ -61,6 +63,31 @@ def build_session(
 
 
 def _inner_command() -> list[str]:
-    """Argv of the thing xterm should run (after -e) — the user's shell."""
+    """Argv of the thing xterm should run (after -e) — the user's shell.
+
+    For bash, we launch with `--rcfile bin/ccwork-bashrc` so ccwork/bin is
+    guaranteed to win on PATH after the user's .bashrc runs. Without this,
+    a .bashrc that re-prepends another directory after the ccwork block
+    (or one that doesn't source the ccwork block at all) bypasses the
+    `claude` wrapper, and auto --continue stops working. For non-bash
+    shells we drop in plain `-i`; users on zsh/fish need to handle PATH
+    ordering themselves until we ship per-shell shims.
+    """
     shell = os.environ.get("SHELL") or shutil.which("bash") or "/bin/sh"
+    if os.path.basename(shell) == "bash":
+        rcfile = _ccwork_bashrc_path()
+        if rcfile is not None:
+            return [shell, "--rcfile", rcfile, "-i"]
     return [shell, "-i"]
+
+
+def _ccwork_bashrc_path() -> str | None:
+    """Absolute path to bin/ccwork-bashrc, or None if missing.
+
+    This file lives at <repo>/src/core/terminal_session.py; the shim is at
+    <repo>/bin/ccwork-bashrc. Resolve relatively so the install dir can
+    move without breaking.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidate = os.path.normpath(os.path.join(here, "..", "..", "bin", "ccwork-bashrc"))
+    return candidate if os.path.isfile(candidate) else None

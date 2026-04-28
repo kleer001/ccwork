@@ -14,14 +14,27 @@ def _split_on_dash_e(argv: list[str]) -> tuple[list[str], list[str]]:
     return argv[:idx], argv[idx + 1 :]
 
 
-def test_drops_into_interactive_shell(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_drops_into_interactive_bash_with_rcfile(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SHELL", "/bin/bash")
     spec = terminal_session.build_session(Repo(path="/fake/repo"))
     flags, inner = _split_on_dash_e(spec.argv)
-    assert inner == ["/bin/bash", "-i"]
+    # Bash gets --rcfile bin/ccwork-bashrc so the claude wrapper wins on PATH.
+    assert inner[0] == "/bin/bash"
+    assert "--rcfile" in inner
+    rc_idx = inner.index("--rcfile")
+    assert inner[rc_idx + 1].endswith("/bin/ccwork-bashrc")
+    assert inner[-1] == "-i"
     assert "-fs" in flags  # settings flags are prepended before -e
     assert spec.env == {"CCWORK_GUI": "1"}
     assert spec.cwd == "/fake/repo"
+
+
+def test_non_bash_shell_skips_rcfile(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SHELL", "/usr/bin/zsh")
+    spec = terminal_session.build_session(Repo(path="/fake/repo"))
+    _, inner = _split_on_dash_e(spec.argv)
+    # Only bash gets the rcfile shim; other shells drop in with plain -i.
+    assert inner == ["/usr/bin/zsh", "-i"]
 
 
 def test_shell_fallback_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -29,7 +42,7 @@ def test_shell_fallback_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     spec = terminal_session.build_session(Repo(path="/fake/repo"))
     _, inner = _split_on_dash_e(spec.argv)
     # SHELL unset → fall back to bash if present, else /bin/sh.
-    assert inner[1] == "-i"
+    assert inner[-1] == "-i"
     assert inner[0] in ("/bin/bash", "/bin/sh") or inner[0].endswith("/bash")
 
 
