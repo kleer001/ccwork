@@ -14,6 +14,14 @@
 
 set -u
 
+# Gate: only fire when claude is running inside the ccwork GUI. Without this,
+# every claude invocation from any terminal would ping the socket and pop
+# desktop notifications. CCWORK_GUI=1 is exported by ccwork's terminal_session.
+if [ "${CCWORK_GUI:-0}" != "1" ]; then
+    cat >/dev/null  # drain stdin so claude doesn't block
+    exit 0
+fi
+
 _sock_dir="${XDG_RUNTIME_DIR:-$HOME/.cache}/ccwork"
 _sock="$_sock_dir/ccwork.sock"
 _event="${CCWORK_EVENT:-Unknown}"
@@ -59,10 +67,20 @@ elif command -v nc >/dev/null 2>&1; then
 fi
 
 # Desktop notification — fires regardless of whether the GUI window is
-# visible, focused, or even running. The in-GUI alerts panel is good when
-# you're looking at it; this catches the case where you're on another
-# workspace or the window is buried.
-if command -v notify-send >/dev/null 2>&1; then
+# visible, focused, or even running. Catches the case where you're on
+# another workspace or the window is buried.
+#
+# Honors the "desktop_notifications" toggle in ccwork's settings.json.
+# We grep the JSON instead of pulling in a parser; the GUI is the sole
+# writer and emits one key per line via json.dumps(indent=2).
+_settings="${XDG_CONFIG_HOME:-$HOME/.config}/ccwork/settings.json"
+_notify_disabled=0
+if [ -r "$_settings" ] && \
+   grep -Eq '"desktop_notifications"[[:space:]]*:[[:space:]]*false' "$_settings"; then
+    _notify_disabled=1
+fi
+
+if [ "$_notify_disabled" = "0" ] && command -v notify-send >/dev/null 2>&1; then
     _repo=$(basename "$_cwd")
     case "$_event" in
         Notification) notify-send -u critical "Claude [$_repo]" "Needs your input" >/dev/null 2>&1 || true ;;
