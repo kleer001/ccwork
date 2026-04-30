@@ -22,13 +22,30 @@ HOOK_SINK="${SCRIPT_DIR}/bin/ccwork-hook-sink"
 # Marker written into hook commands so uninstall can find + strip them.
 HOOK_MARKER="ccwork-hook-sink"
 
+usage() {
+    cat <<EOF
+ccwork installer — wires bin/ onto PATH, installs Claude Code hooks, and
+writes a desktop launcher. Idempotent; re-run after upgrading.
+
+Usage:
+  $0                install (default)
+  $0 --dry-run      preview changes; touch nothing
+  $0 --uninstall    revert all ccwork changes
+  $0 --help, -h     show this message
+
+Writes only under \$HOME (no sudo). Backs up every file it touches to
+~/.local/share/ccwork/backups/ before modifying it.
+EOF
+}
+
 DRY_RUN=false
 UNINSTALL=false
 for arg in "$@"; do
     case "$arg" in
         --dry-run)   DRY_RUN=true ;;
         --uninstall) UNINSTALL=true ;;
-        *) echo "Unknown argument: $arg"; echo "Usage: $0 [--dry-run|--uninstall]"; exit 1 ;;
+        -h|--help)   usage; exit 0 ;;
+        *) echo "Unknown argument: $arg" >&2; usage >&2; exit 1 ;;
     esac
 done
 
@@ -354,7 +371,6 @@ else
     echo ""
     echo "Next:"
     echo "  source ~/.bashrc          # pick up PATH change"
-    echo "  pip install -r requirements.txt  # install PySide6 (use a venv)"
     echo "  ccwork                    # launch the GUI"
     echo ""
     echo "Undo: ./install.sh --uninstall"
