@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting
+    url: https://github.com/kleer001/ccwork#troubleshooting
+    about: Common issues (Wayland, missing xterm, no notifications) are covered in the README.
+  - name: Contributing guide
+    url: https://github.com/kleer001/ccwork/blob/main/CONTRIBUTING.md
+    about: Dev setup, test commands, and PR expectations.
