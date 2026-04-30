@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 80">
+  <!-- v5c: same composition as v5a, but inside the brand dark pill (#1a1a1a)
+       — keeps continuity with v1a/v1b styling. -->
+
+  <rect x="0" y="0" width="160" height="80" rx="14" fill="#1a1a1a"/>
+
+  <polygon points="20,23 48,43 20,63" fill="#888888"/>
+
+  <text x="50" y="59" font-family="'Courier New',Courier,monospace"
+        font-size="48" font-weight="bold" fill="#e07820">&gt;</text>
+  <text x="74" y="59" font-family="'Courier New',Courier,monospace"
+        font-size="48" font-weight="bold" fill="#c9a84c">&gt;</text>
+
+  <rect x="104" y="27" width="22" height="36" fill="#f0ede6"/>
+</svg>

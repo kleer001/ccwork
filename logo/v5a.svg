@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 70">
+  <!-- v5a: gray filled wedge + open >> (orange, khaki) + off-white block cursor -->
+  <!-- Transparent bg; squished kerning. -->
+
+  <!-- Filled wedge (gray) — sized to match chevron visual mass -->
+  <polygon points="10,18 38,38 10,58" fill="#888888"/>
+
+  <!-- Open chevrons -->
+  <text x="40" y="54" font-family="'Courier New',Courier,monospace"
+        font-size="48" font-weight="bold" fill="#e07820">&gt;</text>
+  <text x="64" y="54" font-family="'Courier New',Courier,monospace"
+        font-size="48" font-weight="bold" fill="#c9a84c">&gt;</text>
+
+  <!-- Block cursor (off-white) -->
+  <rect x="94" y="22" width="22" height="36" fill="#f0ede6"/>
+</svg>
