@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
 # ccwork wrapper for the `claude` CLI.
 #
-# Responsibilities (post-GUI retool):
-#   1. Resume the last conversation for the current project directory.
-#      If a .jsonl transcript exists under Claude Code's project dir,
-#      delegate to `claude --continue "$@"` instead of `claude "$@"`.
-#   2. When invoked from inside the ccwork GUI (CCWORK_GUI=1), and the
-#      current working directory is a git root we have not yet registered,
-#      ping the ccwork socket so the GUI can auto-add the repo.
-#
-# No tmux / zellij / spinner / notification logic remains here. That moved
-# to the Qt app and the ccwork-hook-sink script.
+# Responsibility: when invoked from inside the ccwork GUI (CCWORK_GUI=1),
+# and the current working directory is a git root we have not yet
+# registered, ping the ccwork socket so the GUI can auto-add the repo.
+# Then exec the real `claude` with the user's args, untouched.
 
 set -u
 
@@ -50,13 +44,6 @@ if [ "${CCWORK_GUI:-0}" = "1" ] && command -v git >/dev/null 2>&1; then
             fi
         fi
     fi
-fi
-
-# ── Resume the last conversation if a transcript exists ───────────────────
-# Claude Code slugs a project path by replacing /, _, . with -.
-_project_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf '%s' "$PWD" | sed 's|[/_.]|-|g')"
-if compgen -G "$_project_dir/*.jsonl" >/dev/null; then
-    exec "$_real" --continue "$@"
 fi
 
 exec "$_real" "$@"

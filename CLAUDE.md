@@ -93,10 +93,10 @@ but no widgets):
   ccwork GUI it drains stdin and exits 0, so plain `claude` use isn't
   affected. Failure to reach the socket is silent by design (hooks must
   never break the user's session).
-- `bin/claude` — `PATH`-shadow wrapper for `claude`. Auto-resumes the last
-  transcript (`claude --continue`) when one exists for the cwd, and pings
-  the ccwork socket with a `RepoAdded` event for unregistered git roots so
-  the sidebar auto-populates.
+- `bin/claude` — `PATH`-shadow wrapper for `claude`. Pings the ccwork
+  socket with a `RepoAdded` event for unregistered git roots so the
+  sidebar auto-populates, then execs the real `claude` with the user's
+  args untouched.
 
 ### Event flow
 

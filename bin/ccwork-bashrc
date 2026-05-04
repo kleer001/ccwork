@@ -4,8 +4,8 @@
 # interactive init, then re-prepends ccwork/bin to PATH so the `claude`
 # wrapper wins over any later PATH manipulation in the user's dotfiles.
 # Without this, a user .bashrc that exports PATH after the ccwork block
-# (or doesn't have one at all) bypasses the wrapper, and `claude` runs
-# without --continue.
+# (or doesn't have one at all) bypasses the wrapper, and the GUI doesn't
+# get its RepoAdded ping for unregistered git roots.
 
 [ -f /etc/bash.bashrc ] && . /etc/bash.bashrc
 [ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"

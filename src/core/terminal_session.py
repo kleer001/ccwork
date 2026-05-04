@@ -4,12 +4,11 @@ Isolates the "which command to run inside xterm" decision so the UI doesn't
 need to know about shell selection or the user's claude launch preference.
 
 Design note: ccwork drops into an interactive shell. Users type `claude`
-(or anything else) themselves. The `claude` wrapper at bin/claude handles
-auto --continue when a transcript exists, so typing `claude` resumes the
-last conversation in that repo without stealing the "new session" option
-(`claude` with `-r`/explicit args bypasses --continue via the wrapper).
-For bash, we launch via --rcfile bin/ccwork-bashrc to guarantee ccwork/bin
-wins on PATH regardless of the user's .bashrc layout — see _inner_command.
+(or anything else) themselves. The `claude` wrapper at bin/claude pings
+the GUI socket with a RepoAdded event for unregistered git roots; it
+otherwise execs the real claude untouched. For bash, we launch via
+--rcfile bin/ccwork-bashrc to guarantee ccwork/bin wins on PATH regardless
+of the user's .bashrc layout — see _inner_command.
 """
 
 from __future__ import annotations
@@ -69,7 +68,7 @@ def _inner_command() -> list[str]:
     guaranteed to win on PATH after the user's .bashrc runs. Without this,
     a .bashrc that re-prepends another directory after the ccwork block
     (or one that doesn't source the ccwork block at all) bypasses the
-    `claude` wrapper, and auto --continue stops working. For non-bash
+    `claude` wrapper, and the GUI's RepoAdded ping is lost. For non-bash
     shells we drop in plain `-i`; users on zsh/fish need to handle PATH
     ordering themselves until we ship per-shell shims.
     """

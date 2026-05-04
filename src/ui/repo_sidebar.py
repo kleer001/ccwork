@@ -540,7 +540,8 @@ class RepoSidebar(QWidget):
             f"Respawn the terminal for {repo.name}?\n\n"
             "The running shell (and any active Claude session) will be killed. "
             "If Claude was mid-response, that response is lost — but the "
-            "conversation transcript is preserved and will resume on next launch.",
+            "conversation transcript is preserved; run `claude --continue` "
+            "to resume it.",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )

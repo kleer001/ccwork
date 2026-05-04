@@ -542,8 +542,8 @@ class MainWindow(QMainWindow):
                 "Quit ccwork?",
                 f"Claude is working in {len(working)} repo(s): {names}.\n\n"
                 "Quitting kills those sessions mid-response. The conversation "
-                "transcripts are preserved — Claude will resume where it left "
-                "off next launch — but any in-flight response is lost.",
+                "transcripts are preserved — run `claude --continue` to resume "
+                "them — but any in-flight response is lost.",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
