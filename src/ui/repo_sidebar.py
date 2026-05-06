@@ -369,10 +369,13 @@ class RepoDelegate(QStyledItemDelegate):
     GLYPH_W = 14
     GLYPH_GAP = 4
     # Solarized-ish: red = needs attention (urgent), green = done (calmer).
+    # STATUS_LAST_FOCUSED is intentionally absent — it paints as a left-edge
+    # stripe instead of a right-edge dot, so the badge column is reserved
+    # for genuine Claude alerts (working / done / attention) and can't be
+    # tuned out by users who navigate frequently.
     STATUS_COLORS = {
         STATUS_ATTENTION:    QColor(220, 50, 47),   # solarized red
         STATUS_DONE:         QColor(133, 153, 0),   # solarized green
-        STATUS_LAST_FOCUSED: QColor(108, 113, 196), # solarized violet
     }
     # Muted cyan for the working spinner — distinct from the red/green
     # status dots so glance-state is unambiguous.
@@ -383,8 +386,11 @@ class RepoDelegate(QStyledItemDelegate):
     STATUS_GLYPHS = {
         STATUS_ATTENTION:    "!",
         STATUS_DONE:         "✓",
-        STATUS_LAST_FOCUSED: "·",
     }
+
+    # Base hue for the "last focused" left-edge stripe (solarized violet).
+    # Modulated per-theme by _last_focused_stripe_color so it stays subtle.
+    LAST_FOCUSED_BASE = QColor(108, 113, 196)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -399,6 +405,23 @@ class RepoDelegate(QStyledItemDelegate):
     # Left-edge stripe width for the active/selected row. Thin enough to
     # not crowd the text, thick enough to read at a glance.
     ACTIVE_STRIPE_W = 3
+    # Last-focused stripe sits in the same left column but slightly thinner
+    # so the active stripe still reads as the dominant cue when both apply.
+    LAST_FOCUSED_STRIPE_W = 2
+
+    @classmethod
+    def _last_focused_stripe_color(cls, palette) -> QColor:
+        """Theme-aware violet for the bookmark stripe.
+
+        The stripe is meant to be a quiet "you were here" cue, not an alert.
+        We push the base hue *toward* the row background — lighter on light
+        themes, darker on dark themes — so the eye doesn't read it as a
+        Claude-driven status change.
+        """
+        base = palette.base().color()
+        if base.lightness() < 128:
+            return cls.LAST_FOCUSED_BASE.darker(160)
+        return cls.LAST_FOCUSED_BASE.lighter(140)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         painter.save()
@@ -438,6 +461,16 @@ class RepoDelegate(QStyledItemDelegate):
         status: str = index.data(ROLE_STATUS) or ""
         working: bool = bool(index.data(ROLE_WORKING))
         has_terminal: bool = bool(index.data(ROLE_HAS_TERMINAL))
+
+        # Last-focused bookmark: thin left-edge stripe instead of a right-edge
+        # dot, so the badge column stays reserved for genuine Claude alerts.
+        # Skip when the row is selected — the active stripe owns that edge.
+        if not selected and status == STATUS_LAST_FOCUSED:
+            lf_rect = QRect(
+                option.rect.left(), option.rect.top(),
+                self.LAST_FOCUSED_STRIPE_W, option.rect.height(),
+            )
+            painter.fillRect(lf_rect, self._last_focused_stripe_color(option.palette))
 
         rect = option.rect.adjusted(self.PADDING_X, 4, -self.PADDING_X, -4)
 

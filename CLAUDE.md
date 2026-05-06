@@ -135,10 +135,17 @@ status are mutually exclusive in the UI by construction.
 - **xterm spawn args are centralized** in `XtermSettings.to_xterm_args()`.
   Don't append flags ad-hoc from the UI layer — extend the settings dataclass.
 - **Auto-arrange sort excludes `STATUS_LAST_FOCUSED`.** The violet "last
-  focused" dot is set by user navigation, not Claude. `_last_activity` is
+  focused" mark is set by user navigation, not Claude. `_last_activity` is
   bumped only by Stop / Notification / UserPromptSubmit. If you add a new
   status, decide deliberately whether it represents Claude activity (and
   therefore should stamp the timestamp) or user state (and should not).
+- **The right-edge badge column is reserved for Claude alerts.** Working
+  spinner, `STATUS_DONE`, `STATUS_ATTENTION` paint there. `STATUS_LAST_FOCUSED`
+  is rendered as a thin left-edge stripe (a quiet bookmark) so a frequently-
+  navigating user doesn't tune the alert column out as noise. If you add
+  another status, decide whether it's a Claude alert (right-edge column,
+  add to `STATUS_COLORS`/`STATUS_GLYPHS`) or a user-state cue (paint
+  somewhere else).
 - **Terminals are keyed by `repo.id`, not `repo.path`.** `MainWindow._terminals`
   and `_working` are dicts/sets of repo ids so duplicate rows on the same
   path get independent xterms. Hook events arrive with `cwd` and broadcast
