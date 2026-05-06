@@ -8,6 +8,8 @@ driven by Claude Code's Stop/Notification hooks.
 
 - **Sidebar of repos** — name + current git branch + unread-alert badge.
   Click a repo to bring up its terminal; right-click for reload / remove.
+  Repos you haven't opened yet this session render in regular italic;
+  once a terminal exists they flip to bold upright.
 - **Multiple sessions per repo** — `Ctrl+O` the same repo twice to spawn
   parallel Claude sessions on it. Duplicates get Roman-numeral suffixes
   (`myrepo (I)`, `myrepo (II)`, …); remove all but one and the suffix

@@ -41,6 +41,7 @@ ROLE_REPO    = Qt.UserRole + 1
 ROLE_BRANCH  = Qt.UserRole + 2
 ROLE_STATUS  = Qt.UserRole + 3
 ROLE_WORKING = Qt.UserRole + 4  # bool — Claude mid-turn in this repo
+ROLE_HAS_TERMINAL = Qt.UserRole + 5  # bool — a TerminalHost exists for this repo this session
 
 STATUS_DONE          = "done"
 STATUS_ATTENTION     = "attention"
@@ -81,6 +82,11 @@ class RepoListModel(QAbstractListModel):
         self._branches: dict[str, str | None] = {}
         self._status: dict[str, str] = {}
         self._working: set[str] = set()
+        # Repo ids whose TerminalHost has been spawned in the current ccwork
+        # session. Drives the visual difference between "touched" rows (bold
+        # upright) and "untouched" rows (regular italic). Cleared on terminal
+        # exit so a closed-then-not-reopened repo reverts to italic.
+        self._active_ids: set[str] = set()
         # Per-repo timestamp of the last Claude-driven event
         # (Stop / Notification / UserPromptSubmit). Feeds the optional
         # auto-arrange sort. STATUS_LAST_FOCUSED is user navigation, not
@@ -108,6 +114,8 @@ class RepoListModel(QAbstractListModel):
             return self._status.get(repo.path, "")
         if role == ROLE_WORKING:
             return _norm(repo.path) in self._working
+        if role == ROLE_HAS_TERMINAL:
+            return repo.id in self._active_ids
         if role == Qt.ToolTipRole:
             # Prepend a human-readable status line so hovering a row tells
             # the user what the badge means without having to memorize the
@@ -218,6 +226,24 @@ class RepoListModel(QAbstractListModel):
 
     def any_working(self) -> bool:
         return bool(self._working)
+
+    def set_terminal_active(self, repo_id: str, active: bool) -> None:
+        """Mark `repo_id` as having a live TerminalHost (or not).
+
+        Per-id, not per-path: each duplicate row tracks independently so
+        opening one duplicate's terminal doesn't unitalicize the other.
+        """
+        was = repo_id in self._active_ids
+        if active == was:
+            return
+        if active:
+            self._active_ids.add(repo_id)
+        else:
+            self._active_ids.discard(repo_id)
+        row = self.index_of_id(repo_id)
+        if row >= 0:
+            idx = self.index(row)
+            self.dataChanged.emit(idx, idx, [ROLE_HAS_TERMINAL])
 
     def last_activity(self, path: str) -> float:
         return self._last_activity.get(path, 0.0)
@@ -411,13 +437,18 @@ class RepoDelegate(QStyledItemDelegate):
         branch: str | None = index.data(ROLE_BRANCH)
         status: str = index.data(ROLE_STATUS) or ""
         working: bool = bool(index.data(ROLE_WORKING))
+        has_terminal: bool = bool(index.data(ROLE_HAS_TERMINAL))
 
         rect = option.rect.adjusted(self.PADDING_X, 4, -self.PADDING_X, -4)
 
         # Reserve the right-edge glyph column whenever the row has a status
         # to show. Text elides to fit; the badge stays put.
+        # Untouched-this-session rows render italic + regular weight so the
+        # eye can pick out which repos already have a live terminal without
+        # using color (which would compete with the status badge).
         name_font = QFont(option.font)
-        name_font.setBold(True)
+        name_font.setBold(has_terminal)
+        name_font.setItalic(not has_terminal)
         show_glyph = working or (status in self.STATUS_COLORS)
         glyph_room = self.GLYPH_W + self.GLYPH_GAP
         text_w = max(0, rect.width() - (glyph_room if show_glyph else 0))
