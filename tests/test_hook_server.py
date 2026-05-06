@@ -15,7 +15,13 @@ from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import QApplication
 
-from src.core.hook_server import HookServer, default_socket_path
+from src.core.hook_server import (
+    EVENT_NOTIFICATION,
+    EVENT_REPO_ADDED,
+    EVENT_STOP,
+    HookServer,
+    default_socket_path,
+)
 
 
 @pytest.fixture(scope="session")
@@ -62,11 +68,11 @@ def test_server_starts_and_receives_event(qapp: QCoreApplication, tmp_path: Path
     srv.start()
     assert sock.exists()
 
-    _send(sock, {"event": "Stop", "cwd": "/tmp/x", "ts": 1.0})
+    _send(sock, {"event": EVENT_STOP, "cwd": "/tmp/x", "ts": 1.0})
     _spin(qapp)
 
     assert len(events) == 1
-    assert events[0]["event"] == "Stop"
+    assert events[0]["event"] == EVENT_STOP
     srv.stop()
     assert not sock.exists()
 
@@ -82,9 +88,9 @@ def test_server_handles_multiple_lines_in_one_send(qapp: QCoreApplication, tmp_p
     client.connectToServer(str(sock))
     assert client.waitForConnected(1000)
     payload = (
-        json.dumps({"event": "Stop", "n": 1}) + "\n"
-        + json.dumps({"event": "Notification", "n": 2}) + "\n"
-        + json.dumps({"event": "RepoAdded", "n": 3}) + "\n"
+        json.dumps({"event": EVENT_STOP, "n": 1}) + "\n"
+        + json.dumps({"event": EVENT_NOTIFICATION, "n": 2}) + "\n"
+        + json.dumps({"event": EVENT_REPO_ADDED, "n": 3}) + "\n"
     ).encode("utf-8")
     client.write(payload)
     client.waitForBytesWritten(1000)
@@ -106,7 +112,7 @@ def test_server_handles_split_writes(qapp: QCoreApplication, tmp_path: Path) -> 
     client = QLocalSocket()
     client.connectToServer(str(sock))
     assert client.waitForConnected(1000)
-    blob = json.dumps({"event": "Stop", "cwd": "/x", "ts": 1}) + "\n"
+    blob = json.dumps({"event": EVENT_STOP, "cwd": "/x", "ts": 1}) + "\n"
     half = len(blob) // 2
     client.write(blob[:half].encode("utf-8"))
     client.waitForBytesWritten(500)
@@ -130,14 +136,14 @@ def test_server_ignores_malformed_json(qapp: QCoreApplication, tmp_path: Path) -
     client.connectToServer(str(sock))
     assert client.waitForConnected(1000)
     client.write(b"not-json\n")
-    client.write((json.dumps({"event": "Stop"}) + "\n").encode("utf-8"))
+    client.write((json.dumps({"event": EVENT_STOP}) + "\n").encode("utf-8"))
     client.write(b"[1, 2, 3]\n")  # valid JSON but not an object — rejected
     client.waitForBytesWritten(500)
     client.disconnectFromServer()
     _spin(qapp)
 
     assert len(events) == 1
-    assert events[0]["event"] == "Stop"
+    assert events[0]["event"] == EVENT_STOP
     srv.stop()
 
 
@@ -148,7 +154,7 @@ def test_server_cleans_stale_socket_file(qapp: QCoreApplication, tmp_path: Path)
     sock.write_bytes(b"")  # stale file
     srv = HookServer(socket_path=sock)
     srv.start()
-    _send(sock, {"event": "Stop"})
+    _send(sock, {"event": EVENT_STOP})
     _spin(qapp)
     srv.stop()
 
@@ -164,7 +170,7 @@ def test_server_accepts_trailing_line_without_newline(qapp: QCoreApplication, tm
     client.connectToServer(str(sock))
     assert client.waitForConnected(1000)
     # No trailing newline — server should drain on disconnect.
-    client.write(json.dumps({"event": "Stop"}).encode("utf-8"))
+    client.write(json.dumps({"event": EVENT_STOP}).encode("utf-8"))
     client.waitForBytesWritten(500)
     client.disconnectFromServer()
     _spin(qapp)
