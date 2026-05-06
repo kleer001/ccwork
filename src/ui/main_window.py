@@ -3,7 +3,7 @@
 Structure:
 
     ┌──────────────────────────────────────────────────────────┐
-    │           repo · branch                   🔔   ⚙          │  ← thin top bar
+    │           repo · branch              🔊   🔔   ⚙          │  ← thin top bar
     ├──────────┬───────────────────────────────────────────────┤
     │  Repo    │              Terminal stack                   │
     │ Sidebar  │   (one TerminalHost per repo, swapped         │
@@ -12,9 +12,10 @@ Structure:
 
 The 🔔 is a visual-only indicator — a red dot appears when Stop/Notification
 events arrive; clicking clears the dot. There's no popover list (desktop
-notify-send handles the text). Preferences/Add-Repo/Quit reachable via
-Ctrl+,/Ctrl+O/Ctrl+Q — registered as window-level QActions so the menu bar
-can stay gone.
+notify-send handles the text). The 🔊 / 🔇 toolbutton mirrors the
+"Show desktop notifications" Preferences checkbox — one click mute,
+shared state. Preferences/Add-Repo/Quit reachable via Ctrl+,/Ctrl+O/Ctrl+Q
+— registered as window-level QActions so the menu bar can stay gone.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from __future__ import annotations
 import logging
 import os
 
-from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QApplication,
@@ -75,6 +76,13 @@ class MainWindow(QMainWindow):
         # ── top strip: centered repo · branch + right-side icon cluster ──
         self._title = TitleLabel(self)
 
+        self._alerts_btn = QToolButton(self)
+        self._alerts_btn.setAutoRaise(True)
+        self._alerts_btn.setCheckable(True)
+        self._alerts_btn.setChecked(self._settings.ui.desktop_notifications)
+        self._refresh_alerts_button()
+        self._alerts_btn.toggled.connect(self._on_alerts_toggled)
+
         self._bell_btn = _BellButton(self)
         self._bell_btn.setToolTip("Unread alerts — click to clear")
         self._bell_btn.clicked.connect(lambda: self._bell_btn.set_unseen(False))
@@ -90,12 +98,13 @@ class MainWindow(QMainWindow):
         top_lay.setContentsMargins(6, 2, 6, 2)
         top_lay.setSpacing(4)
         top_lay.addWidget(self._title, 1)        # absorbs all slack so label sits centered
+        top_lay.addWidget(self._alerts_btn, 0)
         top_lay.addWidget(self._bell_btn, 0)
         top_lay.addWidget(self._gear_btn, 0)
         top.setFixedHeight(32)
 
         # ── body: sidebar + terminal stack ──
-        self._sidebar = RepoSidebar(self._store, self)
+        self._sidebar = RepoSidebar(self._store, self, settings=self._settings)
         self._stack = QStackedWidget(self)
         self._empty_placeholder = self._make_empty_placeholder()
         self._stack.addWidget(self._empty_placeholder)
@@ -219,6 +228,21 @@ class MainWindow(QMainWindow):
         except OSError as e:
             log.warning("could not persist settings: %s", e)
 
+    def _refresh_alerts_button(self) -> None:
+        on = bool(self._settings.ui.desktop_notifications)
+        self._alerts_btn.setText("🔊" if on else "🔇")
+        self._alerts_btn.setToolTip(
+            "Desktop alerts on — click to mute" if on
+            else "Desktop alerts muted — click to unmute"
+        )
+
+    def _on_alerts_toggled(self, on: bool) -> None:
+        if self._settings.ui.desktop_notifications == on:
+            return
+        self._settings.ui.desktop_notifications = on
+        self._refresh_alerts_button()
+        self._persist_settings_now()
+
     def _open_preferences(self) -> None:
         dlg = PreferencesDialog(self._settings, self)
         dlg.applied.connect(self._on_settings_changed)
@@ -232,6 +256,13 @@ class MainWindow(QMainWindow):
         # sees their UI-tab edits without restarting.
         self._apply_sidebar_layout()
         self._sidebar.set_badge_style(settings.ui.status_badge_style)
+        # Hand the sidebar the fresh Settings object so it picks up
+        # auto_arrange_repos toggles without a restart.
+        self._sidebar.set_settings(settings)
+        # Toolbar mute glyph mirrors the Preferences checkbox.
+        with QSignalBlocker(self._alerts_btn):
+            self._alerts_btn.setChecked(settings.ui.desktop_notifications)
+        self._refresh_alerts_button()
 
         # Repaint the Qt chrome with the same palette as the terminal.
         app = QApplication.instance()

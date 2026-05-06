@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 from PySide6.QtCore import (
     QAbstractListModel,
@@ -80,6 +81,11 @@ class RepoListModel(QAbstractListModel):
         self._branches: dict[str, str | None] = {}
         self._status: dict[str, str] = {}
         self._working: set[str] = set()
+        # Per-repo timestamp of the last Claude-driven event
+        # (Stop / Notification / UserPromptSubmit). Feeds the optional
+        # auto-arrange sort. STATUS_LAST_FOCUSED is user navigation, not
+        # Claude activity, and does not stamp this dict.
+        self._last_activity: dict[str, float] = {}
 
     # ── Qt model API ──
 
@@ -147,6 +153,8 @@ class RepoListModel(QAbstractListModel):
             self._status[path] = status
         else:
             self._status.pop(path, None)
+        if status in (STATUS_DONE, STATUS_ATTENTION):
+            self._last_activity[path] = time.monotonic()
         row = self.index_of(path)
         if row >= 0:
             idx = self.index(row)
@@ -180,6 +188,7 @@ class RepoListModel(QAbstractListModel):
             return
         if working:
             self._working.add(key)
+            self._last_activity[path] = time.monotonic()
         else:
             self._working.discard(key)
         row = self.index_of(path)
@@ -189,6 +198,53 @@ class RepoListModel(QAbstractListModel):
 
     def any_working(self) -> bool:
         return bool(self._working)
+
+    def last_activity(self, path: str) -> float:
+        return self._last_activity.get(path, 0.0)
+
+    def apply_auto_arrange(self) -> bool:
+        """Reorder _store.repos by Claude-activity recency desc.
+
+        Repos with no recorded activity sort to the bottom in their
+        current relative order (stable). Returns True if the order
+        changed. Selection survives via persistent indices.
+        """
+        repos = list(self._store.repos)
+        if len(repos) <= 1:
+            return False
+        indexed = list(enumerate(repos))
+
+        def sort_key(item):
+            i, r = item
+            ts = self._last_activity.get(r.path, 0.0)
+            # Higher ts → earlier. No-activity rows tie on +inf and
+            # fall back to the original index → stable bottom group.
+            return (-ts if ts > 0 else float("inf"), i)
+
+        indexed.sort(key=sort_key)
+        new_order = [r for _, r in indexed]
+        if new_order == repos:
+            return False
+
+        self.layoutAboutToBeChanged.emit()
+        old_persistent = list(self.persistentIndexList())
+        new_row_for_path = {r.path: i for i, r in enumerate(new_order)}
+        self._store.repos[:] = new_order
+        new_persistent = []
+        for p in old_persistent:
+            if not p.isValid():
+                new_persistent.append(QModelIndex())
+                continue
+            old_row = p.row()
+            if 0 <= old_row < len(repos):
+                path = repos[old_row].path
+                new_row = new_row_for_path.get(path, -1)
+                new_persistent.append(self.index(new_row) if new_row >= 0 else QModelIndex())
+            else:
+                new_persistent.append(QModelIndex())
+        self.changePersistentIndexList(old_persistent, new_persistent)
+        self.layoutChanged.emit()
+        return True
 
     # ── add/remove piped from the store ──
 
@@ -223,6 +279,7 @@ class RepoListModel(QAbstractListModel):
         self._branches.pop(path, None)
         self._status.pop(path, None)
         self._working.discard(_norm(path))
+        self._last_activity.pop(path, None)
         self._store.save()
         return True
 
@@ -399,9 +456,10 @@ class RepoSidebar(QWidget):
     repo_removed = Signal(str)  # emits the removed path
     reload_requested = Signal(Repo)  # user asked to respawn the terminal
 
-    def __init__(self, store: RepoStore, parent=None) -> None:
+    def __init__(self, store: RepoStore, parent=None, settings=None) -> None:
         super().__init__(parent)
         self._store = store
+        self._settings = settings
         self._model = RepoListModel(store, self)
 
         self._view = QListView(self)
@@ -415,6 +473,13 @@ class RepoSidebar(QWidget):
         self._spinner_timer = QTimer(self)
         self._spinner_timer.setInterval(SPINNER_INTERVAL_MS)
         self._spinner_timer.timeout.connect(self._advance_spinner)
+        # Debounced auto-arrange. Restarted on every Claude-driven event
+        # while ui.auto_arrange_repos is True; fires once after 2s of
+        # quiet to avoid reshuffling under the user's eye.
+        self._reorder_timer = QTimer(self)
+        self._reorder_timer.setSingleShot(True)
+        self._reorder_timer.setInterval(2000)
+        self._reorder_timer.timeout.connect(self._apply_auto_arrange)
         self._view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._view.setSelectionMode(QAbstractItemView.SingleSelection)
         self._view.setUniformItemSizes(True)
@@ -455,12 +520,18 @@ class RepoSidebar(QWidget):
 
     def set_status(self, path: str, status: str) -> None:
         self._model.set_status(path, status)
+        if status in (STATUS_DONE, STATUS_ATTENTION):
+            self._maybe_schedule_reorder()
 
     def clear_status(self, path: str) -> None:
         self._model.clear_status(path)
 
     def set_last_focused(self, path: str) -> None:
         self._model.set_last_focused(path)
+
+    def set_settings(self, settings) -> None:
+        """Swap in a fresh Settings reference (called after Preferences edits)."""
+        self._settings = settings
 
     def set_badge_style(self, style: str) -> None:
         """Switch between the colored dot and single-glyph badge."""
@@ -478,6 +549,25 @@ class RepoSidebar(QWidget):
                 self._spinner_timer.start()
         else:
             self._spinner_timer.stop()
+        if working:
+            self._maybe_schedule_reorder()
+
+    def _maybe_schedule_reorder(self) -> None:
+        if self._settings is None:
+            return
+        if not getattr(self._settings.ui, "auto_arrange_repos", False):
+            return
+        # QTimer.start() restarts an active single-shot timer — exactly
+        # the debounce we want.
+        self._reorder_timer.start()
+
+    def _apply_auto_arrange(self) -> None:
+        # Pref may have flipped off during the 2 s window — bail.
+        if self._settings is None:
+            return
+        if not getattr(self._settings.ui, "auto_arrange_repos", False):
+            return
+        self._model.apply_auto_arrange()
 
     def _advance_spinner(self) -> None:
         self._delegate.spinner_frame += 1

@@ -45,6 +45,10 @@ collaborate:
 `MainWindow` lays out a sidebar + a `QStackedWidget` of `TerminalHost`s (one
 per repo, swapped on selection). There is no menu bar — Preferences /
 Add Repo / Quit are window-level `QAction`s on `Ctrl+,` / `Ctrl+O` / `Ctrl+Q`.
+The top bar holds, right-to-left: the gear (Preferences), the 🔔 unread
+indicator, and a 🔊/🔇 toolbutton mirroring the "Show desktop
+notifications" preference (single source of truth:
+`Settings.ui.desktop_notifications`).
 
 - `terminal_host.py` spawns `xterm -into <winId>` via `QProcess`, polls for
   the reparented child window through `src/core/x11.py`, then resizes the X
@@ -126,6 +130,11 @@ status are mutually exclusive in the UI by construction.
   via `asdict` over `_raw`, so unknown keys survive.
 - **xterm spawn args are centralized** in `XtermSettings.to_xterm_args()`.
   Don't append flags ad-hoc from the UI layer — extend the settings dataclass.
+- **Auto-arrange sort excludes `STATUS_LAST_FOCUSED`.** The violet "last
+  focused" dot is set by user navigation, not Claude. `_last_activity` is
+  bumped only by Stop / Notification / UserPromptSubmit. If you add a new
+  status, decide deliberately whether it represents Claude activity (and
+  therefore should stamp the timestamp) or user state (and should not).
 - Tests use `QT_QPA_PLATFORM=offscreen`. The `qapp` fixture in
   `tests/test_preferences_dialog.py` is the pattern to follow when a test
   needs a `QApplication`.

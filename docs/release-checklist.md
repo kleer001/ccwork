@@ -31,6 +31,12 @@ xorg or XWayland; X11 session preferred):
       auto-add it (RepoAdded ping).
 - [ ] Trigger a Stop/Notification event; confirm sidebar status badge
       updates and (if enabled) `notify-send` fires.
+- [ ] Click the 🔊 / 🔇 toolbutton in the top bar; confirm the
+      Preferences "Show desktop notifications" checkbox flips to match
+      and notify-send is suppressed when muted.
+- [ ] Enable "Auto-arrange repos by recent Claude activity" with two or
+      more repos; trigger Stop in the lower repo and confirm it floats
+      to the top ~2 s later.
 - [ ] `./install.sh --uninstall` — confirm idempotent and that backups land
       in `~/.local/share/ccwork/backups/`.
 

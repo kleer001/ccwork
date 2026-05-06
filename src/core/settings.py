@@ -122,6 +122,11 @@ class UISettings:
     # "dot" = colored circle (default); "glyph" = colored "!"/"✓"/"·" — the
     # glyph variant is more legible at a glance and colorblind-friendlier.
     status_badge_style: str = "dot"
+    # When True, the sidebar reorders itself by most-recent Claude activity
+    # (Stop / Notification / UserPromptSubmit) ~2s after the last event.
+    # User-driven STATUS_LAST_FOCUSED transitions are not "Claude activity"
+    # and do not feed the sort.
+    auto_arrange_repos: bool = False
 
 
 @dataclass
@@ -176,6 +181,7 @@ def load_settings(path: Path | None = None) -> Settings:
         restore_last_repo=bool(u_raw.get("restore_last_repo", u_def.restore_last_repo)),
         desktop_notifications=bool(u_raw.get("desktop_notifications", u_def.desktop_notifications)),
         status_badge_style=badge_style,
+        auto_arrange_repos=bool(u_raw.get("auto_arrange_repos", u_def.auto_arrange_repos)),
     )
 
     last_focused = data.get("last_focused_repo")

@@ -311,12 +311,20 @@ class PreferencesDialog(QDialog):
         self._desktop_notifs.setChecked(ui.desktop_notifications)
         form.addRow("", self._desktop_notifs)
 
+        self._auto_arrange = QCheckBox("Auto-arrange repos by recent Claude activity", w)
+        self._auto_arrange.setChecked(ui.auto_arrange_repos)
+        form.addRow("", self._auto_arrange)
+
         help_lbl = QLabel(
             "Sidebar width is set by dragging the splitter — drags persist. "
             "Desktop notifications are "
             "fired by ccwork-hook-sink — disabling them here suppresses the "
             "notify-send pop-ups but keeps in-window indicators (bell dot, "
-            "sidebar status colors) intact.",
+            "sidebar status colors) intact. The 🔊 / 🔇 button in the top "
+            "bar is a one-click shortcut for the same setting. "
+            "Auto-arrange reorders the sidebar by Claude-driven events "
+            "(Stop / Notification / UserPromptSubmit) ~2 s after the last "
+            "event; user-driven row switches do not count.",
             w,
         )
         help_lbl.setWordWrap(True)
@@ -421,6 +429,7 @@ class PreferencesDialog(QDialog):
         self._badge_style.setCurrentIndex(bidx if bidx >= 0 else 0)
         self._restore_last.setChecked(du.restore_last_repo)
         self._desktop_notifs.setChecked(du.desktop_notifications)
+        self._auto_arrange.setChecked(du.auto_arrange_repos)
         self._font.setCurrentText(d.font_family)
         self._font_size.setValue(d.font_size)
         self._scrollback.setValue(d.scrollback)
@@ -462,6 +471,7 @@ class PreferencesDialog(QDialog):
             restore_last_repo=bool(self._restore_last.isChecked()),
             desktop_notifications=bool(self._desktop_notifs.isChecked()),
             status_badge_style=str(self._badge_style.currentData() or "dot"),
+            auto_arrange_repos=bool(self._auto_arrange.isChecked()),
         )
 
         try:

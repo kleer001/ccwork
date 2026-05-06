@@ -53,7 +53,14 @@ Open with the gear button or `Ctrl+,`. Settings persist to
   startup.
 - **Show desktop notifications** — gates `notify-send` pop-ups from
   `ccwork-hook-sink`. In-window indicators (badges, sidebar colors) stay
-  on regardless.
+  on regardless. Mirrored by the 🔊 / 🔇 toggle in the top bar — both
+  surfaces drive the same setting.
+- **Auto-arrange repos by recent Claude activity** — when on, the sidebar
+  reorders itself so repos with the most recent Stop / Notification /
+  UserPromptSubmit events sit on top. Reorder is debounced ~2 s after the
+  last event so rows don't shift while you're reading them. The violet
+  "last focused" dot is user navigation, not Claude activity, and never
+  feeds the sort.
 
 Sidebar width isn't in the dialog — drag the splitter; the new width
 persists. Drag floor is ~6 characters wide; the badge auto-hides before
