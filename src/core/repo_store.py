@@ -5,9 +5,13 @@ On-disk format: `~/.config/ccwork/repos.json`
     {
       "version": 1,
       "repos": [
-        {"path": "/home/x/repo"}
+        {"id": "…", "path": "/home/x/repo", "instance": 0}
       ]
     }
+
+Duplicate paths are allowed — each entry is a separate sidebar instance.
+`id` (uuid4) is the stable identity; `instance` is the Roman-numeral suffix
+(0 = no suffix, ≥1 = the I/II/III index shown next to the basename).
 
 The store is a plain value object — it does not watch the file for external
 edits. Reload by constructing a new instance.
@@ -18,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import uuid
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Iterator
@@ -33,13 +38,42 @@ def default_config_path() -> Path:
     return base / "ccwork" / "repos.json"
 
 
+# Standard greedy table for ASCII Roman numerals. Valid range: 1..3999.
+_ROMAN_TABLE = (
+    (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"),
+    (100,  "C"), (90,  "XC"), (50,  "L"), (40,  "XL"),
+    (10,   "X"), (9,   "IX"), (5,   "V"), (4,   "IV"),
+    (1,    "I"),
+)
+
+
+def to_roman(n: int) -> str:
+    """Convert 1..3999 to a Roman numeral. Raises ValueError on out-of-range."""
+    if not isinstance(n, int) or n < 1 or n > 3999:
+        raise ValueError(f"to_roman: out of range (1..3999), got {n!r}")
+    out: list[str] = []
+    for v, sym in _ROMAN_TABLE:
+        while n >= v:
+            out.append(sym)
+            n -= v
+    return "".join(out)
+
+
 @dataclass
 class Repo:
     path: str
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    instance: int = 0
 
     @property
     def name(self) -> str:
         return os.path.basename(self.path.rstrip("/")) or self.path
+
+    @property
+    def display_name(self) -> str:
+        if self.instance <= 0:
+            return self.name
+        return f"{self.name} ({to_roman(self.instance)})"
 
 
 @dataclass
@@ -53,12 +87,15 @@ class RepoStore:
     config_path: Path = field(default_factory=default_config_path)
     repos: list[Repo] = field(default_factory=list)
 
+    # ── disk ──
+
     def load(self) -> None:
         """Populate `self.repos` from `self.config_path`. Missing file → empty.
 
         A corrupt `repos.json` (invalid JSON from a mid-write crash) is
         treated as empty with a logged warning. Re-save overwrites it with
-        a clean file.
+        a clean file. Missing `id` / `instance` on a row are filled in
+        (back-compat with pre-duplicate-instance config files).
         """
         if not self.config_path.exists():
             self.repos = []
@@ -82,11 +119,18 @@ class RepoStore:
         repos_raw = data.get("repos", [])
         if not isinstance(repos_raw, list):
             raise ValueError(f"{self.config_path}: 'repos' must be a list")
-        self.repos = [
-            Repo(path=str(r["path"]))
-            for r in repos_raw
-            if isinstance(r, dict) and "path" in r
-        ]
+        out: list[Repo] = []
+        for r in repos_raw:
+            if not isinstance(r, dict) or "path" not in r:
+                continue
+            rid = r.get("id")
+            if not isinstance(rid, str) or not rid:
+                rid = uuid.uuid4().hex
+            inst = r.get("instance", 0)
+            if not isinstance(inst, int) or inst < 0:
+                inst = 0
+            out.append(Repo(path=str(r["path"]), id=rid, instance=inst))
+        self.repos = out
 
     def save(self) -> None:
         """Write `self.repos` to `self.config_path` atomically."""
@@ -99,32 +143,79 @@ class RepoStore:
         tmp.write_text(json.dumps(payload, indent=2) + "\n")
         os.replace(tmp, self.config_path)
 
-    def add(self, path: str) -> bool:
-        """Add a repo. Returns True if added, False if already present.
+    # ── lookup helpers ──
 
-        The path is normalized with `os.path.realpath` before comparison so
-        symlinks and trailing slashes don't create duplicates.
-        """
-        resolved = os.path.realpath(path)
-        if any(os.path.realpath(r.path) == resolved for r in self.repos):
-            return False
-        self.repos.append(Repo(path=resolved))
-        return True
-
-    def remove(self, path: str) -> bool:
-        """Remove a repo by path. Returns True if removed."""
-        resolved = os.path.realpath(path)
-        before = len(self.repos)
-        self.repos = [r for r in self.repos if os.path.realpath(r.path) != resolved]
-        return len(self.repos) != before
-
-    def move(self, path: str, new_index: int) -> bool:
-        """Reorder: move the repo with `path` to `new_index`."""
-        resolved = os.path.realpath(path)
+    def _index_by_resolved(self, resolved: str) -> int:
+        """First index whose realpath matches `resolved`, or -1."""
         for i, r in enumerate(self.repos):
             if os.path.realpath(r.path) == resolved:
+                return i
+        return -1
+
+    def _indices_by_resolved(self, resolved: str) -> list[int]:
+        return [i for i, r in enumerate(self.repos)
+                if os.path.realpath(r.path) == resolved]
+
+    def find_by_id(self, repo_id: str) -> Repo | None:
+        for r in self.repos:
+            if r.id == repo_id:
+                return r
+        return None
+
+    def repos_for_path(self, path: str) -> list[Repo]:
+        """All entries whose realpath matches `path` (zero, one, or many)."""
+        resolved = os.path.realpath(path)
+        return [self.repos[i] for i in self._indices_by_resolved(resolved)]
+
+    # ── mutations ──
+
+    def add(self, path: str) -> Repo:
+        """Add a repo and return the new entry.
+
+        Duplicates are allowed — each call appends a fresh row with a unique
+        `id`. The `instance` (Roman-numeral suffix) is assigned per the
+        sticky-while-duplicated rule:
+
+        - 0 existing for this path → new instance = 0 (no suffix)
+        - 1 existing with instance == 0 → promote it to 1, new is 2 (sequence
+          restarts when we re-enter the duplicate state)
+        - otherwise → new instance = max(existing instance) + 1 (gaps from
+          prior removals are preserved)
+        """
+        resolved = os.path.realpath(path)
+        siblings = [self.repos[i] for i in self._indices_by_resolved(resolved)]
+        if not siblings:
+            new_inst = 0
+        elif len(siblings) == 1 and siblings[0].instance == 0:
+            siblings[0].instance = 1
+            new_inst = 2
+        else:
+            new_inst = max(s.instance for s in siblings) + 1
+        repo = Repo(path=resolved, instance=new_inst)
+        self.repos.append(repo)
+        return repo
+
+    def remove_by_id(self, repo_id: str) -> bool:
+        """Remove the repo with this id. Returns True if removed.
+
+        After removal, if exactly one entry remains for that path, its
+        `instance` is reset to 0 so the bare basename is shown again.
+        """
+        for i, r in enumerate(self.repos):
+            if r.id == repo_id:
+                resolved = os.path.realpath(r.path)
+                self.repos.pop(i)
+                survivors = [self.repos[j] for j in self._indices_by_resolved(resolved)]
+                if len(survivors) == 1:
+                    survivors[0].instance = 0
+                return True
+        return False
+
+    def move_by_id(self, repo_id: str, new_index: int) -> bool:
+        """Reorder: move the repo with `repo_id` to `new_index`."""
+        for i, r in enumerate(self.repos):
+            if r.id == repo_id:
                 repo = self.repos.pop(i)
-                # Clamp so callers passing len(self.repos) still work
                 new_index = max(0, min(new_index, len(self.repos)))
                 self.repos.insert(new_index, repo)
                 return True

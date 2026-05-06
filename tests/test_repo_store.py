@@ -33,6 +33,9 @@ def test_save_creates_parent_dir(tmp_path: Path) -> None:
     data = json.loads(p.read_text())
     assert data["version"] == 1
     assert len(data["repos"]) == 1
+    # New schema fields persisted
+    assert "id" in data["repos"][0]
+    assert "instance" in data["repos"][0]
 
 
 def test_round_trip(store_path: Path, tmp_path: Path) -> None:
@@ -41,8 +44,8 @@ def test_round_trip(store_path: Path, tmp_path: Path) -> None:
     r1.mkdir()
     r2.mkdir()
     s = RepoStore(config_path=store_path)
-    assert s.add(str(r1)) is True
-    assert s.add(str(r2)) is True
+    a = s.add(str(r1))
+    b = s.add(str(r2))
     s.save()
 
     s2 = RepoStore(config_path=store_path)
@@ -50,52 +53,173 @@ def test_round_trip(store_path: Path, tmp_path: Path) -> None:
     assert len(s2.repos) == 2
     assert s2.repos[0].path == str(r1)
     assert s2.repos[1].path == str(r2)
+    # Ids round-trip identically.
+    assert s2.repos[0].id == a.id
+    assert s2.repos[1].id == b.id
 
 
-def test_add_deduplicates_by_realpath(store_path: Path, tmp_path: Path) -> None:
+def test_add_allows_duplicates_with_roman_suffixes(store_path: Path, tmp_path: Path) -> None:
+    """Adding the same path twice promotes the first to instance=1 and the
+    second to instance=2 — sequence restarts each time we re-enter the
+    duplicate state."""
+    target = tmp_path / "target"
+    target.mkdir()
+
+    s = RepoStore(config_path=store_path)
+    a = s.add(str(target))
+    assert a.instance == 0
+    assert a.display_name == "target"
+
+    b = s.add(str(target))
+    # 1→2 promotes the original to (I).
+    assert s.repos[0].instance == 1
+    assert b.instance == 2
+    assert s.repos[0].display_name == "target (I)"
+    assert b.display_name == "target (II)"
+    assert len(s.repos) == 2
+
+
+def test_add_third_duplicate_appends(store_path: Path, tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    s = RepoStore(config_path=store_path)
+    s.add(str(target)); s.add(str(target))
+    c = s.add(str(target))
+    assert [r.instance for r in s.repos] == [1, 2, 3]
+    assert c.display_name == "target (III)"
+
+
+def test_remove_middle_keeps_gaps(store_path: Path, tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    s = RepoStore(config_path=store_path)
+    a = s.add(str(target)); b = s.add(str(target)); c = s.add(str(target))
+    assert s.remove_by_id(b.id) is True
+    # Gap preserved while count stays >=2.
+    assert [r.instance for r in s.repos] == [1, 3]
+    assert s.repos[0].id == a.id
+    assert s.repos[1].id == c.id
+
+
+def test_remove_drops_suffix_when_one_left(store_path: Path, tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    s = RepoStore(config_path=store_path)
+    a = s.add(str(target)); b = s.add(str(target))
+    assert s.remove_by_id(b.id) is True
+    # Survivor's suffix disappears.
+    assert s.repos[0].instance == 0
+    assert s.repos[0].display_name == "target"
+    assert s.repos[0].id == a.id
+
+
+def test_re_add_restarts_sequence(store_path: Path, tmp_path: Path) -> None:
+    """After the count drops to 1 (suffix cleared), a fresh duplicate add
+    promotes the survivor back to (I) — numbering restarts."""
+    target = tmp_path / "target"
+    target.mkdir()
+    s = RepoStore(config_path=store_path)
+    a = s.add(str(target)); b = s.add(str(target))   # I, II
+    s.remove_by_id(b.id)                              # back to bare name
+    s.add(str(target))                                # re-enter duplicates
+    assert [r.instance for r in s.repos] == [1, 2]
+    assert s.repos[0].id == a.id
+
+
+def test_add_normalizes_symlinks(store_path: Path, tmp_path: Path) -> None:
+    """Realpath normalization still applies — adding via a symlink stores
+    the resolved path so duplicate detection treats both as the same repo."""
     target = tmp_path / "target"
     target.mkdir()
     link = tmp_path / "link"
     link.symlink_to(target)
 
     s = RepoStore(config_path=store_path)
-    assert s.add(str(target)) is True
-    assert s.add(str(link)) is False
-    assert s.add(str(target) + "/") is False
-    assert len(s.repos) == 1
+    s.add(str(target))
+    s.add(str(link))
+    assert len(s.repos) == 2
+    assert s.repos[0].instance == 1
+    assert s.repos[1].instance == 2
+    # Both stored as the same realpath.
+    assert s.repos[0].path == str(target)
+    assert s.repos[1].path == str(target)
 
 
-def test_remove(store_path: Path, tmp_path: Path) -> None:
-    r1 = tmp_path / "r1"
-    r1.mkdir()
+def test_remove_by_id_missing_returns_false(store_path: Path) -> None:
     s = RepoStore(config_path=store_path)
-    s.add(str(r1))
-    assert s.remove(str(r1)) is True
-    assert s.remove(str(r1)) is False
-    assert s.repos == []
+    assert s.remove_by_id("no-such-id") is False
 
 
-def test_move_reorders(store_path: Path, tmp_path: Path) -> None:
+def test_move_by_id_reorders(store_path: Path, tmp_path: Path) -> None:
     paths = [tmp_path / f"r{i}" for i in range(3)]
     for p in paths:
         p.mkdir()
     s = RepoStore(config_path=store_path)
-    for p in paths:
-        s.add(str(p))
-    # move r0 to position 2 (end)
-    assert s.move(str(paths[0]), 2) is True
+    added = [s.add(str(p)) for p in paths]
+    assert s.move_by_id(added[0].id, 2) is True
     assert [r.path for r in s.repos] == [str(paths[1]), str(paths[2]), str(paths[0])]
 
 
-def test_move_unknown_path_returns_false(store_path: Path) -> None:
+def test_move_by_id_unknown_returns_false(store_path: Path) -> None:
     s = RepoStore(config_path=store_path)
-    assert s.move("/does/not/exist", 0) is False
+    assert s.move_by_id("nope", 0) is False
 
 
-def test_repo_name_from_path() -> None:
+def test_repos_for_path_finds_all_duplicates(store_path: Path, tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    s = RepoStore(config_path=store_path)
+    s.add(str(target)); s.add(str(target)); s.add(str(target))
+    assert len(s.repos_for_path(str(target))) == 3
+
+
+def test_repo_name_and_display_name() -> None:
     assert Repo(path="/home/user/myrepo").name == "myrepo"
     assert Repo(path="/home/user/myrepo/").name == "myrepo"
     assert Repo(path="/").name == "/"
+    # display_name == name when instance is 0.
+    assert Repo(path="/x/y").display_name == "y"
+    assert Repo(path="/x/y", instance=1).display_name == "y (I)"
+    assert Repo(path="/x/y", instance=4).display_name == "y (IV)"
+    assert Repo(path="/x/y", instance=39).display_name == "y (XXXIX)"
+
+
+def test_to_roman_basic() -> None:
+    from src.core.repo_store import to_roman
+    assert to_roman(1) == "I"
+    assert to_roman(4) == "IV"
+    assert to_roman(9) == "IX"
+    assert to_roman(40) == "XL"
+    assert to_roman(90) == "XC"
+    assert to_roman(400) == "CD"
+    assert to_roman(900) == "CM"
+    assert to_roman(1994) == "MCMXCIV"
+    assert to_roman(3999) == "MMMCMXCIX"
+
+
+def test_to_roman_out_of_range_raises() -> None:
+    from src.core.repo_store import to_roman
+    with pytest.raises(ValueError):
+        to_roman(0)
+    with pytest.raises(ValueError):
+        to_roman(4000)
+    with pytest.raises(ValueError):
+        to_roman(-1)
+
+
+def test_load_back_compat_missing_id_and_instance(store_path: Path) -> None:
+    """Old repos.json files (no id/instance) still load — fields are filled in."""
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    store_path.write_text(json.dumps({
+        "version": 1,
+        "repos": [{"path": "/some/repo"}],
+    }))
+    s = RepoStore(config_path=store_path)
+    s.load()
+    assert len(s.repos) == 1
+    assert s.repos[0].path == "/some/repo"
+    assert s.repos[0].id  # fresh uuid
+    assert s.repos[0].instance == 0
 
 
 def test_load_tolerates_empty_file(store_path: Path) -> None:

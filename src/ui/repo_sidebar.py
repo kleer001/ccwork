@@ -99,7 +99,7 @@ class RepoListModel(QAbstractListModel):
             return None
         repo = self._store.repos[index.row()]
         if role == Qt.DisplayRole:
-            return repo.name
+            return repo.display_name
         if role == ROLE_REPO:
             return repo
         if role == ROLE_BRANCH:
@@ -128,11 +128,31 @@ class RepoListModel(QAbstractListModel):
         return None
 
     def index_of(self, path: str) -> int:
+        """First row whose realpath matches `path`. With duplicate repos there
+        can be several; callers that need every match use `indices_of`."""
         real = os.path.realpath(path)
         for i, r in enumerate(self._store.repos):
             if os.path.realpath(r.path) == real:
                 return i
         return -1
+
+    def indices_of(self, path: str) -> list[int]:
+        """All rows whose realpath matches `path`."""
+        real = os.path.realpath(path)
+        return [i for i, r in enumerate(self._store.repos)
+                if os.path.realpath(r.path) == real]
+
+    def index_of_id(self, repo_id: str) -> int:
+        for i, r in enumerate(self._store.repos):
+            if r.id == repo_id:
+                return i
+        return -1
+
+    def _emit_changed_for_path(self, path: str, roles: list[int]) -> None:
+        """dataChanged for every row matching `path` (for broadcast updates)."""
+        for row in self.indices_of(path):
+            idx = self.index(row)
+            self.dataChanged.emit(idx, idx, roles)
 
     def refresh_branches(self) -> None:
         """Recompute branch subtitle for every repo. Call on focus/refresh."""
@@ -148,17 +168,17 @@ class RepoListModel(QAbstractListModel):
             self.dataChanged.emit(top, bot, [ROLE_BRANCH])
 
     def set_status(self, path: str, status: str) -> None:
-        """Set the per-repo status badge ("done", "attention", or "" to clear)."""
+        """Set the per-repo status badge ("done", "attention", or "" to clear).
+
+        Per-path state — every duplicate row for this path repaints together.
+        """
         if status:
             self._status[path] = status
         else:
             self._status.pop(path, None)
         if status in (STATUS_DONE, STATUS_ATTENTION):
             self._last_activity[path] = time.monotonic()
-        row = self.index_of(path)
-        if row >= 0:
-            idx = self.index(row)
-            self.dataChanged.emit(idx, idx, [ROLE_STATUS])
+        self._emit_changed_for_path(path, [ROLE_STATUS])
 
     def clear_status(self, path: str) -> None:
         self.set_status(path, "")
@@ -181,7 +201,10 @@ class RepoListModel(QAbstractListModel):
             self.set_status(path, STATUS_LAST_FOCUSED)
 
     def set_working(self, path: str, working: bool) -> None:
-        """Toggle the spinner for `path`. No-op if state already matches."""
+        """Toggle the spinner for `path`. No-op if state already matches.
+
+        Per-path state — every duplicate row for this path spins together.
+        """
         key = _norm(path)
         was = key in self._working
         if working == was:
@@ -191,10 +214,7 @@ class RepoListModel(QAbstractListModel):
             self._last_activity[path] = time.monotonic()
         else:
             self._working.discard(key)
-        row = self.index_of(path)
-        if row >= 0:
-            idx = self.index(row)
-            self.dataChanged.emit(idx, idx, [ROLE_WORKING])
+        self._emit_changed_for_path(path, [ROLE_WORKING])
 
     def any_working(self) -> bool:
         return bool(self._working)
@@ -253,33 +273,60 @@ class RepoListModel(QAbstractListModel):
         self._store.load()
         self.endResetModel()
 
-    def add_repo(self, path: str) -> bool:
-        added = self._store.add(path)
-        if not added:
-            return False
+    def add_repo(self, path: str) -> Repo:
+        """Append a new row for `path`. Always succeeds (duplicates allowed).
+
+        If the add promoted an existing row from instance=0 to instance=1
+        (going from 1→2 instances of the same path), that row's display name
+        also changed — emit dataChanged for it so the sidebar repaints.
+        """
+        before_resolved = {r.id: r.instance for r in self._store.repos}
+        repo = self._store.add(path)
         row = len(self._store.repos) - 1
+
+        # If a sibling's instance changed (1→2 promotion), repaint that row.
+        promoted_rows = [
+            i for i, r in enumerate(self._store.repos[:-1])
+            if before_resolved.get(r.id, r.instance) != r.instance
+        ]
+
         self.beginInsertRows(QModelIndex(), row, row)
         self.endInsertRows()
         self._store.save()
         # Populate branch for the newly added row so the subtitle isn't
         # blank until the next focus-triggered refresh. Cheap: one git call.
-        repo = self._store.repos[row]
         self._branches[repo.path] = repo_store.current_branch(repo.path)
         idx = self.index(row)
         self.dataChanged.emit(idx, idx, [ROLE_BRANCH])
-        return True
+        for r in promoted_rows:
+            pidx = self.index(r)
+            self.dataChanged.emit(pidx, pidx, [Qt.DisplayRole])
+        return repo
 
     def remove_repo_at(self, row: int) -> bool:
         if not (0 <= row < len(self._store.repos)):
             return False
-        path = self._store.repos[row].path
+        repo = self._store.repos[row]
+        path = repo.path
+        before_instances = {r.id: r.instance for r in self._store.repos}
         self.beginRemoveRows(QModelIndex(), row, row)
-        self._store.remove(path)
+        self._store.remove_by_id(repo.id)
         self.endRemoveRows()
-        self._branches.pop(path, None)
-        self._status.pop(path, None)
-        self._working.discard(_norm(path))
-        self._last_activity.pop(path, None)
+
+        # If any survivor's instance changed (count dropped to 1 → instance
+        # reset to 0), repaint that row so its suffix disappears.
+        for i, r in enumerate(self._store.repos):
+            if before_instances.get(r.id, r.instance) != r.instance:
+                idx = self.index(i)
+                self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
+
+        # Per-path state stays only while at least one row still uses the
+        # path — drop it once the last duplicate is gone.
+        if not self._store.repos_for_path(path):
+            self._branches.pop(path, None)
+            self._status.pop(path, None)
+            self._working.discard(_norm(path))
+            self._last_activity.pop(path, None)
         self._store.save()
         return True
 
@@ -381,7 +428,7 @@ class RepoDelegate(QStyledItemDelegate):
         painter.setPen(QPen(text_color))
         name_rect = QRect(rect.left(), rect.top(), text_w, rect.height() // 2)
         name_text = painter.fontMetrics().elidedText(
-            repo.name if repo else "", Qt.ElideRight, text_w,
+            repo.display_name if repo else "", Qt.ElideRight, text_w,
         )
         painter.drawText(name_rect, Qt.AlignLeft | Qt.AlignVCenter, name_text)
 
@@ -453,7 +500,7 @@ class RepoSidebar(QWidget):
 
     repo_selected = Signal(Repo)
     repo_added = Signal(Repo)
-    repo_removed = Signal(str)  # emits the removed path
+    repo_removed = Signal(Repo)  # emits the removed Repo (id needed to tear down)
     reload_requested = Signal(Repo)  # user asked to respawn the terminal
 
     def __init__(self, store: RepoStore, parent=None, settings=None) -> None:
@@ -511,6 +558,12 @@ class RepoSidebar(QWidget):
 
     def select_path(self, path: str) -> None:
         row = self._model.index_of(path)
+        if row >= 0:
+            idx = self._model.index(row)
+            self._view.setCurrentIndex(idx)
+
+    def select_id(self, repo_id: str) -> None:
+        row = self._model.index_of_id(repo_id)
         if row >= 0:
             idx = self._model.index(row)
             self._view.setCurrentIndex(idx)
@@ -595,12 +648,13 @@ class RepoSidebar(QWidget):
         path = QFileDialog.getExistingDirectory(self, "Add repo directory", os.path.expanduser("~"))
         if not path:
             return
-        if self._model.add_repo(path):
-            # Select the just-added row.
-            self.select_path(path)
-            added = self._model.repo_at(len(self._store.repos) - 1)
-            if added is not None:
-                self.repo_added.emit(added)
+        added = self._model.add_repo(path)
+        # Select the just-added row by id (path may be ambiguous now that
+        # duplicates are allowed).
+        row = self._model.index_of_id(added.id)
+        if row >= 0:
+            self._view.setCurrentIndex(self._model.index(row))
+        self.repo_added.emit(added)
 
     def _on_context_menu(self, pos: QPoint) -> None:
         idx = self._view.indexAt(pos)
@@ -627,7 +681,7 @@ class RepoSidebar(QWidget):
         ans = QMessageBox.question(
             self,
             "Reload terminal",
-            f"Respawn the terminal for {repo.name}?\n\n"
+            f"Respawn the terminal for {repo.display_name}?\n\n"
             "The running shell (and any active Claude session) will be killed. "
             "If Claude was mid-response, that response is lost — but the "
             "conversation transcript is preserved; run `claude --continue` "
@@ -642,7 +696,7 @@ class RepoSidebar(QWidget):
         ans = QMessageBox.question(
             self,
             "Remove from sidebar",
-            f"Remove {repo.name} from ccwork?\n\n"
+            f"Remove {repo.display_name} from ccwork?\n\n"
             "The repo directory on disk is untouched — this only removes it "
             "from the sidebar list.",
             QMessageBox.Yes | QMessageBox.No,
@@ -650,4 +704,4 @@ class RepoSidebar(QWidget):
         )
         if ans == QMessageBox.Yes:
             self._model.remove_repo_at(row)
-            self.repo_removed.emit(repo.path)
+            self.repo_removed.emit(repo)

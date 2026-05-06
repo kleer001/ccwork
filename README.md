@@ -8,6 +8,12 @@ driven by Claude Code's Stop/Notification hooks.
 
 - **Sidebar of repos** — name + current git branch + unread-alert badge.
   Click a repo to bring up its terminal; right-click for reload / remove.
+- **Multiple sessions per repo** — `Ctrl+O` the same repo twice to spawn
+  parallel Claude sessions on it. Duplicates get Roman-numeral suffixes
+  (`myrepo (I)`, `myrepo (II)`, …); remove all but one and the suffix
+  disappears. Hook events (status badge, working spinner) currently light
+  up every duplicate row for that path — per-session routing is future
+  work.
 - **Real embedded terminals** — xterm is reparented into the window via
   XEmbed. Your existing terminal muscle memory (copy/paste, scrollback,
   ctrl-c) all works; no reimplemented VT100 emulator.
@@ -15,7 +21,8 @@ driven by Claude Code's Stop/Notification hooks.
   top-right list. Click an entry to jump to that repo; the matching
   sidebar row gets an unread badge if you weren't looking at it.
 - **Auto-registration** — running `claude` inside the GUI from a git root
-  not yet in the sidebar adds it silently.
+  not yet in the sidebar adds it silently. Auto-add only fires when no row
+  exists for that path; duplicates require manual `Ctrl+O`.
 - **Preferences dialog** with color-scheme presets (Solarized Dark/Light,
   Dracula, Gruvbox Dark, GitHub Light, Tomorrow), font/scrollback/
   scrollbar controls, and live OSC-based apply for colors and fonts.

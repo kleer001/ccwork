@@ -37,6 +37,10 @@ xorg or XWayland; X11 session preferred):
 - [ ] Enable "Auto-arrange repos by recent Claude activity" with two or
       more repos; trigger Stop in the lower repo and confirm it floats
       to the top ~2 s later.
+- [ ] `Ctrl+O` the same repo twice — confirm rows show `(I)` and `(II)`,
+      each with its own terminal. Remove `(II)`; the survivor's suffix
+      should disappear. Restart the app and confirm both ids round-trip
+      in `repos.json`.
 - [ ] `./install.sh --uninstall` — confirm idempotent and that backups land
       in `~/.local/share/ccwork/backups/`.
 

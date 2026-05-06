@@ -21,7 +21,6 @@ shared state. Preferences/Add-Repo/Quit reachable via Ctrl+,/Ctrl+O/Ctrl+Q
 from __future__ import annotations
 
 import logging
-import os
 
 from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter
@@ -43,7 +42,7 @@ from src.core.settings import Settings, load_settings, save_settings
 from src.core.terminal_session import build_session
 from src.ui.preferences_dialog import PreferencesDialog
 from src.ui.qt_theme import apply_theme
-from src.ui.repo_sidebar import RepoSidebar, _norm as _norm_path
+from src.ui.repo_sidebar import RepoSidebar
 from src.ui.terminal_host import TerminalHost
 from src.ui.title_label import TitleLabel
 
@@ -66,11 +65,15 @@ class MainWindow(QMainWindow):
         self._store = store
         self._hook_server = hook_server
         self._settings = settings if settings is not None else Settings()
-        # One TerminalHost per repo path; created lazily on first selection.
+        # One TerminalHost per repo *instance* (not per path) — duplicates of
+        # the same repo each get their own xterm. Keyed by Repo.id so the two
+        # rows for one path can't collide on a path-string key.
         self._terminals: dict[str, TerminalHost] = {}
-        # Repos whose Claude session is mid-turn (UserPromptSubmit fired,
+        # Repo ids whose Claude session is mid-turn (UserPromptSubmit fired,
         # Stop/Notification hasn't yet). Drives the quit-confirm prompt so we
-        # only nag when there's actual in-flight work to lose.
+        # only nag when there's actual in-flight work to lose. With duplicate
+        # rows sharing a cwd, hook routing is ambiguous — we light up *every*
+        # id matching the cwd (broadcast). Per-session routing is future work.
         self._working: set[str] = set()
 
         # ── top strip: centered repo · branch + right-side icon cluster ──
@@ -298,10 +301,10 @@ class MainWindow(QMainWindow):
         else:
             bar.showMessage("Settings applied.", 3_000)
 
-    def _on_repo_removed(self, path: str) -> None:
+    def _on_repo_removed(self, repo: Repo) -> None:
         """A repo was removed from the sidebar — also tear down its terminal."""
-        self._working.discard(_norm_path(path))
-        host = self._terminals.pop(path, None)
+        self._working.discard(repo.id)
+        host = self._terminals.pop(repo.id, None)
         if host is not None:
             was_current = self._stack.currentWidget() is host
             self._stack.removeWidget(host)
@@ -317,7 +320,7 @@ class MainWindow(QMainWindow):
         Killing xterm kills the shell inside; any live Claude session is
         lost. Callers should confirm with the user before invoking.
         """
-        host = self._terminals.pop(repo.path, None)
+        host = self._terminals.pop(repo.id, None)
         if host is not None:
             self._stack.removeWidget(host)
             host.stop()
@@ -365,12 +368,12 @@ class MainWindow(QMainWindow):
         n = model.rowCount()
         if n <= 1 or delta == 0:
             return
-        cur = self._current_repo_path()
-        cur_row = model.index_of(cur) if cur else -1
+        cur_id = self._current_repo_id()
+        cur_row = model.index_of_id(cur_id) if cur_id else -1
         next_row = (cur_row + delta) % n
         repo = model.repo_at(next_row)
         if repo is not None:
-            self._sidebar.select_path(repo.path)
+            self._select_repo(repo)
 
     # ── terminal context menu ──
 
@@ -406,7 +409,7 @@ class MainWindow(QMainWindow):
 
     def _paste_clipboard_to(self, repo: Repo) -> None:
         from PySide6.QtWidgets import QApplication
-        host = self._terminals.get(repo.path)
+        host = self._terminals.get(repo.id)
         if host is None:
             return
         host.paste_text(QApplication.clipboard().text())
@@ -420,7 +423,7 @@ class MainWindow(QMainWindow):
 
     def _ensure_terminal(self, repo: Repo) -> TerminalHost:
         """Lazy-spawn a TerminalHost for the given repo."""
-        host = self._terminals.get(repo.path)
+        host = self._terminals.get(repo.id)
         if host is not None:
             return host
         spec = build_session(repo, xterm_settings=self._settings.xterm)
@@ -437,7 +440,7 @@ class MainWindow(QMainWindow):
         host.context_menu_requested.connect(
             lambda pos, r=repo: self._on_terminal_context_menu(r, pos)
         )
-        self._terminals[repo.path] = host
+        self._terminals[repo.id] = host
         self._stack.addWidget(host)
         # Make the host current + visible BEFORE starting xterm so the parent
         # X window is mapped when xterm reparents into it.
@@ -450,20 +453,27 @@ class MainWindow(QMainWindow):
     def _on_repo_selected(self, repo: Repo) -> None:
         # Refresh branches first so the title gets a fresh subtitle on click.
         self._sidebar.refresh_branches()
-        self._title.set_repo(repo.name, self._branch_for(repo.path))
+        self._title.set_repo(repo.display_name, self._branch_for(repo.path))
         # _ensure_terminal handles setCurrentWidget on first spawn; for a
         # pre-existing host we still need to swap to it.
         host = self._ensure_terminal(repo)
         self._stack.setCurrentWidget(host)
         host.focus_child()
         # Persist so the violet dot can be restored next launch. Best-effort:
-        # a write failure here shouldn't block the click.
+        # a write failure here shouldn't block the click. last_focused_repo
+        # is path-keyed (matches whichever instance happens to be at that
+        # path on next launch — duplicates don't survive across restarts in
+        # any meaningful "which one was active" sense).
         if self._settings.last_focused_repo != repo.path:
             self._settings.last_focused_repo = repo.path
             try:
                 save_settings(self._settings)
             except OSError as e:
                 log.warning("could not persist last_focused_repo: %s", e)
+
+    def _select_repo(self, repo: Repo) -> None:
+        """Convenience for keyboard-cycle: pick a specific repo by id."""
+        self._sidebar.select_id(repo.id)
 
     def changeEvent(self, event) -> None:
         # When the window gains activation (alt-tab, taskbar click), forward
@@ -488,12 +498,21 @@ class MainWindow(QMainWindow):
 
     def _on_terminal_failed(self, repo: Repo, msg: str) -> None:
         log.warning("terminal for %s failed: %s", repo.path, msg)
-        QMessageBox.warning(self, f"xterm failed for {repo.name}", msg)
+        QMessageBox.warning(self, f"xterm failed for {repo.display_name}", msg)
 
     def _on_terminal_finished(self, repo: Repo, code: int) -> None:
-        self._working.discard(_norm_path(repo.path))
-        self._sidebar.set_working(repo.path, False)
-        host = self._terminals.pop(repo.path, None)
+        self._working.discard(repo.id)
+        # Sidebar working state is path-keyed (broadcast across duplicates).
+        # Only clear the spinner if no *other* duplicate is still working,
+        # otherwise we'd silence a sibling that is genuinely mid-turn.
+        siblings_working = any(
+            r.id in self._working
+            for r in self._store.repos_for_path(repo.path)
+            if r.id != repo.id
+        )
+        if not siblings_working:
+            self._sidebar.set_working(repo.path, False)
+        host = self._terminals.pop(repo.id, None)
         was_current = host is not None and self._stack.currentWidget() is host
         if host is not None:
             self._stack.removeWidget(host)
@@ -508,31 +527,42 @@ class MainWindow(QMainWindow):
         event = str(obj.get("event", ""))
         payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else {}
         cwd = obj.get("cwd") or (payload.get("cwd") if isinstance(payload, dict) else None)
+
+        # Resolve the cwd to every repo instance sharing that path. With
+        # duplicates allowed, hooks can't tell duplicates apart by cwd alone
+        # — we broadcast to all of them. Per-session routing is future work.
+        matching: list[Repo] = (
+            self._store.repos_for_path(str(cwd)) if cwd else []
+        )
         log.info(
-            "hook event=%s cwd=%r matched_row=%s",
-            event, cwd,
-            self._sidebar.model.index_of(str(cwd)) if cwd else "no-cwd",
+            "hook event=%s cwd=%r matched=%d", event, cwd, len(matching),
         )
 
         # Track Claude's mid-turn state. UserPromptSubmit means the user
         # just sent a prompt; Stop/Notification mean Claude is done or
         # waiting for input. Drives both the close-confirmation prompt and
         # the per-repo status badge in the sidebar.
-        if cwd:
-            cwd_key = _norm_path(str(cwd))
-            if event == "UserPromptSubmit":
-                self._working.add(cwd_key)
-                # User just engaged this repo — clear any stale status dot
-                # and start the spinner.
-                self._sidebar.clear_status(str(cwd))
-                self._sidebar.set_working(str(cwd), True)
-                return
-            if event in ("Stop", "Notification"):
-                self._working.discard(cwd_key)
-                self._sidebar.set_working(str(cwd), False)
+        if matching and event == "UserPromptSubmit":
+            for r in matching:
+                self._working.add(r.id)
+            # Sidebar state is path-keyed — one call per distinct path is
+            # enough; the dataChanged broadcast lights every matching row.
+            self._sidebar.clear_status(str(cwd))
+            self._sidebar.set_working(str(cwd), True)
+            return
+
+        if matching and event in ("Stop", "Notification"):
+            for r in matching:
+                self._working.discard(r.id)
+            self._sidebar.set_working(str(cwd), False)
 
         if event == "RepoAdded" and cwd:
-            self._sidebar.model.add_repo(cwd)
+            # Auto-add only when no row exists yet for this path. Manual
+            # Ctrl+O is the only way to create duplicates — every plain
+            # `claude` invocation in an existing repo dir would otherwise
+            # spawn a new tab.
+            if not self._store.repos_for_path(str(cwd)):
+                self._sidebar.model.add_repo(cwd)
             return
 
         if event in ("Stop", "Notification"):
@@ -542,16 +572,16 @@ class MainWindow(QMainWindow):
             # Status dot on the sidebar — fires for every repo, including
             # the active one. Cleared on next UserPromptSubmit or when the
             # user re-clicks the row.
-            if cwd and self._sidebar.model.index_of(str(cwd)) >= 0:
+            if matching:
                 from src.ui.repo_sidebar import STATUS_ATTENTION, STATUS_DONE
                 status = STATUS_ATTENTION if event == "Notification" else STATUS_DONE
                 self._sidebar.set_status(str(cwd), status)
 
-    def _current_repo_path(self) -> str | None:
+    def _current_repo_id(self) -> str | None:
         w = self._stack.currentWidget()
-        for path, host in self._terminals.items():
+        for repo_id, host in self._terminals.items():
             if host is w:
-                return path
+                return repo_id
         return None
 
     # ── lifecycle ──
@@ -559,19 +589,23 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # type: ignore[override]
         # Only nag when Claude is mid-turn somewhere — an idle shell sitting
         # at a prompt is fine to kill silently. Working state is tracked via
-        # UserPromptSubmit / Stop / Notification hooks.
-        # _working is keyed by realpath; _terminals is keyed by the raw
-        # repo.path the sidebar handed us. Map back to the raw key so the
-        # is_running check lines up.
-        norm_to_raw = {_norm_path(k): k for k in self._terminals}
-        working = [norm_to_raw[p] for p in self._working
-                   if p in norm_to_raw and self._terminals[norm_to_raw[p]].is_running()]
-        if working:
-            names = ", ".join(os.path.basename(p.rstrip("/")) or p for p in working)
+        # UserPromptSubmit / Stop / Notification hooks. With one shared
+        # id-keyed map, the bookkeeping that used to bridge path/realpath is
+        # gone.
+        working_ids = [
+            rid for rid in self._working
+            if rid in self._terminals and self._terminals[rid].is_running()
+        ]
+        if working_ids:
+            id_to_repo = {r.id: r for r in self._store.repos}
+            names = ", ".join(
+                id_to_repo[rid].display_name for rid in working_ids
+                if rid in id_to_repo
+            )
             ans = QMessageBox.question(
                 self,
                 "Quit ccwork?",
-                f"Claude is working in {len(working)} repo(s): {names}.\n\n"
+                f"Claude is working in {len(working_ids)} repo(s): {names}.\n\n"
                 "Quitting kills those sessions mid-response. The conversation "
                 "transcripts are preserved — run `claude --continue` to resume "
                 "them — but any in-flight response is lost.",

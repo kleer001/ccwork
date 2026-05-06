@@ -72,7 +72,11 @@ but no widgets):
   ones. `XtermSettings.to_xterm_args()` is the single source of truth for
   spawn flags.
 - `repo_store.py` — `~/.config/ccwork/repos.json`. Plain value object; no
-  file watcher.
+  file watcher. Each `Repo` carries a uuid `id` and an `instance` integer.
+  Duplicate paths are allowed (multiple parallel sessions on one repo);
+  `instance` is the Roman-numeral suffix (0 = bare basename, ≥1 = `(I)`,
+  `(II)`, …). Sticky while ≥2 rows share a path; resets to 0 when the count
+  drops back to 1; sequence restarts on the next duplicate add.
 - `terminal_session.py` — builds the argv passed to `TerminalHost`. Sets
   `CCWORK_GUI=1` in the child env (the gate the hook sink checks). Launches
   bash with `--rcfile bin/ccwork-bashrc` so ccwork's `bin/` wins on `PATH`
@@ -135,6 +139,12 @@ status are mutually exclusive in the UI by construction.
   bumped only by Stop / Notification / UserPromptSubmit. If you add a new
   status, decide deliberately whether it represents Claude activity (and
   therefore should stamp the timestamp) or user state (and should not).
+- **Terminals are keyed by `repo.id`, not `repo.path`.** `MainWindow._terminals`
+  and `_working` are dicts/sets of repo ids so duplicate rows on the same
+  path get independent xterms. Hook events arrive with `cwd` and broadcast
+  to every matching id (per-session routing is future work). Sidebar
+  per-path state (`_branches`, `_status`, working spinner) stays
+  path-keyed — broadcast across duplicates is the intended UX.
 - Tests use `QT_QPA_PLATFORM=offscreen`. The `qapp` fixture in
   `tests/test_preferences_dialog.py` is the pattern to follow when a test
   needs a `QApplication`.
