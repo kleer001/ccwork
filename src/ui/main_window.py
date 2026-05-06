@@ -36,7 +36,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.core.hook_server import HookServer
+from src.core.hook_server import (
+    EVENT_NOTIFICATION,
+    EVENT_REPO_ADDED,
+    EVENT_STOP,
+    EVENT_USER_PROMPT_SUBMIT,
+    IDLE_EVENTS,
+    HookServer,
+)
 from src.core.repo_store import Repo, RepoStore
 from src.core.settings import Settings, load_settings, save_settings
 from src.core.terminal_session import build_session
@@ -544,7 +551,7 @@ class MainWindow(QMainWindow):
         # just sent a prompt; Stop/Notification mean Claude is done or
         # waiting for input. Drives both the close-confirmation prompt and
         # the per-repo status badge in the sidebar.
-        if matching and event == "UserPromptSubmit":
+        if matching and event == EVENT_USER_PROMPT_SUBMIT:
             for r in matching:
                 self._working.add(r.id)
             # Sidebar state is path-keyed — one call per distinct path is
@@ -553,12 +560,12 @@ class MainWindow(QMainWindow):
             self._sidebar.set_working(str(cwd), True)
             return
 
-        if matching and event in ("Stop", "Notification"):
+        if matching and event in IDLE_EVENTS:
             for r in matching:
                 self._working.discard(r.id)
             self._sidebar.set_working(str(cwd), False)
 
-        if event == "RepoAdded" and cwd:
+        if event == EVENT_REPO_ADDED and cwd:
             # Auto-add only when no row exists yet for this path. Manual
             # Ctrl+O is the only way to create duplicates — every plain
             # `claude` invocation in an existing repo dir would otherwise
@@ -567,7 +574,7 @@ class MainWindow(QMainWindow):
                 self._sidebar.model.add_repo(cwd)
             return
 
-        if event in ("Stop", "Notification"):
+        if event in IDLE_EVENTS:
             # Light the bell dot so the user has a glanceable "something
             # happened" signal even if the per-repo sidebar dot is off-screen.
             self._bell_btn.set_unseen(True)
@@ -576,7 +583,7 @@ class MainWindow(QMainWindow):
             # user re-clicks the row.
             if matching:
                 from src.ui.repo_sidebar import STATUS_ATTENTION, STATUS_DONE
-                status = STATUS_ATTENTION if event == "Notification" else STATUS_DONE
+                status = STATUS_ATTENTION if event == EVENT_NOTIFICATION else STATUS_DONE
                 self._sidebar.set_status(str(cwd), status)
 
     def _current_repo_id(self) -> str | None:

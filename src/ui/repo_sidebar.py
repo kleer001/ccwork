@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import dataclass
 
 from PySide6.QtCore import (
     QAbstractListModel,
@@ -43,17 +44,48 @@ ROLE_STATUS  = Qt.UserRole + 3
 ROLE_WORKING = Qt.UserRole + 4  # bool — Claude mid-turn in this repo
 ROLE_HAS_TERMINAL = Qt.UserRole + 5  # bool — a TerminalHost exists for this repo this session
 
-STATUS_DONE          = "done"
-STATUS_ATTENTION     = "attention"
-STATUS_LAST_FOCUSED  = "last_focused"
+@dataclass(frozen=True)
+class StatusDefinition:
+    """Single source of truth for a row-status: tooltip label + badge paint.
 
-# Human-readable labels for the row tooltip — paired with the colored badge
-# so users don't have to memorize the dot palette.
-STATUS_LABELS = {
-    STATUS_ATTENTION:    "Claude needs input",
-    STATUS_DONE:         "Claude finished a turn",
-    STATUS_LAST_FOCUSED: "Last focused",
-}
+    `color`/`glyph` of None means the status does not paint in the right-edge
+    badge column (it may paint elsewhere, e.g. as a left-edge stripe).
+    """
+    value: str
+    label: str
+    color: QColor | None
+    glyph: str | None
+
+
+# Solarized-ish palette: red = needs attention (urgent), green = done (calmer).
+STATUS_DONE_DEF = StatusDefinition(
+    value="done",
+    label="Claude finished a turn",
+    color=QColor(133, 153, 0),
+    glyph="✓",
+)
+STATUS_ATTENTION_DEF = StatusDefinition(
+    value="attention",
+    label="Claude needs input",
+    color=QColor(220, 50, 47),
+    glyph="!",
+)
+# `last_focused` paints as a left-edge stripe, not a right-edge badge — so the
+# badge column stays reserved for genuine Claude alerts.
+STATUS_LAST_FOCUSED_DEF = StatusDefinition(
+    value="last_focused",
+    label="Last focused",
+    color=None,
+    glyph=None,
+)
+
+_ALL_STATUSES = (STATUS_DONE_DEF, STATUS_ATTENTION_DEF, STATUS_LAST_FOCUSED_DEF)
+
+STATUS_DONE         = STATUS_DONE_DEF.value
+STATUS_ATTENTION    = STATUS_ATTENTION_DEF.value
+STATUS_LAST_FOCUSED = STATUS_LAST_FOCUSED_DEF.value
+
+STATUS_LABELS = {s.value: s.label for s in _ALL_STATUSES if s.label}
 WORKING_LABEL = "Claude is working…"
 
 
@@ -136,19 +168,10 @@ class RepoListModel(QAbstractListModel):
         return None
 
     def index_of(self, path: str) -> int:
-        """First row whose realpath matches `path`. With duplicate repos there
-        can be several; callers that need every match use `indices_of`."""
-        real = os.path.realpath(path)
-        for i, r in enumerate(self._store.repos):
-            if os.path.realpath(r.path) == real:
-                return i
-        return -1
+        return self._store.index_of(path)
 
     def indices_of(self, path: str) -> list[int]:
-        """All rows whose realpath matches `path`."""
-        real = os.path.realpath(path)
-        return [i for i, r in enumerate(self._store.repos)
-                if os.path.realpath(r.path) == real]
+        return self._store.indices_of(path)
 
     def index_of_id(self, repo_id: str) -> int:
         for i, r in enumerate(self._store.repos):
@@ -368,25 +391,14 @@ class RepoDelegate(QStyledItemDelegate):
     # extra character or two of the repo name on a very narrow sidebar.
     GLYPH_W = 14
     GLYPH_GAP = 4
-    # Solarized-ish: red = needs attention (urgent), green = done (calmer).
-    # STATUS_LAST_FOCUSED is intentionally absent — it paints as a left-edge
-    # stripe instead of a right-edge dot, so the badge column is reserved
-    # for genuine Claude alerts (working / done / attention) and can't be
-    # tuned out by users who navigate frequently.
-    STATUS_COLORS = {
-        STATUS_ATTENTION:    QColor(220, 50, 47),   # solarized red
-        STATUS_DONE:         QColor(133, 153, 0),   # solarized green
-    }
-    # Muted cyan for the working spinner — distinct from the red/green
+    # Derived from _ALL_STATUSES — statuses with color=None (e.g. last_focused)
+    # are excluded so the right-edge badge column stays reserved for genuine
+    # Claude alerts (working / done / attention).
+    STATUS_COLORS = {s.value: s.color for s in _ALL_STATUSES if s.color is not None}
+    STATUS_GLYPHS = {s.value: s.glyph for s in _ALL_STATUSES if s.glyph is not None}
+    # Muted blue for the working spinner — distinct from the red/green
     # status dots so glance-state is unambiguous.
     SPINNER_COLOR = QColor(38, 139, 210)  # solarized blue
-
-    # Single-glyph variants of the badge — same column, more self-explanatory
-    # than a colored circle. Stays color-coded for users who like the palette.
-    STATUS_GLYPHS = {
-        STATUS_ATTENTION:    "!",
-        STATUS_DONE:         "✓",
-    }
 
     # Base hue for the "last focused" left-edge stripe (solarized violet).
     # Modulated per-theme by _last_focused_stripe_color so it stays subtle.

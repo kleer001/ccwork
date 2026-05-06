@@ -145,14 +145,17 @@ class RepoStore:
 
     # ── lookup helpers ──
 
-    def _index_by_resolved(self, resolved: str) -> int:
-        """First index whose realpath matches `resolved`, or -1."""
+    def index_of(self, path: str) -> int:
+        """First row whose realpath matches `path`, or -1."""
+        resolved = os.path.realpath(path)
         for i, r in enumerate(self.repos):
             if os.path.realpath(r.path) == resolved:
                 return i
         return -1
 
-    def _indices_by_resolved(self, resolved: str) -> list[int]:
+    def indices_of(self, path: str) -> list[int]:
+        """All rows whose realpath matches `path`, in order."""
+        resolved = os.path.realpath(path)
         return [i for i, r in enumerate(self.repos)
                 if os.path.realpath(r.path) == resolved]
 
@@ -164,8 +167,7 @@ class RepoStore:
 
     def repos_for_path(self, path: str) -> list[Repo]:
         """All entries whose realpath matches `path` (zero, one, or many)."""
-        resolved = os.path.realpath(path)
-        return [self.repos[i] for i in self._indices_by_resolved(resolved)]
+        return [self.repos[i] for i in self.indices_of(path)]
 
     # ── mutations ──
 
@@ -183,7 +185,7 @@ class RepoStore:
           prior removals are preserved)
         """
         resolved = os.path.realpath(path)
-        siblings = [self.repos[i] for i in self._indices_by_resolved(resolved)]
+        siblings = [self.repos[i] for i in self.indices_of(resolved)]
         if not siblings:
             new_inst = 0
         elif len(siblings) == 1 and siblings[0].instance == 0:
@@ -205,7 +207,7 @@ class RepoStore:
             if r.id == repo_id:
                 resolved = os.path.realpath(r.path)
                 self.repos.pop(i)
-                survivors = [self.repos[j] for j in self._indices_by_resolved(resolved)]
+                survivors = [self.repos[j] for j in self.indices_of(resolved)]
                 if len(survivors) == 1:
                     survivors[0].instance = 0
                 return True

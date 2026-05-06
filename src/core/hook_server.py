@@ -25,6 +25,17 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 log = logging.getLogger(__name__)
 
 
+# Hook event types emitted by ccwork-hook-sink (matches Claude Code's
+# hook protocol). Centralized so handlers don't drift across call sites.
+EVENT_USER_PROMPT_SUBMIT = "UserPromptSubmit"
+EVENT_STOP = "Stop"
+EVENT_NOTIFICATION = "Notification"
+EVENT_REPO_ADDED = "RepoAdded"
+
+# Hooks that signal Claude has stopped producing output (idle).
+IDLE_EVENTS = (EVENT_STOP, EVENT_NOTIFICATION)
+
+
 def default_socket_path() -> Path:
     """Return the path we listen on.
 
