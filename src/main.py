@@ -12,6 +12,9 @@ import sys
 if os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("QT_QPA_PLATFORM"):
     os.environ["QT_QPA_PLATFORM"] = "xcb"
 
+from pathlib import Path  # noqa: E402
+
+from PySide6.QtGui import QIcon  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from src.core.hook_server import HookServer  # noqa: E402
@@ -29,6 +32,10 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("ccwork")
     app.setApplicationDisplayName("ccwork")
+
+    icon_path = Path(__file__).resolve().parent.parent / "logo" / "v2-icon.svg"
+    if icon_path.is_file():
+        app.setWindowIcon(QIcon(str(icon_path)))
 
     store = RepoStore()
     store.load()

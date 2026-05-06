@@ -19,6 +19,7 @@ LOG="${STATE_DIR}/install.log"
 DESKTOP_FILE="${HOME}/.local/share/applications/ccwork.desktop"
 CCWORK_LAUNCHER="${SCRIPT_DIR}/bin/ccwork"
 HOOK_SINK="${SCRIPT_DIR}/bin/ccwork-hook-sink"
+CCWORK_ICON="${SCRIPT_DIR}/logo/v2-icon.svg"
 # Marker written into hook commands so uninstall can find + strip them.
 HOOK_MARKER="ccwork-hook-sink"
 
@@ -327,7 +328,7 @@ Type=Application
 Name=ccwork
 Comment=Claude Code GUI
 Exec=$CCWORK_LAUNCHER
-Icon=utilities-terminal
+Icon=$CCWORK_ICON
 Terminal=false
 Categories=Development;
 EOF

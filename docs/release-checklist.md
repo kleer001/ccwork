@@ -50,8 +50,6 @@ xorg or XWayland; X11 session preferred):
   to be the recommended path — `bootstrap.sh` is. Revisit after v0.2.
 - Wayland-native, macOS, Windows. Tracked in
   `docs/roadmap-cross-platform.md`.
-- Custom icon. The `.desktop` file currently uses the generic
-  `utilities-terminal` system icon. See logo discussion before bundling.
 
 ## Post-release
 

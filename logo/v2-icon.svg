@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- v2-icon: square app-icon variant. No wordmark, just the three
+       chevrons centered on a rounded dark square. For .desktop file
+       Icon entry and any 1:1 contexts. Geometry is the same chevron
+       polygon as v2a, scaled to fit a 64×64 canvas. -->
+  <rect x="2" y="2" width="60" height="60" rx="10" fill="#1a1a1a"/>
+
+  <!-- Chevron pitch=10, glyph w=18, h=22, inner notch x=14, tip span=6.
+       Three glyphs centered horizontally: total span = 18 + 2*10 = 38,
+       starts at x=(64-38)/2 = 13. Vertically centered at y=32, range 21..43. -->
+  <path d="M 13,21 L 31,29 L 31,35 L 13,43 L 13,38 L 27,32 L 13,26 Z" fill="#888888"/>
+  <path d="M 23,21 L 41,29 L 41,35 L 23,43 L 23,38 L 37,32 L 23,26 Z" fill="#b89968"/>
+  <path d="M 33,21 L 51,29 L 51,35 L 33,43 L 33,38 L 47,32 L 33,26 Z" fill="#e07820"/>
+</svg>
