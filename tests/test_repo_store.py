@@ -184,6 +184,38 @@ def test_repo_name_and_display_name() -> None:
     assert Repo(path="/x/y", instance=39).display_name == "y (XXXIX)"
 
 
+def test_emoji_in_display_name() -> None:
+    """Optional leading emoji prefixes the basename and survives the suffix."""
+    assert Repo(path="/x/y", emoji="🐛").display_name == "🐛 y"
+    assert Repo(path="/x/y", emoji="🐛", instance=2).display_name == "🐛 y (II)"
+    assert Repo(path="/x/y", emoji="").display_name == "y"
+
+
+def test_emoji_round_trip(store_path: Path, tmp_path: Path) -> None:
+    target = tmp_path / "r"
+    target.mkdir()
+    s = RepoStore(config_path=store_path)
+    r = s.add(str(target))
+    r.emoji = "🚀"
+    s.save()
+
+    s2 = RepoStore(config_path=store_path)
+    s2.load()
+    assert s2.repos[0].emoji == "🚀"
+
+
+def test_load_back_compat_missing_emoji(store_path: Path) -> None:
+    """Older repos.json without an `emoji` key loads with empty string."""
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    store_path.write_text(json.dumps({
+        "version": 1,
+        "repos": [{"path": "/some/repo", "id": "abc", "instance": 0}],
+    }))
+    s = RepoStore(config_path=store_path)
+    s.load()
+    assert s.repos[0].emoji == ""
+
+
 def test_to_roman_basic() -> None:
     from src.core.repo_store import to_roman
     assert to_roman(1) == "I"

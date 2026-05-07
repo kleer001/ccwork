@@ -16,6 +16,11 @@ driven by Claude Code's Stop/Notification hooks.
   disappears. Hook events (status badge, working spinner) currently light
   up every duplicate row for that path — per-session routing is future
   work.
+- **Optional emoji tag per row** — right-click a repo → *Set emoji…* to
+  prefix the row with any emoji (use your OS picker, usually `Ctrl+.` or
+  `Ctrl+;`, inside the input field). Per-row, so duplicate `(I)/(II)`
+  sessions on the same repo can be tagged independently. *Clear emoji*
+  on the same menu wipes it.
 - **Real embedded terminals** — xterm is reparented into the window via
   XEmbed. Your existing terminal muscle memory (copy/paste, scrollback,
   ctrl-c) all works; no reimplemented VT100 emulator.

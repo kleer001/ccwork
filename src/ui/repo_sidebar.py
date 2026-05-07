@@ -19,7 +19,11 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QLabel,
+    QLineEdit,
     QListView,
     QMenu,
     QMessageBox,
@@ -249,6 +253,22 @@ class RepoListModel(QAbstractListModel):
 
     def any_working(self) -> bool:
         return bool(self._working)
+
+    def set_emoji(self, repo_id: str, emoji: str) -> None:
+        """Set or clear the optional leading emoji for one row.
+
+        Per-id, not per-path: duplicates on the same path tag independently.
+        Persists immediately and repaints the row's display name.
+        """
+        repo = self._store.find_by_id(repo_id)
+        if repo is None or repo.emoji == emoji:
+            return
+        repo.emoji = emoji
+        self._store.save()
+        row = self.index_of_id(repo_id)
+        if row >= 0:
+            idx = self.index(row)
+            self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
 
     def set_terminal_active(self, repo_id: str, active: bool) -> None:
         """Mark `repo_id` as having a live TerminalHost (or not).
@@ -747,11 +767,38 @@ class RepoSidebar(QWidget):
         menu.addAction(reload_act)
 
         menu.addSeparator()
+        set_emoji_act = QAction("Set emoji…", menu)
+        set_emoji_act.setToolTip("Prefix the row with an emoji. Use your OS picker (Ctrl+. or Ctrl+;) inside the field.")
+        set_emoji_act.triggered.connect(lambda _=False, r=repo: self._prompt_emoji(r))
+        menu.addAction(set_emoji_act)
+
+        clear_emoji_act = QAction("Clear emoji", menu)
+        clear_emoji_act.setEnabled(bool(repo.emoji))
+        clear_emoji_act.triggered.connect(lambda _=False, r=repo: self._model.set_emoji(r.id, ""))
+        menu.addAction(clear_emoji_act)
+
+        menu.addSeparator()
         remove_act = QAction("Remove from sidebar", menu)
         remove_act.triggered.connect(lambda _=False, r=repo, row=idx.row(): self._confirm_remove(r, row))
         menu.addAction(remove_act)
 
         menu.exec(self._view.viewport().mapToGlobal(pos))
+
+    def _prompt_emoji(self, repo: Repo) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Set emoji")
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel(f"Emoji prefix for {repo.display_name}:"))
+        layout.addWidget(QLabel("Tip: open your OS emoji picker with Ctrl+. or Ctrl+;"))
+        edit = QLineEdit(repo.emoji, dlg)
+        layout.addWidget(edit)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dlg)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        edit.setFocus()
+        if dlg.exec() == QDialog.Accepted:
+            self._model.set_emoji(repo.id, edit.text().strip())
 
     def _confirm_reload(self, repo: Repo) -> None:
         ans = QMessageBox.question(

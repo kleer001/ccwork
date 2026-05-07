@@ -64,6 +64,7 @@ class Repo:
     path: str
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     instance: int = 0
+    emoji: str = ""
 
     @property
     def name(self) -> str:
@@ -71,9 +72,9 @@ class Repo:
 
     @property
     def display_name(self) -> str:
-        if self.instance <= 0:
-            return self.name
-        return f"{self.name} ({to_roman(self.instance)})"
+        prefix = f"{self.emoji} " if self.emoji else ""
+        suffix = f" ({to_roman(self.instance)})" if self.instance > 0 else ""
+        return f"{prefix}{self.name}{suffix}"
 
 
 @dataclass
@@ -129,7 +130,10 @@ class RepoStore:
             inst = r.get("instance", 0)
             if not isinstance(inst, int) or inst < 0:
                 inst = 0
-            out.append(Repo(path=str(r["path"]), id=rid, instance=inst))
+            emoji = r.get("emoji", "")
+            if not isinstance(emoji, str):
+                emoji = ""
+            out.append(Repo(path=str(r["path"]), id=rid, instance=inst, emoji=emoji))
         self.repos = out
 
     def save(self) -> None:
