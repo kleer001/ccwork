@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import time
 from dataclasses import dataclass
 
@@ -10,6 +11,7 @@ from PySide6.QtCore import (
     QAbstractListModel,
     QModelIndex,
     QPoint,
+    QProcess,
     QRect,
     QSize,
     Qt,
@@ -22,6 +24,8 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QGridLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListView,
@@ -30,6 +34,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStyledItemDelegate,
     QStyleOptionViewItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -107,6 +112,31 @@ def _norm(path: str) -> str:
 # Standard 10-frame braille spinner. Advanced by a QTimer on the sidebar.
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 SPINNER_INTERVAL_MS = 100
+
+# 25 glyphs commonly used to tag software-project work. Click-to-pick in
+# the badge dialog; not exhaustive — the line edit accepts any character.
+BADGE_GALLERY = (
+    "🐛", "🧪", "🚀", "🔧", "🎨",
+    "📦", "🔥", "⚡", "✨", "📝",
+    "🔒", "🌟", "🏗️", "🎯", "🔍",
+    "💡", "⚙️", "🐳", "🌿", "🔬",
+    "🛠️", "📊", "🧹", "🗃️", "🎬",
+)
+
+# External one-shot emoji pickers tried in order. First found wins; the
+# rest depend on the user's desktop. Fallback path is the line edit's own
+# OS-level shortcut (Ctrl+. / Ctrl+;).
+EMOJI_PICKER_CANDIDATES = (
+    "bemoji", "rofimoji", "gnome-characters", "gucharmap", "kcharselect",
+)
+
+
+def _find_emoji_picker() -> str | None:
+    for cmd in EMOJI_PICKER_CANDIDATES:
+        path = shutil.which(cmd)
+        if path:
+            return path
+    return None
 
 
 class RepoListModel(QAbstractListModel):
@@ -767,15 +797,15 @@ class RepoSidebar(QWidget):
         menu.addAction(reload_act)
 
         menu.addSeparator()
-        set_emoji_act = QAction("Set emoji…", menu)
-        set_emoji_act.setToolTip("Prefix the row with an emoji. Use your OS picker (Ctrl+. or Ctrl+;) inside the field.")
-        set_emoji_act.triggered.connect(lambda _=False, r=repo: self._prompt_emoji(r))
-        menu.addAction(set_emoji_act)
+        set_badge_act = QAction("Set badge…", menu)
+        set_badge_act.setToolTip("Prefix the row with a glyph (emoji or any single character).")
+        set_badge_act.triggered.connect(lambda _=False, r=repo: self._prompt_badge(r))
+        menu.addAction(set_badge_act)
 
-        clear_emoji_act = QAction("Clear emoji", menu)
-        clear_emoji_act.setEnabled(bool(repo.emoji))
-        clear_emoji_act.triggered.connect(lambda _=False, r=repo: self._model.set_emoji(r.id, ""))
-        menu.addAction(clear_emoji_act)
+        clear_badge_act = QAction("Clear badge", menu)
+        clear_badge_act.setEnabled(bool(repo.emoji))
+        clear_badge_act.triggered.connect(lambda _=False, r=repo: self._model.set_emoji(r.id, ""))
+        menu.addAction(clear_badge_act)
 
         menu.addSeparator()
         remove_act = QAction("Remove from sidebar", menu)
@@ -784,14 +814,50 @@ class RepoSidebar(QWidget):
 
         menu.exec(self._view.viewport().mapToGlobal(pos))
 
-    def _prompt_emoji(self, repo: Repo) -> None:
+    def _prompt_badge(self, repo: Repo) -> None:
         dlg = QDialog(self)
-        dlg.setWindowTitle("Set emoji")
+        dlg.setWindowTitle("Set badge")
         layout = QVBoxLayout(dlg)
-        layout.addWidget(QLabel(f"Emoji prefix for {repo.display_name}:"))
-        layout.addWidget(QLabel("Tip: open your OS emoji picker with Ctrl+. or Ctrl+;"))
+        layout.addWidget(QLabel(f"Badge for {repo.display_name}:"))
+        layout.addWidget(QLabel("Click a glyph below, or type/paste your own."))
+
         edit = QLineEdit(repo.emoji, dlg)
-        layout.addWidget(edit)
+
+        # 5×5 click-to-pick gallery. Populates the line edit; OK confirms.
+        gallery = QGridLayout()
+        gallery.setSpacing(2)
+        gallery_font = QFont()
+        gallery_font.setPointSize(gallery_font.pointSize() + 4)
+        for i, glyph in enumerate(BADGE_GALLERY):
+            btn = QToolButton(dlg)
+            btn.setText(glyph)
+            btn.setFont(gallery_font)
+            btn.setAutoRaise(True)
+            btn.setFixedSize(36, 36)
+            btn.clicked.connect(lambda _=False, g=glyph: edit.setText(g))
+            gallery.addWidget(btn, i // 5, i % 5)
+        layout.addLayout(gallery)
+
+        # Custom-input row: line edit + system picker launcher.
+        row = QHBoxLayout()
+        row.addWidget(edit, 1)
+        picker = _find_emoji_picker()
+        browse_btn = QPushButton("Browse system…", dlg)
+        if picker is None:
+            browse_btn.setEnabled(False)
+            browse_btn.setToolTip(
+                "No system emoji picker found. Install one of: "
+                + ", ".join(EMOJI_PICKER_CANDIDATES)
+            )
+        else:
+            browse_btn.setToolTip(
+                f"Launches {os.path.basename(picker)}. "
+                "Most pickers copy to the clipboard — paste here with Ctrl+V."
+            )
+            browse_btn.clicked.connect(lambda _=False, p=picker: QProcess.startDetached(p, []))
+        row.addWidget(browse_btn)
+        layout.addLayout(row)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dlg)
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)

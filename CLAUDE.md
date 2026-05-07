@@ -78,8 +78,12 @@ but no widgets):
   (0 = bare basename, ≥1 = `(I)`, `(II)`, …). Sticky while ≥2 rows share
   a path; resets to 0 when the count drops back to 1; sequence restarts
   on the next duplicate add. `emoji` is a per-id (not per-path) leading
-  prefix on `display_name` — opt-in via the right-click menu, empty
-  string means "no emoji".
+  prefix on `display_name` — surfaced in the UI as the row "badge"
+  (right-click → *Set badge…*), opt-in, empty string means "no badge".
+  The badge dialog is in `repo_sidebar.py`: `BADGE_GALLERY` is the
+  25-glyph quick-pick list; `_find_emoji_picker()` probes
+  `EMOJI_PICKER_CANDIDATES` for an external one-shot picker. The
+  persisted JSON key stays `emoji` for back-compat.
 - `terminal_session.py` — builds the argv passed to `TerminalHost`. Sets
   `CCWORK_GUI=1` in the child env (the gate the hook sink checks). Launches
   bash with `--rcfile bin/ccwork-bashrc` so ccwork's `bin/` wins on `PATH`
