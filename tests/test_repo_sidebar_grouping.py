@@ -138,7 +138,7 @@ def test_pending_regroup_fires_on_next_selection_change(
     # First step has already swapped /c and /d.
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/d", "/c"]
     # Drive the animation to completion (stops itself when converged).
-    while sb._step_grouping():
+    while sb._step_arrange():
         pass
     assert sb._model._store.repos[0].path == "/d"
     cur_row = sb._view.currentIndex().row()
@@ -161,15 +161,15 @@ def test_grouping_animation_walks_one_swap_per_step(
 
     # Selection-change ran one immediate step → /e is now at row 3.
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/e", "/d"]
-    sb._step_grouping()
+    sb._step_arrange()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/e", "/c", "/d"]
-    sb._step_grouping()
+    sb._step_arrange()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/e", "/b", "/c", "/d"]
-    sb._step_grouping()
+    sb._step_arrange()
     assert [r.path for r in sb._model._store.repos] == ["/e", "/a", "/b", "/c", "/d"]
     # Converged — next step is a no-op and stops the timer.
-    assert sb._step_grouping() is False
-    assert sb._grouping_step_timer.isActive() is False
+    assert sb._step_arrange() is False
+    assert sb._arrange_step_timer.isActive() is False
 
 
 def test_grouping_animation_picks_up_new_active_mid_walk(
@@ -192,13 +192,45 @@ def test_grouping_animation_picks_up_new_active_mid_walk(
     # Tie-breaker is current row index (stable within the active group), so
     # /c (currently row 2) sorts above /e (currently row 3) and bubbles first.
     sb.set_terminal_active(ids[2], True)
-    sb._step_grouping()
+    sb._step_arrange()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/c", "/b", "/e", "/d"]
-    sb._step_grouping()
+    sb._step_arrange()
     assert [r.path for r in sb._model._store.repos] == ["/c", "/a", "/b", "/e", "/d"]
     # /c is home; the loop now bubbles /e into row 1.
-    sb._step_grouping()
+    sb._step_arrange()
     assert [r.path for r in sb._model._store.repos] == ["/c", "/a", "/e", "/b", "/d"]
-    sb._step_grouping()
+    sb._step_arrange()
     assert [r.path for r in sb._model._store.repos] == ["/c", "/e", "/a", "/b", "/d"]
-    assert sb._step_grouping() is False
+    assert sb._step_arrange() is False
+
+
+def test_auto_arrange_uses_bubble_animation(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """The activity-driven reorder (the one the user sees after a Claude
+    turn) walks one swap per tick, just like the grouping reorder. This
+    is the path that produced the instant 'pop to top' before the unified
+    stepper landed.
+    """
+    cfg = tmp_path / "repos.json"
+    store = RepoStore(config_path=cfg)
+    settings = Settings(
+        ui=UISettings(group_active_repos=False, auto_arrange_repos=True)
+    )
+    sb = RepoSidebar(store, settings=settings)
+    sb._model.beginResetModel()
+    store.repos = [Repo(path=p) for p in ["/a", "/b", "/c", "/d"]]
+    sb._model.endResetModel()
+
+    # /d gets fresh activity — auto-arrange wants it at row 0.
+    sb._model.set_status("/d", STATUS_DONE)
+
+    # Fire the debounce-end handler directly (skip the 2 s wait).
+    sb._apply_auto_arrange()
+    # First step ran inside _start_arrange_animation: /d moved from 3 → 2.
+    assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/d", "/c"]
+    sb._step_arrange()
+    assert [r.path for r in sb._model._store.repos] == ["/a", "/d", "/b", "/c"]
+    sb._step_arrange()
+    assert [r.path for r in sb._model._store.repos] == ["/d", "/a", "/b", "/c"]
+    assert sb._step_arrange() is False

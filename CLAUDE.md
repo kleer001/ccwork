@@ -69,19 +69,23 @@ notifications" preference (single source of truth:
   "has terminal" wins over recency.
   **Reshuffle is deferred *and* animated:** `RepoSidebar.set_terminal_active`
   does not reorder immediately — it sets `_regroup_pending` and lets the
-  *next* selection change trigger `_start_grouping_animation()` (consumed
+  *next* selection change trigger `_start_arrange_animation()` (consumed
   at the start of `_on_current_changed`, before `repo_selected.emit`).
   Otherwise the row the user just clicked yanks out from under the cursor,
   which reads as "the wrong repo got selected" even though persistent
-  indexes preserve the logical selection. The animation walks the row up
-  one neighbor at a time on a `GROUPING_STEP_MS` (125 ms) `QTimer`: each
-  tick recomputes the target order and bubbles the topmost-mismatched id
-  by one position via `RepoListModel.move_row_up` (single
-  `beginMoveRows`/`endMoveRows`). Recomputing each tick makes the walk
-  self-correcting — a new active repo arriving mid-animation just falls
-  in line on the next step. `apply_terminal_grouping()` (instant) is
-  still used when toggling the preference on, where animation would
-  feel laggy after the dialog closes.
+  indexes preserve the logical selection. **Both** reshuffles — the
+  terminal-grouping one *and* the activity-driven auto-arrange (fired
+  after a 2 s debounce on Claude hook traffic) — go through the same
+  stepper: `_step_arrange` walks the row up one neighbor at a time on a
+  `ARRANGE_STEP_MS` (125 ms) `QTimer`, each tick recomputing the
+  composed target via `RepoListModel.target_order_ids(auto_arrange=,
+  group_active=)` and bubbling the topmost-mismatched id by one position
+  via `RepoListModel.move_row_up` (single `beginMoveRows`/`endMoveRows`).
+  Recomputing each tick makes the walk self-correcting — a new active
+  repo or fresh activity event arriving mid-animation just falls in line
+  on the next step. `apply_terminal_grouping()` and `apply_auto_arrange()`
+  (instant) are still used when toggling the preference on, where
+  animation would feel laggy after the dialog closes.
   The working spinner uses one of five braille variants in
   `SPINNER_VARIANTS`, picked per `repo.id` via `spinner_for_id()`
   (`zlib.crc32` so the choice is stable across launches — Python's built-in

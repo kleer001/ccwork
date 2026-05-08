@@ -122,10 +122,11 @@ SPINNER_VARIANTS: tuple[tuple[str, ...], ...] = (
 )
 SPINNER_INTERVAL_MS = 100
 
-# One adjacent-pair swap per tick when bubbling an active repo to the top.
-# Distance-dependent (5 rows = 625 ms) by design — the user reads the motion
-# as deliberate rather than a flicker.
-GROUPING_STEP_MS = 125
+# One adjacent-pair swap per tick when reordering the sidebar (auto-arrange
+# bubble-up after Claude activity, or terminal-grouping after a deferred
+# regroup). Distance-dependent (5 rows = 625 ms) by design — the user reads
+# the motion as deliberate rather than a flicker.
+ARRANGE_STEP_MS = 125
 
 
 def spinner_for_id(repo_id: str) -> tuple[str, ...]:
@@ -371,16 +372,35 @@ class RepoListModel(QAbstractListModel):
             return (0 if r.id in active else 1, i)
         return self._reorder_by(sort_key)
 
-    def target_grouping_order_ids(self) -> list[str]:
-        """The id sequence apply_terminal_grouping would produce, no-op preview.
+    def target_order_ids(
+        self, *, auto_arrange: bool, group_active: bool
+    ) -> list[str]:
+        """The id sequence the composition of auto-arrange and grouping
+        would produce — read-only preview, no model mutation.
 
-        Used by the sidebar's stepwise grouping animation to pick the next
-        single-row swap each tick.
+        Mirrors the sequential-stable-sort composition used by the instant
+        `apply_auto_arrange()` + `apply_terminal_grouping()` chain: activity
+        first, grouping on top. With both flags off, returns the current
+        order (target == current, no animation work).
         """
-        active = self._active_ids
-        indexed = list(enumerate(self._store.repos))
-        indexed.sort(key=lambda t: (0 if t[1].id in active else 1, t[0]))
-        return [r.id for _, r in indexed]
+        repos = list(self._store.repos)
+        if auto_arrange:
+            def k_act(item):
+                i, r = item
+                ts = self._last_activity.get(r.path, 0.0)
+                return (-ts if ts > 0 else float("inf"), i)
+            indexed = list(enumerate(repos))
+            indexed.sort(key=k_act)
+            repos = [r for _, r in indexed]
+        if group_active:
+            active = self._active_ids
+            def k_grp(item):
+                i, r = item
+                return (0 if r.id in active else 1, i)
+            indexed = list(enumerate(repos))
+            indexed.sort(key=k_grp)
+            repos = [r for _, r in indexed]
+        return [r.id for r in repos]
 
     def move_row_up(self, row: int) -> bool:
         """Swap `row` with `row-1` via beginMoveRows. The single primitive
@@ -750,12 +770,13 @@ class RepoSidebar(QWidget):
         # selection change — see _on_current_changed for the rationale.
         self._regroup_pending = False
         # Stepwise bubble-up: each tick swaps one adjacent pair toward the
-        # target grouping order. Self-correcting — if a new repo becomes
-        # active mid-animation, the next tick sees the updated target and
-        # keeps walking. Stops when current order == target.
-        self._grouping_step_timer = QTimer(self)
-        self._grouping_step_timer.setInterval(GROUPING_STEP_MS)
-        self._grouping_step_timer.timeout.connect(self._step_grouping)
+        # composed target order (auto-arrange ⊕ grouping, whichever prefs
+        # are on). Self-correcting — if a new active repo or a fresh
+        # activity event arrives mid-animation, the next tick sees the
+        # updated target and keeps walking. Stops when current == target.
+        self._arrange_step_timer = QTimer(self)
+        self._arrange_step_timer.setInterval(ARRANGE_STEP_MS)
+        self._arrange_step_timer.timeout.connect(self._step_arrange)
         self._view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._view.setSelectionMode(QAbstractItemView.SingleSelection)
         # Per-row sizeHint: the group-boundary row is taller than the rest
@@ -888,30 +909,37 @@ class RepoSidebar(QWidget):
             return
         if not getattr(self._settings.ui, "auto_arrange_repos", False):
             return
-        self._model.apply_auto_arrange()
+        self._start_arrange_animation()
 
-    def _start_grouping_animation(self) -> None:
-        """Walk one row toward the target grouping order now, then keep
-        ticking on the timer. No-op if already at target. Idempotent — if
-        the timer is already running, it just keeps going.
+    def _start_arrange_animation(self) -> None:
+        """Walk one row toward the target order now, then keep ticking on
+        the timer. No-op if already at target. Idempotent — if the timer
+        is already running, it just keeps going (and naturally absorbs any
+        new target, since each tick recomputes).
         """
-        if self._grouping_step_timer.isActive():
+        if self._arrange_step_timer.isActive():
             return
-        # Step once now so the user sees motion immediately on the click
-        # that triggered the regroup, not after a 125 ms gap.
-        if self._step_grouping():
-            self._grouping_step_timer.start()
+        # Step once now so the user sees motion immediately, not after a
+        # 125 ms gap (the eye reads "click → motion" as causal).
+        if self._step_arrange():
+            self._arrange_step_timer.start()
 
-    def _step_grouping(self) -> bool:
-        """Advance one adjacent swap toward target. Returns True if the
-        animation has more work; False once converged (and stops the timer).
+    def _step_arrange(self) -> bool:
+        """Advance one adjacent swap toward the composed target. Returns
+        True if more work remains; False once converged (and stops timer).
         """
-        target = self._model.target_grouping_order_ids()
+        if self._settings is None:
+            self._arrange_step_timer.stop()
+            return False
+        target = self._model.target_order_ids(
+            auto_arrange=bool(getattr(self._settings.ui, "auto_arrange_repos", False)),
+            group_active=bool(getattr(self._settings.ui, "group_active_repos", False)),
+        )
         current = [
             self._model.repo_at(i).id for i in range(self._model.rowCount())
         ]
         if current == target:
-            self._grouping_step_timer.stop()
+            self._arrange_step_timer.stop()
             return False
         for i, (cur_id, tgt_id) in enumerate(zip(current, target)):
             if cur_id == tgt_id:
@@ -923,7 +951,7 @@ class RepoSidebar(QWidget):
             src_row = current.index(tgt_id)
             self._model.move_row_up(src_row)
             return True
-        self._grouping_step_timer.stop()
+        self._arrange_step_timer.stop()
         return False
 
     def _advance_spinner(self) -> None:
@@ -948,7 +976,7 @@ class RepoSidebar(QWidget):
             if self._settings is not None and getattr(
                 self._settings.ui, "group_active_repos", False
             ):
-                self._start_grouping_animation()
+                self._start_arrange_animation()
         # Mark the row we're leaving as "last focused" so the user can spot
         # where they were before. Subject to priority rules in
         # RepoListModel.set_last_focused — won't overwrite Stop/Notification.
