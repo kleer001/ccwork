@@ -67,13 +67,21 @@ notifications" preference (single source of truth:
   is therefore off — the boundary row's `sizeHint` is taller. Grouping
   composes with auto-arrange: it's applied after the activity sort, so
   "has terminal" wins over recency.
-  **Reshuffle is deferred:** `RepoSidebar.set_terminal_active` does not
-  reorder immediately — it sets `_regroup_pending` and lets the *next*
-  selection change trigger `apply_terminal_grouping()` (consumed at the
-  start of `_on_current_changed`, before `repo_selected.emit`). Otherwise
-  the row the user just clicked yanks out from under the cursor, which
-  reads as "the wrong repo got selected" even though persistent indexes
-  preserve the logical selection.
+  **Reshuffle is deferred *and* animated:** `RepoSidebar.set_terminal_active`
+  does not reorder immediately — it sets `_regroup_pending` and lets the
+  *next* selection change trigger `_start_grouping_animation()` (consumed
+  at the start of `_on_current_changed`, before `repo_selected.emit`).
+  Otherwise the row the user just clicked yanks out from under the cursor,
+  which reads as "the wrong repo got selected" even though persistent
+  indexes preserve the logical selection. The animation walks the row up
+  one neighbor at a time on a `GROUPING_STEP_MS` (125 ms) `QTimer`: each
+  tick recomputes the target order and bubbles the topmost-mismatched id
+  by one position via `RepoListModel.move_row_up` (single
+  `beginMoveRows`/`endMoveRows`). Recomputing each tick makes the walk
+  self-correcting — a new active repo arriving mid-animation just falls
+  in line on the next step. `apply_terminal_grouping()` (instant) is
+  still used when toggling the preference on, where animation would
+  feel laggy after the dialog closes.
   The working spinner uses one of five braille variants in
   `SPINNER_VARIANTS`, picked per `repo.id` via `spinner_for_id()`
   (`zlib.crc32` so the choice is stable across launches — Python's built-in
@@ -143,9 +151,17 @@ Claude Code hook ─▶ ccwork-hook-sink ─▶ unix socket ─▶ HookServer
                                             └─ desktop notify-send (gated)
 ```
 
-`UserPromptSubmit` clears any prior status and sets working=True; `Stop`/
-`Notification` clear working and set the corresponding status. Working and
-status are mutually exclusive in the UI by construction.
+`UserPromptSubmit` clears any prior status and sets working=True (and
+self-heals by dropping any stale id for that cwd before re-arming, since
+Esc-interrupt and crashes don't emit `Stop`). Only `Stop` clears working.
+`Notification` fires *mid-turn* (`permission_prompt` while a tool waits on
+the user, `idle_prompt` as a post-Stop nag) — it sets the status badge and
+lights the bell but does **not** clear working, so the spinner keeps
+running through a permission pause and resumes correctly when the user
+approves. The right-edge column shows spinner-OR-status (spinner wins
+when both are set), so during a `permission_prompt` the spinner preempts
+the attention dot — the desktop `notify-send` and the in-terminal yes/no
+UI carry the user-action cue.
 
 ## Conventions worth knowing
 

@@ -547,20 +547,25 @@ class MainWindow(QMainWindow):
             "hook event=%s cwd=%r matched=%d", event, cwd, len(matching),
         )
 
-        # Track Claude's mid-turn state. UserPromptSubmit means the user
-        # just sent a prompt; Stop/Notification mean Claude is done or
-        # waiting for input. Drives both the close-confirmation prompt and
-        # the per-repo status badge in the sidebar.
+        # Track Claude's mid-turn state. UserPromptSubmit starts a turn;
+        # only Stop ends one. Notification fires mid-turn (permission_prompt
+        # while a tool waits on the user, idle_prompt as a post-Stop nag) —
+        # neither means the turn is over, so they do *not* clear _working.
+        # Esc-interrupt and crashes never emit Stop, so UserPromptSubmit
+        # also self-heals: drop any stale ids for this cwd before re-arming.
         if matching and event == EVENT_USER_PROMPT_SUBMIT:
+            for r in matching:
+                self._working.discard(r.id)
             for r in matching:
                 self._working.add(r.id)
             # Sidebar state is path-keyed — one call per distinct path is
             # enough; the dataChanged broadcast lights every matching row.
             self._sidebar.clear_status(str(cwd))
+            self._sidebar.set_working(str(cwd), False)
             self._sidebar.set_working(str(cwd), True)
             return
 
-        if matching and event in IDLE_EVENTS:
+        if matching and event == EVENT_STOP:
             for r in matching:
                 self._working.discard(r.id)
             self._sidebar.set_working(str(cwd), False)
@@ -598,9 +603,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # type: ignore[override]
         # Only nag when Claude is mid-turn somewhere — an idle shell sitting
         # at a prompt is fine to kill silently. Working state is tracked via
-        # UserPromptSubmit / Stop / Notification hooks. With one shared
-        # id-keyed map, the bookkeeping that used to bridge path/realpath is
-        # gone.
+        # UserPromptSubmit (sets) / Stop (clears) hooks; Notification fires
+        # mid-turn and does not affect _working.
         working_ids = [
             rid for rid in self._working
             if rid in self._terminals and self._terminals[rid].is_running()

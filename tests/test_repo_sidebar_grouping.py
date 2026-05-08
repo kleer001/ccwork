@@ -132,8 +132,73 @@ def test_pending_regroup_fires_on_next_selection_change(
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/d"]
 
     # User clicks /b. The deferred regroup fires at the start of the
-    # selection-change handler; /d floats to the top, /b selection follows.
+    # selection-change handler — bubble-up animation kicks off with one
+    # immediate step; /b selection follows the row.
     sb._view.setCurrentIndex(sb._model.index(1))
+    # First step has already swapped /c and /d.
+    assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/d", "/c"]
+    # Drive the animation to completion (stops itself when converged).
+    while sb._step_grouping():
+        pass
     assert sb._model._store.repos[0].path == "/d"
     cur_row = sb._view.currentIndex().row()
     assert sb._model._store.repos[cur_row].path == "/b"
+
+
+def test_grouping_animation_walks_one_swap_per_step(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """Each step bubbles the topmost-target row up by exactly one position."""
+    sb = _sidebar_with(
+        ["/a", "/b", "/c", "/d", "/e"], tmp_path / "repos.json", group=True
+    )
+    ids = [r.id for r in sb._model._store.repos]
+
+    # /e becomes active; nothing reshuffles yet.
+    sb._view.setCurrentIndex(sb._model.index(4))
+    sb.set_terminal_active(ids[4], True)
+    sb._view.setCurrentIndex(sb._model.index(0))  # consume _regroup_pending
+
+    # Selection-change ran one immediate step → /e is now at row 3.
+    assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/e", "/d"]
+    sb._step_grouping()
+    assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/e", "/c", "/d"]
+    sb._step_grouping()
+    assert [r.path for r in sb._model._store.repos] == ["/a", "/e", "/b", "/c", "/d"]
+    sb._step_grouping()
+    assert [r.path for r in sb._model._store.repos] == ["/e", "/a", "/b", "/c", "/d"]
+    # Converged — next step is a no-op and stops the timer.
+    assert sb._step_grouping() is False
+    assert sb._grouping_step_timer.isActive() is False
+
+
+def test_grouping_animation_picks_up_new_active_mid_walk(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """A repo that becomes active mid-animation gets bubbled too — each tick
+    recomputes the target, so new arrivals fall in line without restart."""
+    sb = _sidebar_with(
+        ["/a", "/b", "/c", "/d", "/e"], tmp_path / "repos.json", group=True
+    )
+    ids = [r.id for r in sb._model._store.repos]
+
+    # /e active → click off → first step taken.
+    sb._view.setCurrentIndex(sb._model.index(4))
+    sb.set_terminal_active(ids[4], True)
+    sb._view.setCurrentIndex(sb._model.index(0))
+    assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/e", "/d"]
+
+    # Mid-walk: /c also becomes active. Target now wants both /c and /e on top.
+    # Tie-breaker is current row index (stable within the active group), so
+    # /c (currently row 2) sorts above /e (currently row 3) and bubbles first.
+    sb.set_terminal_active(ids[2], True)
+    sb._step_grouping()
+    assert [r.path for r in sb._model._store.repos] == ["/a", "/c", "/b", "/e", "/d"]
+    sb._step_grouping()
+    assert [r.path for r in sb._model._store.repos] == ["/c", "/a", "/b", "/e", "/d"]
+    # /c is home; the loop now bubbles /e into row 1.
+    sb._step_grouping()
+    assert [r.path for r in sb._model._store.repos] == ["/c", "/a", "/e", "/b", "/d"]
+    sb._step_grouping()
+    assert [r.path for r in sb._model._store.repos] == ["/c", "/e", "/a", "/b", "/d"]
+    assert sb._step_grouping() is False
