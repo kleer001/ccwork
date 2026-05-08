@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import os
 import sys
 
@@ -24,11 +25,42 @@ from src.ui.main_window import MainWindow  # noqa: E402
 from src.ui.qt_theme import apply_theme  # noqa: E402
 
 
+def _setup_hook_event_log() -> None:
+    """Always-on rotating DEBUG log for hook traffic only.
+
+    Writes every received hook event to ~/.cache/ccwork/hooks.log so post-hoc
+    diagnosis ("why did the green dot light up while Claude was still
+    working?") doesn't require re-launching with CCWORK_LOG=DEBUG. Bounded
+    size (5 × 256 KiB), only the hook_server logger feeds it, so the rest
+    of the app's logging behavior is unchanged.
+    """
+    log_dir = Path.home() / ".cache" / "ccwork"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    handler = logging.handlers.RotatingFileHandler(
+        log_dir / "hooks.log",
+        maxBytes=256 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    ))
+    hook_logger = logging.getLogger("src.core.hook_server")
+    hook_logger.setLevel(logging.DEBUG)
+    hook_logger.addHandler(handler)
+    # Don't pollute stderr with DEBUG payload dumps — the file is the only
+    # consumer of the verbose stream. WARNINGs (malformed lines) are still
+    # captured in the file and are easier to grep there anyway.
+    hook_logger.propagate = False
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=os.environ.get("CCWORK_LOG", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    _setup_hook_event_log()
     app = QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("ccwork")
     app.setApplicationDisplayName("ccwork")

@@ -164,4 +164,8 @@ class HookServer(QObject):
         if not isinstance(obj, dict):
             log.warning("dropped non-object hook line: %r", line[:200])
             return
+        # Always-DEBUG payload dump — captured to ~/.cache/ccwork/hooks.log
+        # via the dedicated handler installed in main.py. Lets us diagnose
+        # spurious-Stop / wrong-row issues without rerunning with extra env.
+        log.debug("hook payload: %r", obj)
         self.event_received.emit(obj)
