@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import time
+import zlib
 from dataclasses import dataclass
 
 from PySide6.QtCore import (
@@ -109,9 +110,27 @@ def _norm(path: str) -> str:
     """
     return os.path.realpath(path) if path else ""
 
-# Standard 10-frame braille spinner. Advanced by a QTimer on the sidebar.
-SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+# Five braille spinner variants. Each repo gets one deterministically
+# (crc32 of repo.id mod len) so the sidebar feels lightly varied without
+# being noisy — the same repo always animates the same way.
+SPINNER_VARIANTS: tuple[tuple[str, ...], ...] = (
+    ("⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"),                  # classic rotating
+    ("⠋","⠙","⠚","⠞","⠖","⠦","⠴","⠲","⠳","⠓"),                  # rolling wave
+    ("⠄","⠆","⠇","⠦","⠴","⠼","⠸","⠰","⠠","⠰","⠸","⠼","⠴","⠦","⠇","⠆"),  # bouncing trio
+    ("⣀","⣄","⣤","⣦","⣶","⣷","⣿","⣷","⣶","⣦","⣤","⣄"),          # pulse fill
+    ("⠄","⠆","⠇","⠋","⠙","⠸","⠰","⠠","⠰","⠸","⠙","⠋","⠇","⠆"),  # center bounce
+)
 SPINNER_INTERVAL_MS = 100
+
+
+def spinner_for_id(repo_id: str) -> tuple[str, ...]:
+    """Pick a stable spinner variant for `repo_id`.
+
+    crc32 (zlib stdlib) is used instead of Python's built-in `hash` because
+    the latter is salted per-process — the variant would change on every
+    launch, which would feel like a bug.
+    """
+    return SPINNER_VARIANTS[zlib.crc32(repo_id.encode("utf-8")) % len(SPINNER_VARIANTS)]
 
 # 25 glyphs commonly used to tag software-project work. Click-to-pick in
 # the badge dialog; not exhaustive — the line edit accepts any character.
@@ -583,7 +602,8 @@ class RepoDelegate(QStyledItemDelegate):
             spin_font.setBold(True)
             painter.setFont(spin_font)
             painter.setPen(QPen(self.SPINNER_COLOR))
-            frame = SPINNER_FRAMES[self.spinner_frame % len(SPINNER_FRAMES)]
+            frames = spinner_for_id(repo.id)
+            frame = frames[self.spinner_frame % len(frames)]
             spin_rect = QRect(rect.right() - 16, rect.top(), 16, rect.height())
             painter.drawText(spin_rect, Qt.AlignRight | Qt.AlignVCenter, frame)
         else:

@@ -60,6 +60,10 @@ notifications" preference (single source of truth:
   a right-edge column for a status badge (colored dot or glyph) that
   auto-hides only when fewer than ~4 chars of row text would remain — this
   is what lets the splitter drag down to ~6 chars wide without garbling.
+  The working spinner uses one of five braille variants in
+  `SPINNER_VARIANTS`, picked per `repo.id` via `spinner_for_id()`
+  (`zlib.crc32` so the choice is stable across launches — Python's built-in
+  `hash` is process-salted and would re-shuffle on every restart).
 
 ### 2. Core domain (`src/core/`)
 

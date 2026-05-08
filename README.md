@@ -24,6 +24,11 @@ driven by Claude Code's Stop/Notification hooks.
   `gucharmap`, `kcharselect`). The line-edit accepts any pasted/typed
   character. Per-row, so duplicate `(I)/(II)` sessions on the same repo
   can be tagged independently. *Clear badge* on the same menu wipes it.
+- **Per-repo spinner flavor** — while Claude is mid-turn, the sidebar row
+  ticks a small braille spinner. Each repo gets one of five variants
+  picked deterministically from its id (classic rotating, rolling wave,
+  bouncing trio, pulse fill, center bounce) so the same repo always
+  animates the same way and a wall of busy rows isn't visually monotonous.
 - **Real embedded terminals** — xterm is reparented into the window via
   XEmbed. Your existing terminal muscle memory (copy/paste, scrollback,
   ctrl-c) all works; no reimplemented VT100 emulator.
