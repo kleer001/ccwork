@@ -315,6 +315,12 @@ class PreferencesDialog(QDialog):
         self._auto_arrange.setChecked(ui.auto_arrange_repos)
         form.addRow("", self._auto_arrange)
 
+        self._group_active = QCheckBox(
+            "Group active terminals at the top of the sidebar", w,
+        )
+        self._group_active.setChecked(ui.group_active_repos)
+        form.addRow("", self._group_active)
+
         help_lbl = QLabel(
             "Sidebar width is set by dragging the splitter — drags persist. "
             "Desktop notifications are "
@@ -430,6 +436,7 @@ class PreferencesDialog(QDialog):
         self._restore_last.setChecked(du.restore_last_repo)
         self._desktop_notifs.setChecked(du.desktop_notifications)
         self._auto_arrange.setChecked(du.auto_arrange_repos)
+        self._group_active.setChecked(du.group_active_repos)
         self._font.setCurrentText(d.font_family)
         self._font_size.setValue(d.font_size)
         self._scrollback.setValue(d.scrollback)
@@ -472,6 +479,7 @@ class PreferencesDialog(QDialog):
             desktop_notifications=bool(self._desktop_notifs.isChecked()),
             status_badge_style=str(self._badge_style.currentData() or "dot"),
             auto_arrange_repos=bool(self._auto_arrange.isChecked()),
+            group_active_repos=bool(self._group_active.isChecked()),
         )
 
         try:

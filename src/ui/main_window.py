@@ -448,7 +448,7 @@ class MainWindow(QMainWindow):
             lambda pos, r=repo: self._on_terminal_context_menu(r, pos)
         )
         self._terminals[repo.id] = host
-        self._sidebar.model.set_terminal_active(repo.id, True)
+        self._sidebar.set_terminal_active(repo.id, True)
         self._stack.addWidget(host)
         # Make the host current + visible BEFORE starting xterm so the parent
         # X window is mapped when xterm reparents into it.
@@ -521,7 +521,7 @@ class MainWindow(QMainWindow):
         if not siblings_working:
             self._sidebar.set_working(repo.path, False)
         host = self._terminals.pop(repo.id, None)
-        self._sidebar.model.set_terminal_active(repo.id, False)
+        self._sidebar.set_terminal_active(repo.id, False)
         was_current = host is not None and self._stack.currentWidget() is host
         if host is not None:
             self._stack.removeWidget(host)

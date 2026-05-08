@@ -127,6 +127,11 @@ class UISettings:
     # User-driven STATUS_LAST_FOCUSED transitions are not "Claude activity"
     # and do not feed the sort.
     auto_arrange_repos: bool = False
+    # When True, repos with a live terminal float to the top of the sidebar
+    # and a small visual gap separates them from the inactive rows below.
+    # Composes with auto_arrange_repos: grouping is the primary key, activity
+    # recency the secondary sort within each group.
+    group_active_repos: bool = True
 
 
 @dataclass
@@ -182,6 +187,7 @@ def load_settings(path: Path | None = None) -> Settings:
         desktop_notifications=bool(u_raw.get("desktop_notifications", u_def.desktop_notifications)),
         status_badge_style=badge_style,
         auto_arrange_repos=bool(u_raw.get("auto_arrange_repos", u_def.auto_arrange_repos)),
+        group_active_repos=bool(u_raw.get("group_active_repos", u_def.group_active_repos)),
     )
 
     last_focused = data.get("last_focused_repo")

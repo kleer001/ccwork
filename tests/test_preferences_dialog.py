@@ -134,6 +134,7 @@ def test_ui_tab_round_trip_via_save(qapp: QApplication, monkeypatch: pytest.Monk
         dlg._restore_last.setChecked(False)
         dlg._desktop_notifs.setChecked(False)
         dlg._auto_arrange.setChecked(True)
+        dlg._group_active.setChecked(False)
         dlg._on_save()
         loaded = load_settings()
         assert loaded.ui.sidebar_side == "right"
@@ -141,6 +142,7 @@ def test_ui_tab_round_trip_via_save(qapp: QApplication, monkeypatch: pytest.Monk
         assert loaded.ui.restore_last_repo is False
         assert loaded.ui.desktop_notifications is False
         assert loaded.ui.auto_arrange_repos is True
+        assert loaded.ui.group_active_repos is False
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -148,9 +150,10 @@ def test_ui_tab_round_trip_via_save(qapp: QApplication, monkeypatch: pytest.Monk
 def test_ui_tab_initialized_from_settings(qapp: QApplication) -> None:
     s = Settings(ui=UISettings(sidebar_side="right", sidebar_width=333,
                                restore_last_repo=False, desktop_notifications=False,
-                               auto_arrange_repos=True))
+                               auto_arrange_repos=True, group_active_repos=False))
     dlg = PD.PreferencesDialog(s)
     assert dlg._sidebar_side.currentText() == "right"
     assert dlg._restore_last.isChecked() is False
     assert dlg._desktop_notifs.isChecked() is False
     assert dlg._auto_arrange.isChecked() is True
+    assert dlg._group_active.isChecked() is False

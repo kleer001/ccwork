@@ -347,18 +347,30 @@ class RepoListModel(QAbstractListModel):
         current relative order (stable). Returns True if the order
         changed. Selection survives via persistent indices.
         """
+        def sort_key(item):
+            i, r = item
+            ts = self._last_activity.get(r.path, 0.0)
+            return (-ts if ts > 0 else float("inf"), i)
+        return self._reorder_by(sort_key)
+
+    def apply_terminal_grouping(self) -> bool:
+        """Float repos with a live terminal to the top of the list.
+
+        Stable within each group: relative order is preserved, so this
+        composes cleanly after apply_auto_arrange.
+        """
+        active = self._active_ids
+
+        def sort_key(item):
+            i, r = item
+            return (0 if r.id in active else 1, i)
+        return self._reorder_by(sort_key)
+
+    def _reorder_by(self, sort_key) -> bool:
         repos = list(self._store.repos)
         if len(repos) <= 1:
             return False
         indexed = list(enumerate(repos))
-
-        def sort_key(item):
-            i, r = item
-            ts = self._last_activity.get(r.path, 0.0)
-            # Higher ts → earlier. No-activity rows tie on +inf and
-            # fall back to the original index → stable bottom group.
-            return (-ts if ts > 0 else float("inf"), i)
-
         indexed.sort(key=sort_key)
         new_order = [r for _, r in indexed]
         if new_order == repos:
@@ -366,7 +378,8 @@ class RepoListModel(QAbstractListModel):
 
         self.layoutAboutToBeChanged.emit()
         old_persistent = list(self.persistentIndexList())
-        new_row_for_path = {r.path: i for i, r in enumerate(new_order)}
+        # Use repo.id (unique) — paths can repeat across duplicate rows.
+        new_row_for_id = {r.id: i for i, r in enumerate(new_order)}
         self._store.repos[:] = new_order
         new_persistent = []
         for p in old_persistent:
@@ -375,8 +388,8 @@ class RepoListModel(QAbstractListModel):
                 continue
             old_row = p.row()
             if 0 <= old_row < len(repos):
-                path = repos[old_row].path
-                new_row = new_row_for_path.get(path, -1)
+                rid = repos[old_row].id
+                new_row = new_row_for_id.get(rid, -1)
                 new_persistent.append(self.index(new_row) if new_row >= 0 else QModelIndex())
             else:
                 new_persistent.append(QModelIndex())
@@ -454,6 +467,10 @@ class RepoDelegate(QStyledItemDelegate):
 
     ROW_HEIGHT = 52
     PADDING_X = 10
+    # Vertical gap painted *above* the first inactive (no-terminal) row
+    # when ui.group_active_repos is on. Thin strip of widget background,
+    # outside any row's border, so the two groups read as separate clusters.
+    GROUP_GAP_H = 10
     # Right-edge glyph column (status dot or spinner). Reserved whenever the
     # row has a status to show — text elides to fit. The badge is a
     # first-class UI element: glance-state matters more than seeing an
@@ -479,9 +496,23 @@ class RepoDelegate(QStyledItemDelegate):
         self.spinner_frame = 0
         # "dot" or "glyph". Toggled live by RepoSidebar.set_badge_style.
         self.badge_style = "dot"
+        # Mirrors ui.group_active_repos. RepoSidebar keeps it in sync.
+        self.group_enabled = False
+
+    def _is_group_boundary(self, index: QModelIndex) -> bool:
+        """Is `index` the first inactive row directly below an active one?"""
+        if not self.group_enabled or not index.isValid() or index.row() == 0:
+            return False
+        if bool(index.data(ROLE_HAS_TERMINAL)):
+            return False
+        prev = index.model().index(index.row() - 1)
+        return bool(prev.data(ROLE_HAS_TERMINAL))
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
-        return QSize(option.rect.width(), self.ROW_HEIGHT)
+        h = self.ROW_HEIGHT
+        if self._is_group_boundary(index):
+            h += self.GROUP_GAP_H
+        return QSize(option.rect.width(), h)
 
     # Left-edge stripe width for the active/selected row. Thin enough to
     # not crowd the text, thick enough to read at a glance.
@@ -506,6 +537,18 @@ class RepoDelegate(QStyledItemDelegate):
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         painter.save()
+
+        # Group boundary: paint a strip of widget bg above the row so the
+        # active-vs-inactive groups read as separate clusters. The remaining
+        # area becomes the row proper — stash it back on `option.rect` so
+        # all the existing geometry math below stays one-line-of-code simple.
+        if self._is_group_boundary(index):
+            gap_rect = QRect(
+                option.rect.left(), option.rect.top(),
+                option.rect.width(), self.GROUP_GAP_H,
+            )
+            painter.fillRect(gap_rect, option.palette.window())
+            option.rect = option.rect.adjusted(0, self.GROUP_GAP_H, 0, 0)
 
         # Background: honor selection state. The selected row IS the active
         # repo because selecting switches the stack. Paint the Active palette
@@ -673,9 +716,22 @@ class RepoSidebar(QWidget):
         self._reorder_timer.setSingleShot(True)
         self._reorder_timer.setInterval(2000)
         self._reorder_timer.timeout.connect(self._apply_auto_arrange)
+        # Set whenever a row's terminal-active flag changes while
+        # group_active_repos is on. Consumed (and cleared) on the next
+        # selection change — see _on_current_changed for the rationale.
+        self._regroup_pending = False
         self._view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._view.setSelectionMode(QAbstractItemView.SingleSelection)
-        self._view.setUniformItemSizes(True)
+        # Per-row sizeHint: the group-boundary row is taller than the rest
+        # to make room for the inter-group gap. Uniform sizes would skip the
+        # delegate's per-index sizeHint call entirely.
+        self._view.setUniformItemSizes(False)
+        # Mirror the initial pref into the delegate so the first paint after
+        # construction already shows the right grouping behavior.
+        if settings is not None:
+            self._delegate.group_enabled = bool(
+                getattr(settings.ui, "group_active_repos", False)
+            )
         self._view.selectionModel().currentChanged.connect(self._on_current_changed)
         self._view.setContextMenuPolicy(Qt.CustomContextMenu)
         self._view.customContextMenuRequested.connect(self._on_context_menu)
@@ -731,6 +787,36 @@ class RepoSidebar(QWidget):
     def set_settings(self, settings) -> None:
         """Swap in a fresh Settings reference (called after Preferences edits)."""
         self._settings = settings
+        new_group = bool(getattr(settings.ui, "group_active_repos", False))
+        if self._delegate.group_enabled != new_group:
+            self._delegate.group_enabled = new_group
+            # Re-apply grouping so rows already shift; if turning OFF, the
+            # current order is preserved (we never auto-revert) but the gap
+            # disappears. Either way, sizeHints must be re-queried.
+            if new_group:
+                self._model.apply_terminal_grouping()
+            self._view.scheduleDelayedItemsLayout()
+            self._view.viewport().update()
+
+    def set_terminal_active(self, repo_id: str, active: bool) -> None:
+        """Mark a row as having a live terminal and queue a re-group.
+
+        We deliberately do NOT reshuffle right now: the row whose terminal
+        just spawned is the row the user just clicked, and yanking it out
+        from under the cursor (even though Qt's persistent indexes keep
+        the selection logically correct) is disorienting and reads as
+        "the wrong repo got selected." Instead, set a pending flag and
+        let the next selection change (i.e. the user clicking off this
+        row) be the trigger. Same applies on terminal close.
+        """
+        self._model.set_terminal_active(repo_id, active)
+        if self._settings is not None and getattr(
+            self._settings.ui, "group_active_repos", False
+        ):
+            self._regroup_pending = True
+        # Boundary may have shifted (or the bold/italic font flipped) —
+        # re-query sizeHints. No reorder yet.
+        self._view.scheduleDelayedItemsLayout()
 
     def set_badge_style(self, style: str) -> None:
         """Switch between the colored dot and single-glyph badge."""
@@ -779,6 +865,18 @@ class RepoSidebar(QWidget):
     # ── signals ──
 
     def _on_current_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
+        # Apply any deferred group-resort BEFORE handling the new selection.
+        # Order matters: repo_selected.emit() (below) calls back into
+        # MainWindow which can spawn a terminal, which sets _regroup_pending.
+        # Consuming the flag up here means we only act on flags set by
+        # *previous* selections — i.e. the user has moved off the row whose
+        # terminal-active state changed, which is exactly the trigger we want.
+        if self._regroup_pending:
+            self._regroup_pending = False
+            if self._settings is not None and getattr(
+                self._settings.ui, "group_active_repos", False
+            ):
+                self._model.apply_terminal_grouping()
         # Mark the row we're leaving as "last focused" so the user can spot
         # where they were before. Subject to priority rules in
         # RepoListModel.set_last_focused — won't overwrite Stop/Notification.

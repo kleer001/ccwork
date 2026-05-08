@@ -60,6 +60,20 @@ notifications" preference (single source of truth:
   a right-edge column for a status badge (colored dot or glyph) that
   auto-hides only when fewer than ~4 chars of row text would remain — this
   is what lets the splitter drag down to ~6 chars wide without garbling.
+  When `ui.group_active_repos` is on (default), rows with a live terminal
+  float to the top via `RepoListModel.apply_terminal_grouping()`, and the
+  delegate paints a `GROUP_GAP_H` strip above the first inactive row
+  (`_is_group_boundary` driven by `ROLE_HAS_TERMINAL`). `setUniformItemSizes`
+  is therefore off — the boundary row's `sizeHint` is taller. Grouping
+  composes with auto-arrange: it's applied after the activity sort, so
+  "has terminal" wins over recency.
+  **Reshuffle is deferred:** `RepoSidebar.set_terminal_active` does not
+  reorder immediately — it sets `_regroup_pending` and lets the *next*
+  selection change trigger `apply_terminal_grouping()` (consumed at the
+  start of `_on_current_changed`, before `repo_selected.emit`). Otherwise
+  the row the user just clicked yanks out from under the cursor, which
+  reads as "the wrong repo got selected" even though persistent indexes
+  preserve the logical selection.
   The working spinner uses one of five braille variants in
   `SPINNER_VARIANTS`, picked per `repo.id` via `spinner_for_id()`
   (`zlib.crc32` so the choice is stable across launches — Python's built-in

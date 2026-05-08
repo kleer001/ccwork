@@ -122,6 +122,7 @@ def test_ui_settings_defaults() -> None:
     assert u.restore_last_repo is True
     assert u.desktop_notifications is True
     assert u.auto_arrange_repos is False
+    assert u.group_active_repos is True
 
 
 def test_ui_settings_round_trip(tmp_path: Path) -> None:
@@ -130,6 +131,7 @@ def test_ui_settings_round_trip(tmp_path: Path) -> None:
         sidebar_side="right", sidebar_width=310,
         restore_last_repo=False, desktop_notifications=False,
         auto_arrange_repos=True,
+        group_active_repos=False,
     ))
     S.save_settings(orig, p)
     loaded = S.load_settings(p)
@@ -138,6 +140,7 @@ def test_ui_settings_round_trip(tmp_path: Path) -> None:
     assert loaded.ui.restore_last_repo is False
     assert loaded.ui.desktop_notifications is False
     assert loaded.ui.auto_arrange_repos is True
+    assert loaded.ui.group_active_repos is False
 
 
 def test_ui_settings_invalid_side_falls_back_to_default(tmp_path: Path) -> None:
