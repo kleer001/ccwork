@@ -72,5 +72,5 @@ def test_unknown_id_is_noop(qapp: QApplication, tmp_path: Path) -> None:
     just removed) must not raise — it just no-ops."""
     store = RepoStore(config_path=tmp_path / "repos.json")
     model = RepoListModel(store)
-    model.set_terminal_active("nonexistent", True)  # must not raise
+    model.set_terminal_active("nonexistent", True)
     model.set_terminal_active("nonexistent", False)

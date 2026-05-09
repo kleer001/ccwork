@@ -102,7 +102,7 @@ class ArrangementAnimator(QObject):
 
     def __init__(
         self,
-        model,  # RepoListModel — typed loosely to avoid circular import
+        model: QObject,
         settings_provider: Callable[[], object | None],
         parent: QObject | None = None,
     ) -> None:

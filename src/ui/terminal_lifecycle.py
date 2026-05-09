@@ -31,7 +31,7 @@ class TerminalLifecycle(QObject):
     # of truth instead of every spawn re-wiring 5 lambdas. Each carries the
     # owning Repo so the slot doesn't need to keep its own id→repo lookup.
     failed = Signal(Repo, str)
-    finished = Signal(Repo, int)  # repo, exit_code
+    finished = Signal(Repo, int)
     zoom_requested = Signal(int)
     cycle_repo_requested = Signal(int)
     context_menu_requested = Signal(Repo, QPoint)
@@ -39,7 +39,7 @@ class TerminalLifecycle(QObject):
     def __init__(
         self,
         stack: QStackedWidget,
-        sidebar,  # RepoSidebar — typed as Any to avoid circular import
+        sidebar: QObject,
         settings_provider: Callable[[], Settings],
         parent: QObject | None = None,
     ) -> None:

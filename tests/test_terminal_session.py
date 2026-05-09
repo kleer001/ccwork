@@ -25,7 +25,8 @@ def test_drops_into_interactive_bash_with_rcfile(monkeypatch: pytest.MonkeyPatch
     rc_idx = inner.index("--rcfile")
     assert inner[rc_idx + 1].endswith("/bin/ccwork-bashrc")
     assert inner[-1] == "-i"
-    assert "-fs" in flags  # settings flags are prepended before -e
+    # Settings flags are prepended before -e.
+    assert "-fs" in flags
     assert spec.env == {"CCWORK_GUI": "1", "CCWORK_REPO_ID": repo.id}
     assert spec.cwd == "/fake/repo"
 

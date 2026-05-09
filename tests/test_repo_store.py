@@ -149,9 +149,12 @@ def test_re_add_restarts_sequence(store_path: Path, tmp_path: Path) -> None:
     target = tmp_path / "target"
     target.mkdir()
     s = RepoStore(config_path=store_path)
-    a = s.add(str(target)); b = s.add(str(target))   # I, II
-    s.remove_by_id(b.id)                              # back to bare name
-    s.add(str(target))                                # re-enter duplicates
+    # Add two: instances become I, II.
+    a = s.add(str(target)); b = s.add(str(target))
+    # Remove the second: survivor reverts to bare name.
+    s.remove_by_id(b.id)
+    # Re-enter duplicate state.
+    s.add(str(target))
     assert [r.instance for r in s.repos] == [1, 2]
     assert s.repos[0].id == a.id
 
@@ -280,7 +283,7 @@ def test_load_back_compat_missing_id_and_instance(store_path: Path) -> None:
     s.load()
     assert len(s.repos) == 1
     assert s.repos[0].path == "/some/repo"
-    assert s.repos[0].id  # fresh uuid
+    assert s.repos[0].id
     assert s.repos[0].instance == 0
 
 
@@ -303,7 +306,8 @@ def test_load_rejects_non_object(store_path: Path) -> None:
 def test_load_tolerates_corrupt_json(store_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """A half-written repos.json should not crash the app — treat as empty."""
     store_path.parent.mkdir(parents=True, exist_ok=True)
-    store_path.write_text("{\"repos\":[{\"path\":\"/x\"},")  # truncated
+    # Mid-write crash leaves a truncated trailer.
+    store_path.write_text("{\"repos\":[{\"path\":\"/x\"},")
     s = RepoStore(config_path=store_path)
     import logging
     with caplog.at_level(logging.WARNING):

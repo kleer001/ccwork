@@ -53,8 +53,8 @@ from src.ui.arrangement_animator import ArrangementAnimator
 ROLE_REPO    = Qt.UserRole + 1
 ROLE_BRANCH  = Qt.UserRole + 2
 ROLE_STATUS  = Qt.UserRole + 3
-ROLE_WORKING = Qt.UserRole + 4  # bool — Claude mid-turn in this repo
-ROLE_HAS_TERMINAL = Qt.UserRole + 5  # bool — a TerminalHost exists for this repo this session
+ROLE_WORKING = Qt.UserRole + 4
+ROLE_HAS_TERMINAL = Qt.UserRole + 5
 
 @dataclass(frozen=True)
 class StatusDefinition:
@@ -604,9 +604,9 @@ class RepoDelegate(QStyledItemDelegate):
     # Claude alerts (working / done / attention).
     STATUS_COLORS = {s.value: s.color for s in _ALL_STATUSES if s.color is not None}
     STATUS_GLYPHS = {s.value: s.glyph for s in _ALL_STATUSES if s.glyph is not None}
-    # Muted blue for the working spinner — distinct from the red/green
-    # status dots so glance-state is unambiguous.
-    SPINNER_COLOR = QColor(38, 139, 210)  # solarized blue
+    # Solarized blue — distinct from the red/green status dots so
+    # glance-state is unambiguous.
+    SPINNER_COLOR = QColor(38, 139, 210)
 
     # Base hue for the "last focused" left-edge stripe (solarized violet).
     # Modulated per-theme by _last_focused_stripe_color so it stays subtle.
@@ -811,8 +811,8 @@ class RepoSidebar(QWidget):
 
     repo_selected = Signal(Repo)
     repo_added = Signal(Repo)
-    repo_removed = Signal(Repo)  # emits the removed Repo (id needed to tear down)
-    reload_requested = Signal(Repo)  # user asked to respawn the terminal
+    repo_removed = Signal(Repo)
+    reload_requested = Signal(Repo)
 
     def __init__(self, store: RepoStore, parent=None, settings=None) -> None:
         super().__init__(parent)

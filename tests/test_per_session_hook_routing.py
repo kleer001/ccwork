@@ -35,12 +35,15 @@ def _make_window(
     real_path: Path, cfg_path: Path, qapp: QApplication
 ) -> tuple[MainWindow, RepoStore]:
     store = RepoStore(config_path=cfg_path)
+    # Two repos for the same path → two ids; the duplicate is the
+    # whole point of the per-session routing tests below.
     store.add(str(real_path))
-    store.add(str(real_path))  # duplicate of the same path → two ids
+    store.add(str(real_path))
     # MainWindow's sidebar calls model.reload() in __init__, which reads
     # from disk — persist before constructing so the duplicates survive.
     store.save()
-    hook_server = HookServer(parent=None)  # not started; only need the signal
+    # HookServer is constructed but not started — we only need the signal.
+    hook_server = HookServer(parent=None)
     settings = Settings()
     win = MainWindow(store=store, hook_server=hook_server, settings=settings)
     return win, store

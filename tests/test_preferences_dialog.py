@@ -62,7 +62,8 @@ def test_dialog_populates_combo_with_separators(qapp: QApplication) -> None:
 
 
 def test_dialog_scheme_opens_on_matching_name(qapp: QApplication) -> None:
-    s = Settings(xterm=XtermSettings(bg="#282a36", fg="#f8f8f2"))  # Dracula
+    # Dracula bg/fg.
+    s = Settings(xterm=XtermSettings(bg="#282a36", fg="#f8f8f2"))
     dlg = PD.PreferencesDialog(s)
     assert dlg._scheme.currentText() == "Dracula"
 
@@ -84,7 +85,7 @@ def test_dialog_picking_scheme_then_manual_override_flips_to_custom(qapp: QAppli
     dlg = PD.PreferencesDialog(Settings())
     dlg._scheme.setCurrentText("Gruvbox Dark")
     assert dlg._scheme.currentText() == "Gruvbox Dark"
-    dlg._bg.set_value("#123456")  # user picks a new bg
+    dlg._bg.set_value("#123456")
     assert dlg._scheme.currentText() == "Custom"
 
 

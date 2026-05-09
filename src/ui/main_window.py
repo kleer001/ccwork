@@ -92,7 +92,7 @@ class MainWindow(QMainWindow):
         self._bell_btn.clicked.connect(lambda: self._bell_btn.set_unseen(False))
 
         self._gear_btn = QToolButton(self)
-        self._gear_btn.setText("⚙")        # ⚙
+        self._gear_btn.setText("⚙")
         self._gear_btn.setToolTip("Preferences (Ctrl+,)")
         self._gear_btn.setAutoRaise(True)
         self._gear_btn.clicked.connect(self._open_preferences)
@@ -101,7 +101,8 @@ class MainWindow(QMainWindow):
         top_lay = QHBoxLayout(top)
         top_lay.setContentsMargins(6, 2, 6, 2)
         top_lay.setSpacing(4)
-        top_lay.addWidget(self._title, 1)        # absorbs all slack so label sits centered
+        # Stretch=1 absorbs all slack so the label sits centered.
+        top_lay.addWidget(self._title, 1)
         top_lay.addWidget(self._alerts_btn, 0)
         top_lay.addWidget(self._bell_btn, 0)
         top_lay.addWidget(self._gear_btn, 0)
@@ -234,7 +235,8 @@ class MainWindow(QMainWindow):
         if new_width <= 0 or new_width == self._settings.ui.sidebar_width:
             return
         self._settings.ui.sidebar_width = int(new_width)
-        self._sidebar_save_timer.start()  # restart resets the 300ms window
+        # start() on a running single-shot timer restarts it — coalesces the drag.
+        self._sidebar_save_timer.start()
 
     def _persist_settings_now(self) -> None:
         try:
@@ -294,8 +296,9 @@ class MainWindow(QMainWindow):
                 needs_restart_fields.update(unapplied)
             live_applied += 1
 
+        # No running terminals — no settings-change message to surface.
         if live_applied == 0:
-            return  # no running terminals; nothing to say
+            return
 
         # Only fields the user actually changed from defaults might matter.
         # For the message we care about "has the user set a value that xterm
@@ -350,7 +353,7 @@ class MainWindow(QMainWindow):
             cur = int(self._settings.xterm.font_size)
             new = max(self._FONT_SIZE_MIN, min(self._FONT_SIZE_MAX, cur + delta))
             if new == cur:
-                return  # at the clamp — nothing to do
+                return
             self._settings.xterm.font_size = new
 
         for host in self._lifecycle.hosts():
@@ -558,8 +561,8 @@ class MainWindow(QMainWindow):
                 seen_paths.add(r.path)
                 # Status is path-keyed; clear once per distinct path.
                 self._sidebar.clear_status(r.path)
-            self._working.add(r.id)  # idempotent — set semantics
-            self._sidebar.set_working_for_id(r.id, True)  # no-op if already on
+            self._working.add(r.id)
+            self._sidebar.set_working_for_id(r.id, True)
 
     def _current_repo_id(self) -> str | None:
         return self._lifecycle.current_repo_id()
