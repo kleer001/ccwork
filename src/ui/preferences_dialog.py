@@ -16,8 +16,9 @@ from __future__ import annotations
 import copy
 import shlex
 from dataclasses import dataclass
+from typing import Literal
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -41,7 +42,6 @@ from PySide6.QtWidgets import (
 
 from src.core.settings import Settings, UISettings, XtermSettings, save_settings
 
-
 # ── Color-scheme presets ────────────────────────────────────────────────────
 # Curated: three dark and three light well-known schemes. Users can always
 # override via the color pickers — doing so flips the combo to "Custom".
@@ -52,7 +52,7 @@ class ColorScheme:
     name: str
     bg: str
     fg: str
-    kind: str  # "dark" | "light" | "custom"
+    kind: Literal["dark", "light", "custom"]
 
 
 DARK_SCHEMES: list[ColorScheme] = [
@@ -78,7 +78,7 @@ COLOR_SCHEMES: list[ColorScheme] = [*DARK_SCHEMES, *LIGHT_SCHEMES, CUSTOM_SCHEME
 class _ColorButton(QPushButton):
     """Square button whose face shows the current color and opens a picker."""
 
-    color_changed = Signal(str)  # new color hex
+    color_changed = Signal(str)
 
     def __init__(self, initial: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -472,12 +472,20 @@ class PreferencesDialog(QDialog):
         self._settings.xterm = new_x
         # sidebar_width is set live by splitter drag — preserve whatever the
         # user last dragged it to.
+        side_text = self._sidebar_side.currentText()
+        sidebar_side: Literal["left", "right"] = (
+            "right" if side_text == "right" else "left"
+        )
+        badge_data = self._badge_style.currentData()
+        badge_style: Literal["dot", "glyph"] = (
+            "glyph" if badge_data == "glyph" else "dot"
+        )
         self._settings.ui = UISettings(
-            sidebar_side=self._sidebar_side.currentText(),
+            sidebar_side=sidebar_side,
             sidebar_width=int(self._settings.ui.sidebar_width),
             restore_last_repo=bool(self._restore_last.isChecked()),
             desktop_notifications=bool(self._desktop_notifs.isChecked()),
-            status_badge_style=str(self._badge_style.currentData() or "dot"),
+            status_badge_style=badge_style,
             auto_arrange_repos=bool(self._auto_arrange.isChecked()),
             group_active_repos=bool(self._group_active.isChecked()),
         )

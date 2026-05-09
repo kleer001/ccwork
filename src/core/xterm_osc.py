@@ -29,7 +29,6 @@ from pathlib import Path
 
 from src.core.settings import XtermSettings
 
-
 log = logging.getLogger(__name__)
 
 
@@ -103,11 +102,11 @@ def apply_live(xterm_pid: int, settings: XtermSettings) -> list[str]:
             "scrollback", "scrollbar", "jump_scroll", "extra_args",
         ]
 
-    # Colors — universally supported.
+    # OSC 10/11/12 = foreground / background / cursor. Cursor mirrors fg.
     parts: list[str] = []
-    parts.append(osc(10, settings.fg))   # foreground
-    parts.append(osc(11, settings.bg))   # background
-    parts.append(osc(12, settings.fg))   # cursor (mirror fg)
+    parts.append(osc(10, settings.fg))
+    parts.append(osc(11, settings.bg))
+    parts.append(osc(12, settings.fg))
     # Font face + size — OSC 50 with a fontconfig pattern. xterm gates this
     # on allowFontOps (default false), but we flip it on at spawn time (see
     # XtermSettings.to_xterm_args), so the resize actually lands.

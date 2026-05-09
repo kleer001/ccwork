@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov"]
+dev = ["pytest", "pytest-cov", "ruff>=0.6", "mypy>=1.10"]
 
 [project.urls]
 Homepage = "https://github.com/kleer001/ccwork"
@@ -39,3 +39,80 @@ ccwork = "src.main:main"
 
 [tool.setuptools.packages.find]
 include = ["src*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+# Conservative starter set: catch real bugs (F = pyflakes), enforce
+# import hygiene (I), and basic style (E/W). Skip stylistic-opinion
+# rules until the codebase has time to settle into them.
+select = ["E", "F", "I", "W", "UP", "B"]
+ignore = [
+    # Line length — let the formatter decide; long descriptive comments
+    # in CLAUDE.md and module docstrings would otherwise need rewrapping.
+    "E501",
+    # Allow `Exception as e` even when `e` is unused (logged elsewhere).
+    "B007",
+    # zip(strict=) requires Python 3.10+ semantics we don't always need.
+    "B905",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private internals deliberately; allow it. E702
+# (semicolon statements) is a deliberate test style for compact setup.
+"tests/*.py" = ["F401", "E402", "E702"]
+# Qt model API uses QModelIndex() as a default arg per Qt convention.
+"src/ui/repo_sidebar.py" = ["B008"]
+
+[tool.mypy]
+# Pragmatic config: type-check what we can, skip what we can't, surface
+# real bugs without the maintenance burden of full --strict. Run with:
+#
+#     mypy src
+#
+# Not (yet) wired into CI — see REFACTORING.md 6.3 for the path forward.
+python_version = "3.10"
+files = ["src"]
+# PySide6 ships its own stubs but they're partial; missing-import is
+# silenced for the Qt namespace so we don't drown in noise.
+ignore_missing_imports = true
+# Real-bug-finder rules. Skip strict-* until we've tightened the
+# annotations across src/.
+check_untyped_defs = true
+warn_redundant_casts = true
+no_implicit_optional = true
+# Existing `# type: ignore[override]` comments on Qt subclass methods
+# look unused under our pragmatic config but earn their keep when a
+# future dev tightens to --strict. Don't flag them.
+warn_unused_ignores = false
+# Ignore ctypes Any-returns; everything else stays loud.
+disable_error_code = ["no-any-return"]
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+# Don't measure tests themselves — the goal is "did we exercise the
+# product code?", not "are tests covered by tests?".
+omit = ["tests/*", "*/__main__.py"]
+
+[tool.coverage.report]
+# Floor at one point under the measured coverage so a regression fails
+# CI but day-to-day +/- doesn't. Bump this number whenever a deliberate
+# uplift lands (`pytest --cov` locally first to see the new floor).
+# At the time of writing: 59% measured.
+fail_under = 58
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+show_missing = true
+skip_covered = false
+
+[tool.pytest.ini_options]
+# pytest-cov picks these up via the [tool.coverage.*] sections.
+addopts = "--cov --cov-report=term --cov-report=xml"

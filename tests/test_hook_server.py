@@ -137,7 +137,8 @@ def test_server_ignores_malformed_json(qapp: QCoreApplication, tmp_path: Path) -
     assert client.waitForConnected(1000)
     client.write(b"not-json\n")
     client.write((json.dumps({"event": EVENT_STOP}) + "\n").encode("utf-8"))
-    client.write(b"[1, 2, 3]\n")  # valid JSON but not an object — rejected
+    # Valid JSON but not an object — should be rejected.
+    client.write(b"[1, 2, 3]\n")
     client.waitForBytesWritten(500)
     client.disconnectFromServer()
     _spin(qapp)
@@ -151,7 +152,7 @@ def test_server_cleans_stale_socket_file(qapp: QCoreApplication, tmp_path: Path)
     """Starting the server over a stale socket file must succeed."""
     sock = tmp_path / "ccwork.sock"
     sock.parent.mkdir(parents=True, exist_ok=True)
-    sock.write_bytes(b"")  # stale file
+    sock.write_bytes(b"")
     srv = HookServer(socket_path=sock)
     srv.start()
     _send(sock, {"event": EVENT_STOP})

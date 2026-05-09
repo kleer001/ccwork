@@ -23,12 +23,46 @@ import json
 import os
 import subprocess
 import uuid
-from dataclasses import dataclass, field, asdict
+from collections.abc import Iterator
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterator
-
 
 SCHEMA_VERSION = 1
+
+
+# Migration chain. Each function takes a dict at version N and returns
+# the dict at version N+1. Empty today; the seam exists so future
+# changes to repos.json (renames, restructures) are explicit instead
+# of relying on the load loop's silent default-application.
+_MIGRATIONS: dict[int, object] = {}
+
+
+def _migrate_repos(data: dict, from_version: int) -> dict:
+    import logging
+    log = logging.getLogger(__name__)
+    v = from_version
+    while v < SCHEMA_VERSION:
+        fn = _MIGRATIONS.get(v)
+        if fn is None:
+            log.warning(
+                "repos: no migration from v%d to v%d — leaving as-is",
+                v, v + 1,
+            )
+            break
+        data = fn(data)  # type: ignore[operator]
+        v += 1
+    return data
+
+
+def normalize_path(path: str) -> str:
+    """Canonicalize a path so set/dict membership agrees regardless of how
+    the path was supplied (trailing slash, symlink, relative segment).
+
+    Used as the single key shape for state keyed by path. Without this, a
+    hook reporting `/symlink/repo` when the sidebar holds `/real/repo`
+    would silently fail — e.g. the spinner wouldn't flip.
+    """
+    return os.path.realpath(path) if path else ""
 
 
 def default_config_path() -> Path:
@@ -61,10 +95,28 @@ def to_roman(n: int) -> str:
 
 @dataclass
 class Repo:
+    """One repo entry in the sidebar.
+
+    Invariant: `path` is treated as immutable after construction. The
+    `resolved` attribute is a cache of `normalize_path(path)` populated
+    in __post_init__; mutating `path` afterwards would leave it stale.
+    No production code mutates `path` today — the convention is "create
+    a new Repo instead." If that ever changes, convert `resolved` to a
+    @property that recomputes when the underlying path differs.
+    """
+
     path: str
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     instance: int = 0
     emoji: str = ""
+
+    def __post_init__(self) -> None:
+        # Cache the resolved path so RepoStore lookups (called per-row
+        # per-paint and per-hook-event) compare strings instead of
+        # re-stat'ing every repo. Set as a plain instance attribute, NOT
+        # a dataclass field — asdict() includes init=False fields, so
+        # making `resolved` a field would leak it into repos.json.
+        self.resolved: str = normalize_path(self.path)
 
     @property
     def name(self) -> str:
@@ -117,6 +169,17 @@ class RepoStore:
             return
         if not isinstance(data, dict):
             raise ValueError(f"{self.config_path}: expected object, got {type(data).__name__}")
+        # Schema migration: bring older on-disk shapes up to current.
+        raw_version = data.get("version", 1)
+        file_version = raw_version if isinstance(raw_version, int) else 1
+        if file_version < SCHEMA_VERSION:
+            data = _migrate_repos(data, file_version)
+        elif file_version > SCHEMA_VERSION:
+            import logging
+            logging.getLogger(__name__).warning(
+                "%s: schema v%d is newer than this build's v%d — best-effort load",
+                self.config_path, file_version, SCHEMA_VERSION,
+            )
         repos_raw = data.get("repos", [])
         if not isinstance(repos_raw, list):
             raise ValueError(f"{self.config_path}: 'repos' must be a list")
@@ -150,24 +213,34 @@ class RepoStore:
     # ── lookup helpers ──
 
     def index_of(self, path: str) -> int:
-        """First row whose realpath matches `path`, or -1."""
-        resolved = os.path.realpath(path)
+        """First row whose realpath matches `path`, or -1.
+
+        One realpath syscall on the input; the stored repos compare via
+        their cached `resolved` attribute (computed once at __post_init__).
+        """
+        resolved = normalize_path(path)
         for i, r in enumerate(self.repos):
-            if os.path.realpath(r.path) == resolved:
+            if r.resolved == resolved:
                 return i
         return -1
 
     def indices_of(self, path: str) -> list[int]:
         """All rows whose realpath matches `path`, in order."""
-        resolved = os.path.realpath(path)
-        return [i for i, r in enumerate(self.repos)
-                if os.path.realpath(r.path) == resolved]
+        resolved = normalize_path(path)
+        return [i for i, r in enumerate(self.repos) if r.resolved == resolved]
 
     def find_by_id(self, repo_id: str) -> Repo | None:
         for r in self.repos:
             if r.id == repo_id:
                 return r
         return None
+
+    def index_of_id(self, repo_id: str) -> int:
+        """Row index for `repo_id`, or -1. Mirrors `index_of(path)`."""
+        for i, r in enumerate(self.repos):
+            if r.id == repo_id:
+                return i
+        return -1
 
     def repos_for_path(self, path: str) -> list[Repo]:
         """All entries whose realpath matches `path` (zero, one, or many)."""
@@ -188,7 +261,7 @@ class RepoStore:
         - otherwise → new instance = max(existing instance) + 1 (gaps from
           prior removals are preserved)
         """
-        resolved = os.path.realpath(path)
+        resolved = normalize_path(path)
         siblings = [self.repos[i] for i in self.indices_of(resolved)]
         if not siblings:
             new_inst = 0
@@ -209,7 +282,7 @@ class RepoStore:
         """
         for i, r in enumerate(self.repos):
             if r.id == repo_id:
-                resolved = os.path.realpath(r.path)
+                resolved = r.resolved
                 self.repos.pop(i)
                 survivors = [self.repos[j] for j in self.indices_of(resolved)]
                 if len(survivors) == 1:
@@ -250,7 +323,7 @@ def is_git_root(path: str | os.PathLike[str]) -> bool:
     top = r.stdout.strip()
     if not top:
         return False
-    return os.path.realpath(top) == os.path.realpath(str(path))
+    return normalize_path(top) == normalize_path(str(path))
 
 
 def current_branch(path: str | os.PathLike[str]) -> str | None:

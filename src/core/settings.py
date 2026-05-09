@@ -33,14 +33,46 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass, field, asdict
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
-
+from typing import Any, Literal
 
 log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
+
+
+# Migration chain. Each function takes a dict at version N and returns
+# the dict at version N+1. Empty for now — the seam exists so future
+# field renames/splits/removals are explicit and reviewable, instead of
+# relying on `_raw` round-tripping plus default-application to silently
+# absorb the change.
+#
+# Future example:
+#     def _v1_to_v2(d: dict) -> dict:
+#         """Split ui.sidebar_width into ui.sidebar.{width, side}."""
+#         ui = d.get("ui", {})
+#         ui["sidebar"] = {"width": ui.pop("sidebar_width", 240), ...}
+#         return d
+#     _MIGRATIONS = {1: _v1_to_v2}
+_MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {}
+
+
+def _migrate(data: dict[str, Any], from_version: int) -> dict[str, Any]:
+    """Apply the migration chain from `from_version` up to SCHEMA_VERSION."""
+    v = from_version
+    while v < SCHEMA_VERSION:
+        fn = _MIGRATIONS.get(v)
+        if fn is None:
+            log.warning(
+                "settings: no migration from v%d to v%d — leaving as-is",
+                v, v + 1,
+            )
+            break
+        data = fn(data)
+        v += 1
+    return data
 
 
 def default_settings_path() -> Path:
@@ -54,7 +86,7 @@ class XtermSettings:
     font_family: str = "Monospace"
     font_size: int = 10
     scrollback: int = 20000
-    scrollbar: str = "right"       # "right" | "left" | "none"
+    scrollbar: Literal["right", "left", "none"] = "right"
     jump_scroll: bool = True
     bg: str = "#1e1e1e"
     fg: str = "#d0d0d0"
@@ -76,7 +108,7 @@ class XtermSettings:
         elif self.scrollbar == "left":
             args += ["-sb", "-leftbar"]
         else:
-            args += ["+sb"]  # explicitly disable
+            args += ["+sb"]
         if self.jump_scroll:
             args += ["-j"]
         # Bind mouse wheel to scrollback, and Ctrl+Shift+C / Ctrl+Shift+V
@@ -115,13 +147,13 @@ class XtermSettings:
 
 @dataclass
 class UISettings:
-    sidebar_side: str = "left"           # "left" | "right"
-    sidebar_width: int = 240             # px; persisted across sessions
-    restore_last_repo: bool = True       # auto-open last_focused_repo at launch
-    desktop_notifications: bool = True   # gate ccwork-hook-sink's notify-send
+    sidebar_side: Literal["left", "right"] = "left"
+    sidebar_width: int = 240
+    restore_last_repo: bool = True
+    desktop_notifications: bool = True
     # "dot" = colored circle (default); "glyph" = colored "!"/"✓"/"·" — the
     # glyph variant is more legible at a glance and colorblind-friendlier.
-    status_badge_style: str = "dot"
+    status_badge_style: Literal["dot", "glyph"] = "dot"
     # When True, the sidebar reorders itself by most-recent Claude activity
     # (Stop / Notification / UserPromptSubmit) ~2s after the last event.
     # User-driven STATUS_LAST_FOCUSED transitions are not "Claude activity"
@@ -160,13 +192,31 @@ def load_settings(path: Path | None = None) -> Settings:
         log.warning("%s: expected object, got %s — using defaults", p, type(data).__name__)
         return Settings()
 
+    # Schema migration: bring older on-disk shapes up to SCHEMA_VERSION
+    # before the field-by-field unpacking below. Files predating the
+    # version field are treated as v1 (the schema before any rename
+    # ever happened).
+    raw_version = data.get("version", 1)
+    file_version = raw_version if isinstance(raw_version, int) else 1
+    if file_version < SCHEMA_VERSION:
+        data = _migrate(data, file_version)
+    elif file_version > SCHEMA_VERSION:
+        log.warning(
+            "%s: schema v%d is newer than this build's v%d — best-effort load",
+            p, file_version, SCHEMA_VERSION,
+        )
+
     x_raw = data.get("xterm", {}) if isinstance(data.get("xterm"), dict) else {}
     defaults = XtermSettings()
+    sb_raw = str(x_raw.get("scrollbar", defaults.scrollbar)).lower()
+    scrollbar: Literal["right", "left", "none"] = (
+        sb_raw if sb_raw in ("right", "left", "none") else defaults.scrollbar  # type: ignore[assignment]
+    )
     xterm = XtermSettings(
         font_family=str(x_raw.get("font_family", defaults.font_family)),
         font_size=int(x_raw.get("font_size", defaults.font_size)),
         scrollback=int(x_raw.get("scrollback", defaults.scrollback)),
-        scrollbar=str(x_raw.get("scrollbar", defaults.scrollbar)),
+        scrollbar=scrollbar,
         jump_scroll=bool(x_raw.get("jump_scroll", defaults.jump_scroll)),
         bg=str(x_raw.get("bg", defaults.bg)),
         fg=str(x_raw.get("fg", defaults.fg)),
@@ -174,12 +224,14 @@ def load_settings(path: Path | None = None) -> Settings:
     )
     u_raw = data.get("ui", {}) if isinstance(data.get("ui"), dict) else {}
     u_def = UISettings()
-    side = str(u_raw.get("sidebar_side", u_def.sidebar_side)).lower()
-    if side not in ("left", "right"):
-        side = u_def.sidebar_side
-    badge_style = str(u_raw.get("status_badge_style", u_def.status_badge_style)).lower()
-    if badge_style not in ("dot", "glyph"):
-        badge_style = u_def.status_badge_style
+    side_raw = str(u_raw.get("sidebar_side", u_def.sidebar_side)).lower()
+    side: Literal["left", "right"] = (
+        side_raw if side_raw in ("left", "right") else u_def.sidebar_side  # type: ignore[assignment]
+    )
+    badge_raw = str(u_raw.get("status_badge_style", u_def.status_badge_style)).lower()
+    badge_style: Literal["dot", "glyph"] = (
+        badge_raw if badge_raw in ("dot", "glyph") else u_def.status_badge_style  # type: ignore[assignment]
+    )
     ui = UISettings(
         sidebar_side=side,
         sidebar_width=max(60, min(600, int(u_raw.get("sidebar_width", u_def.sidebar_width)))),

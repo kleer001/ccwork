@@ -57,6 +57,11 @@ def build_session(
     env: dict[str, str] = {}
     if gui_marker:
         env["CCWORK_GUI"] = "1"
+    # Per-session routing: stamps the child env with this instance's id so
+    # the hook sink can echo it back. Lets duplicate rows on the same path
+    # spin independently — without it, every cwd-scoped hook fans out to
+    # every duplicate.
+    env["CCWORK_REPO_ID"] = repo.id
 
     return SessionSpec(argv=xterm_tail, cwd=repo.path, env=env)
 

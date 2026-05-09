@@ -10,9 +10,7 @@ fatal environment error — embedding xterm is Linux/X11-only by design.
 from __future__ import annotations
 
 import ctypes
-from ctypes import c_int, c_uint, c_ulong, c_void_p, POINTER, byref
-from typing import Optional
-
+from ctypes import POINTER, byref, c_int, c_uint, c_ulong, c_void_p
 
 Display = c_void_p
 Window = c_ulong
@@ -43,7 +41,7 @@ XK_0 = 0x0030       # '0' (reset)
 XK_Tab = 0xff09     # Tab (for Ctrl+Tab repo cycling)
 
 
-_x11: Optional[ctypes.CDLL] = None
+_x11: ctypes.CDLL | None = None
 
 
 def _lib() -> ctypes.CDLL:

@@ -22,9 +22,9 @@ from PySide6.QtWidgets import QApplication
 
 from src.core.settings import Settings, XtermSettings
 
-
-_DARK_ACCENT = "#268bd2"   # Solarized blue — readable on every bundled dark bg
-_LIGHT_ACCENT = "#2aa198"  # Solarized cyan — readable on the bundled light bgs
+# Solarized blue / cyan — readable on every bundled dark/light bg respectively.
+_DARK_ACCENT = "#268bd2"
+_LIGHT_ACCENT = "#2aa198"
 
 
 def _tones(bg: QColor, fg: QColor) -> dict[str, QColor]:
@@ -46,7 +46,8 @@ def _tones(bg: QColor, fg: QColor) -> dict[str, QColor]:
         "button": step(140, 108),
         "mid": step(160, 112),
         "midlight": step(135, 104),
-        "dark": step(90, 120),      # "dark" role is BELOW button for shadow edges
+        # Qt's "dark" role sits BELOW button for shadow edges, hence inverse step.
+        "dark": step(90, 120),
         "shadow": step(70, 135),
         "tooltip_bg": step(150, 115),
         # Tonal selection: a quiet shade of the surface, not a hue accent.

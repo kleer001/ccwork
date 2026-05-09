@@ -11,19 +11,11 @@ import os
 from pathlib import Path
 
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from PySide6.QtWidgets import QApplication
 
 from src.core.repo_store import Repo, RepoStore
 from src.core.settings import Settings, UISettings
 from src.ui.repo_sidebar import STATUS_DONE, RepoListModel, RepoSidebar
-
-
-@pytest.fixture(scope="session")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _store_with(paths: list[str], cfg_path: Path) -> RepoStore:
@@ -134,17 +126,17 @@ def test_pending_regroup_fires_after_sidebar_quiet(
     sb._view.setCurrentIndex(sb._model.index(3))
     sb.set_terminal_active(ids[3], True)
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/d"]
-    assert sb._arrange_pending is True
+    assert sb._animator._pending is True
 
     # User clicks /b — still on the sidebar, gate stays closed.
     sb._view.setCurrentIndex(sb._model.index(1))
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/d"]
 
     # Sidebar goes quiet (test stand-in for the user typing in xterm).
-    sb._last_sidebar_activity = 0.0
-    sb._check_pending_walk()
+    sb._animator._last_activity = 0.0
+    sb._animator._check_pending()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/d", "/c"]
-    while sb._step_arrange():
+    while sb._animator._step():
         pass
     assert sb._model._store.repos[0].path == "/d"
     cur_row = sb._view.currentIndex().row()
@@ -164,20 +156,20 @@ def test_grouping_animation_walks_one_swap_per_step(
     sb._view.setCurrentIndex(sb._model.index(4))
     sb.set_terminal_active(ids[4], True)
     sb._view.setCurrentIndex(sb._model.index(0))
-    sb._last_sidebar_activity = 0.0
-    sb._check_pending_walk()  # quiet → fires the deferred walk
+    sb._animator._last_activity = 0.0
+    sb._animator._check_pending()  # quiet → fires the deferred walk
 
     # Gate-open ran one immediate step → /e is now at row 3.
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/e", "/d"]
-    sb._step_arrange()
+    sb._animator._step()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/e", "/c", "/d"]
-    sb._step_arrange()
+    sb._animator._step()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/e", "/b", "/c", "/d"]
-    sb._step_arrange()
+    sb._animator._step()
     assert [r.path for r in sb._model._store.repos] == ["/e", "/a", "/b", "/c", "/d"]
     # Converged — next step is a no-op and stops the timer.
-    assert sb._step_arrange() is False
-    assert sb._arrange_step_timer.isActive() is False
+    assert sb._animator._step() is False
+    assert sb._animator._step_timer.isActive() is False
 
 
 def test_grouping_animation_picks_up_new_active_mid_walk(
@@ -194,24 +186,24 @@ def test_grouping_animation_picks_up_new_active_mid_walk(
     sb._view.setCurrentIndex(sb._model.index(4))
     sb.set_terminal_active(ids[4], True)
     sb._view.setCurrentIndex(sb._model.index(0))
-    sb._last_sidebar_activity = 0.0
-    sb._check_pending_walk()
+    sb._animator._last_activity = 0.0
+    sb._animator._check_pending()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/e", "/d"]
 
     # Mid-walk: /c also becomes active. Target now wants both /c and /e on top.
     # Tie-breaker is current row index (stable within the active group), so
     # /c (currently row 2) sorts above /e (currently row 3) and bubbles first.
     sb.set_terminal_active(ids[2], True)
-    sb._step_arrange()
+    sb._animator._step()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/c", "/b", "/e", "/d"]
-    sb._step_arrange()
+    sb._animator._step()
     assert [r.path for r in sb._model._store.repos] == ["/c", "/a", "/b", "/e", "/d"]
     # /c is home; the loop now bubbles /e into row 1.
-    sb._step_arrange()
+    sb._animator._step()
     assert [r.path for r in sb._model._store.repos] == ["/c", "/a", "/e", "/b", "/d"]
-    sb._step_arrange()
+    sb._animator._step()
     assert [r.path for r in sb._model._store.repos] == ["/c", "/e", "/a", "/b", "/d"]
-    assert sb._step_arrange() is False
+    assert sb._animator._step() is False
 
 
 def test_auto_arrange_uses_bubble_animation(
@@ -238,14 +230,14 @@ def test_auto_arrange_uses_bubble_animation(
     # Sidebar is quiet by default at construction (_last_sidebar_activity
     # initialized to 0.0). Fire the debounce-end handler directly (skip
     # the 2 s wait). _maybe_walk sees a wide-open quiet window and runs.
-    sb._apply_auto_arrange()
+    sb._animator._on_reorder_debounce_elapsed()
     # First step ran inside _start_arrange_animation: /d moved from 3 → 2.
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/d", "/c"]
-    sb._step_arrange()
+    sb._animator._step()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/d", "/b", "/c"]
-    sb._step_arrange()
+    sb._animator._step()
     assert [r.path for r in sb._model._store.repos] == ["/d", "/a", "/b", "/c"]
-    assert sb._step_arrange() is False
+    assert sb._animator._step() is False
 
 
 def test_walk_defers_while_sidebar_active(
@@ -269,16 +261,16 @@ def test_walk_defers_while_sidebar_active(
     sb._model.set_status("/d", STATUS_DONE)
 
     # Pretend the user just touched the sidebar (recent activity).
-    sb._last_sidebar_activity = _t.monotonic()
-    sb._apply_auto_arrange()
+    sb._animator._last_activity = _t.monotonic()
+    sb._animator._on_reorder_debounce_elapsed()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/d"]
-    assert sb._arrange_pending is True
-    assert sb._arrange_step_timer.isActive() is False
+    assert sb._animator._pending is True
+    assert sb._animator._step_timer.isActive() is False
 
     # Sidebar goes quiet. The next check fires the walk.
-    sb._last_sidebar_activity = 0.0
-    sb._check_pending_walk()
-    assert sb._arrange_pending is False
+    sb._animator._last_activity = 0.0
+    sb._animator._check_pending()
+    assert sb._animator._pending is False
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/d", "/c"]
 
 
@@ -286,7 +278,7 @@ def test_step_interval_eases_in_and_out(
     qapp: QApplication, tmp_path: Path
 ) -> None:
     """First and last gaps should be slow (MAX); middle gaps fast (MIN-ish)."""
-    from src.ui.repo_sidebar import ARRANGE_STEP_MAX_MS, ARRANGE_STEP_MIN_MS
+    from src.ui.arrangement_animator import ARRANGE_STEP_MAX_MS, ARRANGE_STEP_MIN_MS
 
     cfg = tmp_path / "repos.json"
     store = RepoStore(config_path=cfg)
@@ -300,10 +292,10 @@ def test_step_interval_eases_in_and_out(
     sb._model.endResetModel()
     sb._model.set_status("/f", STATUS_DONE)
 
-    sb._apply_auto_arrange()
-    intervals = [sb._arrange_step_timer.interval()]
-    while sb._step_arrange():
-        intervals.append(sb._arrange_step_timer.interval())
+    sb._animator._on_reorder_debounce_elapsed()
+    intervals = [sb._animator._step_timer.interval()]
+    while sb._animator._step():
+        intervals.append(sb._animator._step_timer.interval())
 
     # 5 swaps → 4 gaps recorded (interval set after each swap, last gap
     # is irrelevant — timer stops on the converging step).

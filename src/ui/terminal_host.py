@@ -17,17 +17,15 @@ import logging
 import os
 import shutil
 import signal
-from typing import Sequence
+from collections.abc import Sequence
 
-from PySide6.QtCore import QProcess, QTimer, Signal, Qt
+from PySide6.QtCore import QPoint, QProcess, Qt, QTimer, Signal
 from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QWidget
 
+from src.core import x11, xterm_osc
 from src.core.settings import XtermSettings
-from src.core import x11
 from src.core.x11 import XDisplay
-from src.core import xterm_osc
-
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +56,7 @@ class TerminalHost(QWidget):
     cycle_repo_requested = Signal(int)
     # User right-clicked inside the terminal — pass the global position so
     # MainWindow can pop a context menu.
-    context_menu_requested = Signal(object)  # QPoint
+    context_menu_requested = Signal(QPoint)
 
     def __init__(
         self,

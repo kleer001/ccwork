@@ -11,18 +11,10 @@ import shutil
 import tempfile
 
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from PySide6.QtWidgets import QApplication
 
 from src.core.settings import Settings, UISettings, XtermSettings, load_settings
 from src.ui import preferences_dialog as PD
-
-
-@pytest.fixture(scope="session")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def test_three_dark_three_light_exactly() -> None:
@@ -70,7 +62,8 @@ def test_dialog_populates_combo_with_separators(qapp: QApplication) -> None:
 
 
 def test_dialog_scheme_opens_on_matching_name(qapp: QApplication) -> None:
-    s = Settings(xterm=XtermSettings(bg="#282a36", fg="#f8f8f2"))  # Dracula
+    # Dracula bg/fg.
+    s = Settings(xterm=XtermSettings(bg="#282a36", fg="#f8f8f2"))
     dlg = PD.PreferencesDialog(s)
     assert dlg._scheme.currentText() == "Dracula"
 
@@ -92,7 +85,7 @@ def test_dialog_picking_scheme_then_manual_override_flips_to_custom(qapp: QAppli
     dlg = PD.PreferencesDialog(Settings())
     dlg._scheme.setCurrentText("Gruvbox Dark")
     assert dlg._scheme.currentText() == "Gruvbox Dark"
-    dlg._bg.set_value("#123456")  # user picks a new bg
+    dlg._bg.set_value("#123456")
     assert dlg._scheme.currentText() == "Custom"
 
 

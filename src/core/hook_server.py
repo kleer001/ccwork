@@ -21,7 +21,6 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
-
 log = logging.getLogger(__name__)
 
 
@@ -51,8 +50,10 @@ def default_socket_path() -> Path:
 class HookServer(QObject):
     """Listen on a Unix domain socket for JSON-line hook events."""
 
+    # event_received: a parsed hook payload. started: the socket path,
+    # once listening. error: a human-readable failure description.
     event_received = Signal(dict)
-    started = Signal(str)  # emits the socket path once listening
+    started = Signal(str)
     error = Signal(str)
 
     def __init__(self, socket_path: Path | None = None, parent: QObject | None = None) -> None:

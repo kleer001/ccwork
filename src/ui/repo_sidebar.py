@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import os
 import shutil
 import time
@@ -43,8 +42,9 @@ from PySide6.QtWidgets import (
 )
 
 from src.core import repo_store
+from src.core.hook_server import EVENT_NOTIFICATION, EVENT_STOP
 from src.core.repo_store import Repo, RepoStore
-
+from src.ui.arrangement_animator import ArrangementAnimator
 
 # Custom roles — keep the model backed by a single Repo per row plus branch
 # + status. The view's delegate reads these directly. STATUS is one of:
@@ -53,8 +53,8 @@ from src.core.repo_store import Repo, RepoStore
 ROLE_REPO    = Qt.UserRole + 1
 ROLE_BRANCH  = Qt.UserRole + 2
 ROLE_STATUS  = Qt.UserRole + 3
-ROLE_WORKING = Qt.UserRole + 4  # bool — Claude mid-turn in this repo
-ROLE_HAS_TERMINAL = Qt.UserRole + 5  # bool — a TerminalHost exists for this repo this session
+ROLE_WORKING = Qt.UserRole + 4
+ROLE_HAS_TERMINAL = Qt.UserRole + 5
 
 @dataclass(frozen=True)
 class StatusDefinition:
@@ -62,11 +62,14 @@ class StatusDefinition:
 
     `color`/`glyph` of None means the status does not paint in the right-edge
     badge column (it may paint elsewhere, e.g. as a left-edge stripe).
+    `claude_activity` distinguishes Claude-driven statuses (which stamp the
+    auto-arrange recency timestamp) from user-state cues (which do not).
     """
     value: str
     label: str
     color: QColor | None
     glyph: str | None
+    claude_activity: bool = False
 
 
 # Solarized-ish palette: red = needs attention (urgent), green = done (calmer).
@@ -75,12 +78,14 @@ STATUS_DONE_DEF = StatusDefinition(
     label="Claude finished a turn",
     color=QColor(133, 153, 0),
     glyph="✓",
+    claude_activity=True,
 )
 STATUS_ATTENTION_DEF = StatusDefinition(
     value="attention",
     label="Claude needs input",
     color=QColor(220, 50, 47),
     glyph="!",
+    claude_activity=True,
 )
 # `last_focused` paints as a left-edge stripe, not a right-edge badge — so the
 # badge column stays reserved for genuine Claude alerts.
@@ -98,19 +103,16 @@ STATUS_ATTENTION    = STATUS_ATTENTION_DEF.value
 STATUS_LAST_FOCUSED = STATUS_LAST_FOCUSED_DEF.value
 
 STATUS_LABELS = {s.value: s.label for s in _ALL_STATUSES if s.label}
+CLAUDE_ACTIVITY_STATUSES = frozenset(s.value for s in _ALL_STATUSES if s.claude_activity)
 WORKING_LABEL = "Claude is working…"
 
+# Hook event → sidebar status. Hook events that don't map to a status
+# (UserPromptSubmit, RepoAdded) are simply absent.
+EVENT_TO_STATUS = {
+    EVENT_STOP:         STATUS_DONE,
+    EVENT_NOTIFICATION: STATUS_ATTENTION,
+}
 
-def _norm(path: str) -> str:
-    """Canonicalize a path so set-membership checks agree no matter how the
-    path was supplied (trailing slash, symlink, relative segment).
-
-    Used as the single key shape for `_working`. Without this, a hook that
-    reports `/symlink/repo` while the sidebar holds `/real/repo` would
-    silently fail to flip the spinner on — the bug we hit while clicking
-    off a working repo.
-    """
-    return os.path.realpath(path) if path else ""
 
 # Five braille spinner variants. Each repo gets one deterministically
 # (crc32 of repo.id mod len) so the sidebar feels lightly varied without
@@ -123,25 +125,6 @@ SPINNER_VARIANTS: tuple[tuple[str, ...], ...] = (
     ("⠄","⠆","⠇","⠋","⠙","⠸","⠰","⠠","⠰","⠸","⠙","⠋","⠇","⠆"),  # center bounce
 )
 SPINNER_INTERVAL_MS = 100
-
-# Per-tick gap when reordering the sidebar (auto-arrange bubble-up after
-# Claude activity, or terminal-grouping after a deferred regroup). Eased
-# along a sine curve: MAX at the endpoints (slow ease-in to register the
-# motion has started, slow ease-out to settle), MIN in the middle (zip
-# through). Total walk time for ~5 swaps is ~620 ms — close to the old
-# constant 125 ms cadence but with deliberate start/finish texture.
-ARRANGE_STEP_MIN_MS = 80
-ARRANGE_STEP_MAX_MS = 220
-
-# Bubble walks defer until the sidebar has been "quiet" — no mouse
-# movement, click, key, or selection change — for this long. The user is
-# typically typing in their terminal at that point; walks happen during
-# their thinking pauses, not under the cursor while they're picking a
-# repo. XEmbed makes "is the user in the terminal" un-detectable from
-# Qt directly (xterm keystrokes never reach the Qt event loop), so we
-# invert the question: assume "user is engaged with terminal" iff the
-# sidebar has not seen any input for SIDEBAR_QUIET_MS.
-SIDEBAR_QUIET_MS = 800
 
 
 def spinner_for_id(repo_id: str) -> tuple[str, ...]:
@@ -185,18 +168,20 @@ class RepoListModel(QAbstractListModel):
     def __init__(self, store: RepoStore, parent=None) -> None:
         super().__init__(parent)
         self._store = store
+        # _branches and _status broadcast across duplicate rows for the
+        # same path — that's the intended UX (one path, one branch / one
+        # status). They stay path-keyed.
         self._branches: dict[str, str | None] = {}
         self._status: dict[str, str] = {}
+        # _working and _last_activity are per-instance: each duplicate
+        # row tracks its own session state. Keyed by repo.id. Hook
+        # dispatch fans path → ids in `set_working` / `set_status`.
         self._working: set[str] = set()
         # Repo ids whose TerminalHost has been spawned in the current ccwork
         # session. Drives the visual difference between "touched" rows (bold
         # upright) and "untouched" rows (regular italic). Cleared on terminal
         # exit so a closed-then-not-reopened repo reverts to italic.
         self._active_ids: set[str] = set()
-        # Per-repo timestamp of the last Claude-driven event
-        # (Stop / Notification / UserPromptSubmit). Feeds the optional
-        # auto-arrange sort. STATUS_LAST_FOCUSED is user navigation, not
-        # Claude activity, and does not stamp this dict.
         self._last_activity: dict[str, float] = {}
 
     # ── Qt model API ──
@@ -219,14 +204,14 @@ class RepoListModel(QAbstractListModel):
         if role == ROLE_STATUS:
             return self._status.get(repo.path, "")
         if role == ROLE_WORKING:
-            return _norm(repo.path) in self._working
+            return repo.id in self._working
         if role == ROLE_HAS_TERMINAL:
             return repo.id in self._active_ids
         if role == Qt.ToolTipRole:
             # Prepend a human-readable status line so hovering a row tells
             # the user what the badge means without having to memorize the
             # color palette. Path stays as the second line for context.
-            if _norm(repo.path) in self._working:
+            if repo.id in self._working:
                 return f"{WORKING_LABEL}\n{repo.path}"
             label = STATUS_LABELS.get(self._status.get(repo.path, ""))
             if label:
@@ -248,10 +233,7 @@ class RepoListModel(QAbstractListModel):
         return self._store.indices_of(path)
 
     def index_of_id(self, repo_id: str) -> int:
-        for i, r in enumerate(self._store.repos):
-            if r.id == repo_id:
-                return i
-        return -1
+        return self._store.index_of_id(repo_id)
 
     def _emit_changed_for_path(self, path: str, roles: list[int]) -> None:
         """dataChanged for every row matching `path` (for broadcast updates)."""
@@ -272,17 +254,36 @@ class RepoListModel(QAbstractListModel):
             bot = self.index(len(self._store.repos) - 1)
             self.dataChanged.emit(top, bot, [ROLE_BRANCH])
 
+    def refresh_branch(self, path: str) -> None:
+        """Recompute branch subtitle for a single repo. One git call.
+
+        Click handlers use this instead of refresh_branches() so click
+        latency stays O(1) regardless of repo count — at 30+ repos the
+        full sweep was spawning 30+ `git symbolic-ref` subprocesses per
+        click.
+        """
+        new = repo_store.current_branch(path)
+        if self._branches.get(path) == new:
+            return
+        self._branches[path] = new
+        self._emit_changed_for_path(path, [ROLE_BRANCH])
+
     def set_status(self, path: str, status: str) -> None:
         """Set the per-repo status badge ("done", "attention", or "" to clear).
 
         Per-path state — every duplicate row for this path repaints together.
+        Claude-activity statuses also stamp `_last_activity` for every id
+        matching the path (per-id, so the auto-arrange sort can look up by
+        repo.id without re-resolving paths).
         """
         if status:
             self._status[path] = status
         else:
             self._status.pop(path, None)
-        if status in (STATUS_DONE, STATUS_ATTENTION):
-            self._last_activity[path] = time.monotonic()
+        if status in CLAUDE_ACTIVITY_STATUSES:
+            now = time.monotonic()
+            for r in self._store.repos_for_path(path):
+                self._last_activity[r.id] = now
         self._emit_changed_for_path(path, [ROLE_STATUS])
 
     def clear_status(self, path: str) -> None:
@@ -306,23 +307,73 @@ class RepoListModel(QAbstractListModel):
             self.set_status(path, STATUS_LAST_FOCUSED)
 
     def set_working(self, path: str, working: bool) -> None:
-        """Toggle the spinner for `path`. No-op if state already matches.
+        """Toggle the spinner for every duplicate row matching `path`.
 
-        Per-path state — every duplicate row for this path spins together.
+        Hook events arrive cwd-keyed; we fan out to every id sharing that
+        cwd because hooks can't tell duplicates apart by path alone.
+        Per-instance state is keyed by repo.id under the hood — see
+        `set_working_for_id` for single-instance updates (used by
+        terminal-finished cleanup, where we know the exact id).
         """
-        key = _norm(path)
-        was = key in self._working
+        ids = [r.id for r in self._store.repos_for_path(path)]
+        if not ids:
+            return
+        now = time.monotonic()
+        changed = False
+        for repo_id in ids:
+            was = repo_id in self._working
+            if working == was:
+                continue
+            if working:
+                self._working.add(repo_id)
+                self._last_activity[repo_id] = now
+            else:
+                self._working.discard(repo_id)
+            changed = True
+        if changed:
+            self._emit_changed_for_path(path, [ROLE_WORKING])
+
+    def set_working_for_id(self, repo_id: str, working: bool) -> None:
+        """Toggle the spinner for one specific instance.
+
+        Used when the caller knows the exact id (e.g. terminal exit) and
+        wants to leave sibling duplicates' state untouched.
+        """
+        was = repo_id in self._working
         if working == was:
             return
         if working:
-            self._working.add(key)
-            self._last_activity[path] = time.monotonic()
+            self._working.add(repo_id)
+            self._last_activity[repo_id] = time.monotonic()
         else:
-            self._working.discard(key)
-        self._emit_changed_for_path(path, [ROLE_WORKING])
+            self._working.discard(repo_id)
+        row = self.index_of_id(repo_id)
+        if row >= 0:
+            idx = self.index(row)
+            self.dataChanged.emit(idx, idx, [ROLE_WORKING])
+
+    def is_working(self, repo_id: str) -> bool:
+        return repo_id in self._working
 
     def any_working(self) -> bool:
         return bool(self._working)
+
+    def working_rows(self) -> list[int]:
+        """Row indices currently in the working state.
+
+        Used by the spinner repaint loop. The set of working ids is
+        usually 0–2; resolving them to row indices in O(N) is fine
+        because rows don't move during a spin tick. The previous
+        approach iterated *every* row asking ROLE_WORKING — at 50 repos
+        × 10 Hz that was 500 dict-membership checks/sec for nothing.
+        """
+        if not self._working:
+            return []
+        rows: list[int] = []
+        for i, r in enumerate(self._store.repos):
+            if r.id in self._working:
+                rows.append(i)
+        return rows
 
     def set_emoji(self, repo_id: str, emoji: str) -> None:
         """Set or clear the optional leading emoji for one row.
@@ -359,7 +410,33 @@ class RepoListModel(QAbstractListModel):
             self.dataChanged.emit(idx, idx, [ROLE_HAS_TERMINAL])
 
     def last_activity(self, path: str) -> float:
-        return self._last_activity.get(path, 0.0)
+        """Most-recent activity timestamp across every duplicate of `path`.
+
+        Activity is stored per-id; this aggregator preserves the
+        path-based public query the auto-arrange tests use.
+        """
+        ts = 0.0
+        for r in self._store.repos_for_path(path):
+            ts = max(ts, self._last_activity.get(r.id, 0.0))
+        return ts
+
+    # Sort keys consumed by both the instant reorder (`apply_*`) and the
+    # animated preview (`target_order_ids`). Defined here so both code paths
+    # cannot drift.
+    def _activity_key(self, item):
+        i, r = item
+        ts = self._last_activity.get(r.id, 0.0)
+        return (-ts if ts > 0 else float("inf"), i)
+
+    def _grouping_key(self, item):
+        i, r = item
+        return (0 if r.id in self._active_ids else 1, i)
+
+    @staticmethod
+    def _stable_sort(repos: list[Repo], key) -> list[Repo]:
+        indexed = list(enumerate(repos))
+        indexed.sort(key=key)
+        return [r for _, r in indexed]
 
     def apply_auto_arrange(self) -> bool:
         """Reorder _store.repos by Claude-activity recency desc.
@@ -368,11 +445,7 @@ class RepoListModel(QAbstractListModel):
         current relative order (stable). Returns True if the order
         changed. Selection survives via persistent indices.
         """
-        def sort_key(item):
-            i, r = item
-            ts = self._last_activity.get(r.path, 0.0)
-            return (-ts if ts > 0 else float("inf"), i)
-        return self._reorder_by(sort_key)
+        return self._reorder_by(self._activity_key)
 
     def apply_terminal_grouping(self) -> bool:
         """Float repos with a live terminal to the top of the list.
@@ -380,12 +453,7 @@ class RepoListModel(QAbstractListModel):
         Stable within each group: relative order is preserved, so this
         composes cleanly after apply_auto_arrange.
         """
-        active = self._active_ids
-
-        def sort_key(item):
-            i, r = item
-            return (0 if r.id in active else 1, i)
-        return self._reorder_by(sort_key)
+        return self._reorder_by(self._grouping_key)
 
     def target_order_ids(
         self, *, auto_arrange: bool, group_active: bool
@@ -400,21 +468,9 @@ class RepoListModel(QAbstractListModel):
         """
         repos = list(self._store.repos)
         if auto_arrange:
-            def k_act(item):
-                i, r = item
-                ts = self._last_activity.get(r.path, 0.0)
-                return (-ts if ts > 0 else float("inf"), i)
-            indexed = list(enumerate(repos))
-            indexed.sort(key=k_act)
-            repos = [r for _, r in indexed]
+            repos = self._stable_sort(repos, self._activity_key)
         if group_active:
-            active = self._active_ids
-            def k_grp(item):
-                i, r = item
-                return (0 if r.id in active else 1, i)
-            indexed = list(enumerate(repos))
-            indexed.sort(key=k_grp)
-            repos = [r for _, r in indexed]
+            repos = self._stable_sort(repos, self._grouping_key)
         return [r.id for r in repos]
 
     def move_row_up(self, row: int) -> bool:
@@ -515,13 +571,15 @@ class RepoListModel(QAbstractListModel):
                 idx = self.index(i)
                 self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
 
-        # Per-path state stays only while at least one row still uses the
-        # path — drop it once the last duplicate is gone.
+        # Per-id state always drops — the row is gone for good.
+        self._active_ids.discard(repo.id)
+        self._working.discard(repo.id)
+        self._last_activity.pop(repo.id, None)
+        # Path-keyed state stays only while at least one row still uses
+        # the path — drop it once the last duplicate is gone.
         if not self._store.repos_for_path(path):
             self._branches.pop(path, None)
             self._status.pop(path, None)
-            self._working.discard(_norm(path))
-            self._last_activity.pop(path, None)
         self._store.save()
         return True
 
@@ -546,9 +604,9 @@ class RepoDelegate(QStyledItemDelegate):
     # Claude alerts (working / done / attention).
     STATUS_COLORS = {s.value: s.color for s in _ALL_STATUSES if s.color is not None}
     STATUS_GLYPHS = {s.value: s.glyph for s in _ALL_STATUSES if s.glyph is not None}
-    # Muted blue for the working spinner — distinct from the red/green
-    # status dots so glance-state is unambiguous.
-    SPINNER_COLOR = QColor(38, 139, 210)  # solarized blue
+    # Solarized blue — distinct from the red/green status dots so
+    # glance-state is unambiguous.
+    SPINNER_COLOR = QColor(38, 139, 210)
 
     # Base hue for the "last focused" left-edge stripe (solarized violet).
     # Modulated per-theme by _last_focused_stripe_color so it stays subtle.
@@ -753,8 +811,8 @@ class RepoSidebar(QWidget):
 
     repo_selected = Signal(Repo)
     repo_added = Signal(Repo)
-    repo_removed = Signal(Repo)  # emits the removed Repo (id needed to tear down)
-    reload_requested = Signal(Repo)  # user asked to respawn the terminal
+    repo_removed = Signal(Repo)
+    reload_requested = Signal(Repo)
 
     def __init__(self, store: RepoStore, parent=None, settings=None) -> None:
         super().__init__(parent)
@@ -773,41 +831,13 @@ class RepoSidebar(QWidget):
         self._spinner_timer = QTimer(self)
         self._spinner_timer.setInterval(SPINNER_INTERVAL_MS)
         self._spinner_timer.timeout.connect(self._advance_spinner)
-        # Debounced auto-arrange. Restarted on every Claude-driven event
-        # while ui.auto_arrange_repos is True; fires once after 2s of
-        # quiet to avoid reshuffling under the user's eye.
-        self._reorder_timer = QTimer(self)
-        self._reorder_timer.setSingleShot(True)
-        self._reorder_timer.setInterval(2000)
-        self._reorder_timer.timeout.connect(self._apply_auto_arrange)
-        # Quiet-window gate for the bubble walk. The walk fires only when
-        # the sidebar has had no input (mouse, key, selection) for
-        # SIDEBAR_QUIET_MS. While the user is hovering, scrolling, or
-        # picking a repo, _bump_activity() pushes the timestamp forward
-        # and pending walks keep deferring; while they're typing in
-        # xterm, no Qt events reach the sidebar so the timestamp
-        # naturally ages and queued walks fire. _check_pending_walk
-        # re-runs itself on _arrange_check_timer until the quiet
-        # condition is met or the pending state is cleared.
-        # Initial 0.0 lets the very first trigger fire immediately —
-        # there's no genuine sidebar activity at startup.
-        self._last_sidebar_activity = 0.0
-        self._arrange_pending = False
-        self._arrange_check_timer = QTimer(self)
-        self._arrange_check_timer.setSingleShot(True)
-        self._arrange_check_timer.timeout.connect(self._check_pending_walk)
-        # Stepwise bubble-up: each tick swaps one adjacent pair toward the
-        # composed target order (auto-arrange ⊕ grouping, whichever prefs
-        # are on). Self-correcting — if a new active repo or a fresh
-        # activity event arrives mid-animation, the next tick sees the
-        # updated target and keeps walking. Stops when current == target.
-        # Per-tick interval is recomputed by _step_arrange along a sine
-        # ease-in-out curve, so the constructor default is a placeholder.
-        self._arrange_step_timer = QTimer(self)
-        self._arrange_step_timer.setInterval(ARRANGE_STEP_MAX_MS)
-        self._arrange_step_timer.timeout.connect(self._step_arrange)
-        # Resets at every walk start. Drives the easing curve.
-        self._arrange_steps_taken = 0
+        # Reshuffle animation lives in its own object so it can be tested
+        # without a QListView and the sidebar widget can focus on
+        # rendering + selection. The animator owns four timers and the
+        # quiet-window state machine.
+        self._animator = ArrangementAnimator(
+            self._model, lambda: self._settings, parent=self,
+        )
         self._view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._view.setSelectionMode(QAbstractItemView.SingleSelection)
         # Per-row sizeHint: the group-boundary row is taller than the rest
@@ -869,10 +899,13 @@ class RepoSidebar(QWidget):
     def refresh_branches(self) -> None:
         self._model.refresh_branches()
 
+    def refresh_branch(self, path: str) -> None:
+        self._model.refresh_branch(path)
+
     def set_status(self, path: str, status: str) -> None:
         self._model.set_status(path, status)
-        if status in (STATUS_DONE, STATUS_ATTENTION):
-            self._maybe_schedule_reorder()
+        if status in CLAUDE_ACTIVITY_STATUSES:
+            self._animator.schedule_reorder()
 
     def clear_status(self, path: str) -> None:
         self._model.clear_status(path)
@@ -900,23 +933,20 @@ class RepoSidebar(QWidget):
         We deliberately do NOT reshuffle right now: the row whose terminal
         just spawned is the row the user just clicked, and yanking it out
         from under the cursor reads as "the wrong repo got selected." The
-        focus gate (_terminal_focused) defers until the user has actually
-        engaged with a terminal; until then this just queues via
-        _maybe_walk(). Same applies on terminal close.
+        animator's quiet-window gate defers until the user has actually
+        engaged with a terminal; until then this just queues a walk.
+        Same applies on terminal close.
         """
         self._model.set_terminal_active(repo_id, active)
+        # Only the grouping path produces variable-height boundary rows.
+        # When grouping is off, every row is ROW_HEIGHT and sizeHints
+        # don't need re-querying.
+        if self._delegate.group_enabled:
+            self._view.scheduleDelayedItemsLayout()
         if self._settings is not None and getattr(
             self._settings.ui, "group_active_repos", False
         ):
-            self._maybe_walk()
-        # Boundary may have shifted (or the bold/italic font flipped) —
-        # re-query sizeHints. No reorder yet.
-        self._view.scheduleDelayedItemsLayout()
-
-    def _bump_activity(self) -> None:
-        """Mark the sidebar as just-touched. Pushes the quiet-window
-        deadline forward so any pending walk keeps deferring."""
-        self._last_sidebar_activity = time.monotonic()
+            self._animator.request_walk()
 
     # Activity sources we care about. Hover/move catches "cursor is on
     # the sidebar" even without a click, which is the visual state that
@@ -936,7 +966,7 @@ class RepoSidebar(QWidget):
         if event.type() in self._ACTIVITY_EVENTS and (
             obj is self._view or obj is self._view.viewport()
         ):
-            self._bump_activity()
+            self._animator.bump_activity()
         return super().eventFilter(obj, event)
 
     def set_badge_style(self, style: str) -> None:
@@ -950,170 +980,49 @@ class RepoSidebar(QWidget):
 
     def set_working(self, path: str, working: bool) -> None:
         self._model.set_working(path, working)
+        self._refresh_spinner_timer()
+        if working:
+            self._animator.schedule_reorder()
+
+    def set_working_for_id(self, repo_id: str, working: bool) -> None:
+        self._model.set_working_for_id(repo_id, working)
+        self._refresh_spinner_timer()
+        if working:
+            self._animator.schedule_reorder()
+
+    def _refresh_spinner_timer(self) -> None:
         if self._model.any_working():
             if not self._spinner_timer.isActive():
                 self._spinner_timer.start()
         else:
             self._spinner_timer.stop()
-        if working:
-            self._maybe_schedule_reorder()
 
-    def _maybe_schedule_reorder(self) -> None:
-        if self._settings is None:
-            return
-        if not getattr(self._settings.ui, "auto_arrange_repos", False):
-            return
-        # QTimer.start() restarts an active single-shot timer — exactly
-        # the debounce we want.
-        self._reorder_timer.start()
+    def branch_for(self, path: str) -> str | None:
+        """Cached branch name for the first row matching `path`, or None."""
+        row = self._model.index_of(path)
+        if row < 0:
+            return None
+        return self._model.data(self._model.index(row), ROLE_BRANCH)
 
-    def _apply_auto_arrange(self) -> None:
-        # Pref may have flipped off during the 2 s window — bail.
-        if self._settings is None:
-            return
-        if not getattr(self._settings.ui, "auto_arrange_repos", False):
-            return
-        self._maybe_walk()
+    def open_add_dialog(self) -> None:
+        """Public entry-point for the Ctrl+O / + Add Repo flow."""
+        self._on_add_clicked()
 
-    def _maybe_walk(self) -> None:
-        """Start the bubble walk if the sidebar is quiet; else defer.
-
-        Single chokepoint for both auto-arrange and terminal-grouping
-        triggers. The defer-and-recheck loop ensures the walk only runs
-        when the user has been clearly off the sidebar for a moment —
-        typically while typing in their terminal.
-        """
-        self._arrange_pending = True
-        self._check_pending_walk()
-
-    def _check_pending_walk(self) -> None:
-        """Try to fire a pending walk. If the sidebar isn't quiet yet,
-        re-arm the timer for when the quiet window would next elapse.
-        """
-        if not self._arrange_pending:
-            return
-        elapsed_ms = (time.monotonic() - self._last_sidebar_activity) * 1000
-        if elapsed_ms >= SIDEBAR_QUIET_MS:
-            self._arrange_pending = False
-            self._start_arrange_animation()
-            return
-        # Re-check exactly when the quiet window would close, plus a
-        # small buffer so timer jitter can't undershoot.
-        self._arrange_check_timer.start(int(SIDEBAR_QUIET_MS - elapsed_ms) + 10)
-
-    def _start_arrange_animation(self) -> None:
-        """Walk one row toward the target order now, then keep ticking on
-        the timer. No-op if already at target. Idempotent — if the timer
-        is already running, it just keeps going (and naturally absorbs any
-        new target, since each tick recomputes).
-        """
-        if self._arrange_step_timer.isActive():
-            return
-        # New walk — reset the step counter so the easing curve restarts
-        # from the slow-start endpoint.
-        self._arrange_steps_taken = 0
-        # Step once now so the user sees motion immediately, not after a
-        # 220 ms gap (the eye reads "trigger → motion" as causal).
-        if self._step_arrange():
-            self._arrange_step_timer.start()
-
-    def _step_arrange(self) -> bool:
-        """Advance one adjacent swap toward the composed target. Returns
-        True if more work remains; False once converged (and stops timer).
-        """
-        if self._settings is None:
-            self._arrange_step_timer.stop()
-            return False
-        target = self._model.target_order_ids(
-            auto_arrange=bool(getattr(self._settings.ui, "auto_arrange_repos", False)),
-            group_active=bool(getattr(self._settings.ui, "group_active_repos", False)),
-        )
-        current = [
-            self._model.repo_at(i).id for i in range(self._model.rowCount())
-        ]
-        if current == target:
-            self._arrange_step_timer.stop()
-            return False
-        for i, (cur_id, tgt_id) in enumerate(zip(current, target)):
-            if cur_id == tgt_id:
-                continue
-            # The id that *should* sit at row i is currently lower; bubble
-            # it up by one. Topmost mismatch wins so rows settle from the
-            # top down — visually, the highest-priority repo finishes
-            # first, then the next, etc.
-            src_row = current.index(tgt_id)
-            self._model.move_row_up(src_row)
-            self._arrange_steps_taken += 1
-            self._arrange_step_timer.setInterval(self._next_step_interval(target))
-            return True
-        self._arrange_step_timer.stop()
-        return False
-
-    def _next_step_interval(self, target: list[str]) -> int:
-        """Sine ease-in-out cadence between swaps.
-
-        After each swap we estimate total = swaps_done + remaining_swaps,
-        then map the gap-to-next-swap onto sin(pi · x). x = 0 (first gap)
-        and x = 1 (last gap) both give MAX (slow); x = 0.5 gives MIN
-        (fast middle). The estimate floats — if a new active repo arrives
-        mid-walk, total grows and the curve smoothly extends rather than
-        snapping to a new ramp.
-        """
-        remaining = self._simulate_remaining_swaps(target)
-        total = self._arrange_steps_taken + remaining
-        if total <= 2:
-            # 1 or 2 swaps total: too few for a meaningful curve. Slow &
-            # deliberate reads better than abrupt.
-            return ARRANGE_STEP_MAX_MS
-        gap_index = self._arrange_steps_taken - 1  # gap that follows this swap
-        last_gap_index = total - 2
-        # Clamp at 1.0: on the converging swap, gap_index can momentarily
-        # exceed last_gap_index (the timer is about to be stopped anyway).
-        x = min(1.0, gap_index / last_gap_index)
-        eased = math.sin(math.pi * x)  # 0 at endpoints, 1 in middle
-        # round (not int) to absorb sin(π) ≈ 1.22e-16 float drift at the
-        # x=1.0 endpoint — int() would truncate to MAX-1 instead of MAX.
-        return round(
-            ARRANGE_STEP_MAX_MS - (ARRANGE_STEP_MAX_MS - ARRANGE_STEP_MIN_MS) * eased
-        )
-
-    def _simulate_remaining_swaps(self, target: list[str]) -> int:
-        """Replay the bubble-up algorithm on a copy of the current order
-        and count swaps until convergence. A simple mismatch count over-
-        estimates: when one id bubbles past several others, every row in
-        between is "wrong" right now but resolves implicitly. The sim
-        gives the exact number of move_row_up calls remaining.
-        """
-        current = [
-            self._model.repo_at(j).id for j in range(self._model.rowCount())
-        ]
-        swaps = 0
-        while current != target:
-            for i, (c, t) in enumerate(zip(current, target)):
-                if c == t:
-                    continue
-                src = current.index(t)
-                current[src - 1], current[src] = current[src], current[src - 1]
-                swaps += 1
-                break
-            else:
-                break  # nothing to swap (shouldn't happen if current != target)
-        return swaps
+    def confirm_reload(self, repo: Repo) -> None:
+        """Public entry-point for the terminal-context-menu reload flow."""
+        self._confirm_reload(repo)
 
     def _advance_spinner(self) -> None:
         self._delegate.spinner_frame += 1
-        # Repaint only rows that are currently working.
-        for row in range(self._model.rowCount()):
-            idx = self._model.index(row)
-            if idx.data(ROLE_WORKING):
-                self._view.update(idx)
+        for row in self._model.working_rows():
+            self._view.update(self._model.index(row))
 
     # ── signals ──
 
     def _on_current_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
         # Selection change is a strong "user is on the sidebar" signal —
         # arguably stronger than mouse hover. Push the quiet deadline.
-        self._bump_activity()
+        self._animator.bump_activity()
         # Mark the row we're leaving as "last focused" so the user can spot
         # where they were before. Subject to priority rules in
         # RepoListModel.set_last_focused — won't overwrite Stop/Notification.
@@ -1130,15 +1039,11 @@ class RepoSidebar(QWidget):
         if not path:
             return
         added = self._model.add_repo(path)
-        # Select the just-added row by id (path may be ambiguous now that
-        # duplicates are allowed).
-        row = self._model.index_of_id(added.id)
-        if row >= 0:
-            self._view.setCurrentIndex(self._model.index(row))
+        self.select_id(added.id)
         self.repo_added.emit(added)
 
     def _on_context_menu(self, pos: QPoint) -> None:
-        self._bump_activity()
+        self._animator.bump_activity()
         idx = self._view.indexAt(pos)
         if not idx.isValid():
             return

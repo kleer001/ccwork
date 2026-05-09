@@ -11,18 +11,10 @@ import os
 from pathlib import Path
 
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from PySide6.QtWidgets import QApplication
 
 from src.core.repo_store import Repo, RepoStore
 from src.ui.repo_sidebar import ROLE_HAS_TERMINAL, RepoListModel
-
-
-@pytest.fixture(scope="session")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _store_with_duplicates(path: str, cfg_path: Path) -> RepoStore:
@@ -80,5 +72,5 @@ def test_unknown_id_is_noop(qapp: QApplication, tmp_path: Path) -> None:
     just removed) must not raise — it just no-ops."""
     store = RepoStore(config_path=tmp_path / "repos.json")
     model = RepoListModel(store)
-    model.set_terminal_active("nonexistent", True)  # must not raise
+    model.set_terminal_active("nonexistent", True)
     model.set_terminal_active("nonexistent", False)

@@ -16,7 +16,8 @@ def _split_on_dash_e(argv: list[str]) -> tuple[list[str], list[str]]:
 
 def test_drops_into_interactive_bash_with_rcfile(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SHELL", "/bin/bash")
-    spec = terminal_session.build_session(Repo(path="/fake/repo"))
+    repo = Repo(path="/fake/repo")
+    spec = terminal_session.build_session(repo)
     flags, inner = _split_on_dash_e(spec.argv)
     # Bash gets --rcfile bin/ccwork-bashrc so the claude wrapper wins on PATH.
     assert inner[0] == "/bin/bash"
@@ -24,8 +25,9 @@ def test_drops_into_interactive_bash_with_rcfile(monkeypatch: pytest.MonkeyPatch
     rc_idx = inner.index("--rcfile")
     assert inner[rc_idx + 1].endswith("/bin/ccwork-bashrc")
     assert inner[-1] == "-i"
-    assert "-fs" in flags  # settings flags are prepended before -e
-    assert spec.env == {"CCWORK_GUI": "1"}
+    # Settings flags are prepended before -e.
+    assert "-fs" in flags
+    assert spec.env == {"CCWORK_GUI": "1", "CCWORK_REPO_ID": repo.id}
     assert spec.cwd == "/fake/repo"
 
 
@@ -58,5 +60,7 @@ def test_settings_flags_are_applied() -> None:
 
 
 def test_gui_marker_toggleable() -> None:
-    spec = terminal_session.build_session(Repo(path="/fake/repo"), gui_marker=False)
-    assert spec.env == {}
+    repo = Repo(path="/fake/repo")
+    spec = terminal_session.build_session(repo, gui_marker=False)
+    # CCWORK_REPO_ID always stamps — only CCWORK_GUI is gated.
+    assert spec.env == {"CCWORK_REPO_ID": repo.id}

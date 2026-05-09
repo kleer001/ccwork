@@ -167,6 +167,61 @@ def test_ui_settings_max_width_enforced_on_load(tmp_path: Path) -> None:
     assert loaded.ui.sidebar_width <= 600
 
 
+def test_load_treats_files_without_version_as_v1(tmp_path: Path) -> None:
+    """Files predating the version field load cleanly as v1 — no warning,
+    no defaults-fallback, all values preserved."""
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps({
+        # No "version" key — pre-migration file shape.
+        "xterm": {"font_size": 14},
+        "ui": {"sidebar_width": 200},
+    }))
+    s = S.load_settings(p)
+    assert s.xterm.font_size == 14
+    assert s.ui.sidebar_width == 200
+
+
+def test_load_runs_migrations_in_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A registered migration is applied to bring older files up to current."""
+    # Pretend the schema is at v2 and a v1→v2 migration exists.
+    monkeypatch.setattr(S, "SCHEMA_VERSION", 2)
+    calls: list[int] = []
+
+    def v1_to_v2(d: dict) -> dict:
+        calls.append(1)
+        # Hypothetical rename: ui.sidebar_width → ui.width
+        ui = d.setdefault("ui", {})
+        if "sidebar_width" in ui:
+            ui["width"] = ui.pop("sidebar_width")
+        return d
+
+    monkeypatch.setitem(S._MIGRATIONS, 1, v1_to_v2)
+
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps({
+        "version": 1,
+        "ui": {"sidebar_width": 250},
+    }))
+    S.load_settings(p)
+    assert calls == [1]
+
+
+def test_load_skips_migrations_when_already_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A v2 file under SCHEMA_VERSION=2 should not invoke the v1→v2 migration."""
+    monkeypatch.setattr(S, "SCHEMA_VERSION", 2)
+    calls: list[int] = []
+    monkeypatch.setitem(S._MIGRATIONS, 1, lambda d: (calls.append(1) or d))
+
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps({"version": 2, "ui": {}}))
+    S.load_settings(p)
+    assert calls == []
+
+
 def test_write_default_settings_file_creates_once(tmp_path: Path) -> None:
     p = tmp_path / "s.json"
     S.write_default_settings_file(p)

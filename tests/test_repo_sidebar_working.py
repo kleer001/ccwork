@@ -14,18 +14,10 @@ import os
 from pathlib import Path
 
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from PySide6.QtWidgets import QApplication
 
 from src.core.repo_store import Repo, RepoStore
 from src.ui.repo_sidebar import ROLE_WORKING, RepoListModel
-
-
-@pytest.fixture(scope="session")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _store_with(repo_path: str, cfg_path: Path) -> RepoStore:
