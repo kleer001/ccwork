@@ -67,25 +67,41 @@ notifications" preference (single source of truth:
   is therefore off — the boundary row's `sizeHint` is taller. Grouping
   composes with auto-arrange: it's applied after the activity sort, so
   "has terminal" wins over recency.
-  **Reshuffle is deferred *and* animated:** `RepoSidebar.set_terminal_active`
-  does not reorder immediately — it sets `_regroup_pending` and lets the
-  *next* selection change trigger `_start_arrange_animation()` (consumed
-  at the start of `_on_current_changed`, before `repo_selected.emit`).
-  Otherwise the row the user just clicked yanks out from under the cursor,
-  which reads as "the wrong repo got selected" even though persistent
-  indexes preserve the logical selection. **Both** reshuffles — the
-  terminal-grouping one *and* the activity-driven auto-arrange (fired
-  after a 2 s debounce on Claude hook traffic) — go through the same
-  stepper: `_step_arrange` walks the row up one neighbor at a time on a
-  `ARRANGE_STEP_MS` (125 ms) `QTimer`, each tick recomputing the
-  composed target via `RepoListModel.target_order_ids(auto_arrange=,
-  group_active=)` and bubbling the topmost-mismatched id by one position
-  via `RepoListModel.move_row_up` (single `beginMoveRows`/`endMoveRows`).
-  Recomputing each tick makes the walk self-correcting — a new active
-  repo or fresh activity event arriving mid-animation just falls in line
-  on the next step. `apply_terminal_grouping()` and `apply_auto_arrange()`
-  (instant) are still used when toggling the preference on, where
-  animation would feel laggy after the dialog closes.
+  **Reshuffle is quiet-gated *and* animated:** both reshuffle paths —
+  terminal-grouping on `set_terminal_active` and the activity-driven
+  auto-arrange (fired after a 2 s debounce on Claude hook traffic) —
+  funnel through `_maybe_walk()`, which sets `_arrange_pending=True` and
+  calls `_check_pending_walk()`. The walk fires only when the sidebar
+  has had no input — mouse hover, click, key, scroll, or selection
+  change — for `SIDEBAR_QUIET_MS` (800 ms); otherwise the check
+  re-arms an `_arrange_check_timer` for when the quiet window would
+  next elapse. `_bump_activity()` pushes the timestamp forward; it's
+  called from `eventFilter` (hooked on `_view` and its viewport for
+  `MouseMove`/`HoverMove`/`MouseButtonPress`/`Enter`/`KeyPress`/`Wheel`/
+  `FocusIn`), `_on_current_changed`, and `_on_context_menu`. We invert
+  the question "is the user in the terminal?" because XEmbed makes
+  *that* unanswerable from Qt — xterm keystrokes never reach the Qt
+  event loop, and the programmatic `XSetInputFocus` inside
+  `host.focus_child()` doesn't fire `QApplication.focusChanged`. But
+  "is the sidebar quiet?" is fully observable Qt-side, and
+  user-typing-in-xterm produces no Qt sidebar events, so the proxy is
+  reliable.
+  Once a walk starts, `_step_arrange` bubbles the topmost-mismatched id
+  up by one position per tick via `RepoListModel.move_row_up` (single
+  `beginMoveRows`/`endMoveRows`), recomputing the composed target each
+  tick via `RepoListModel.target_order_ids(auto_arrange=,
+  group_active=)`. Recomputing each tick makes the walk self-correcting
+  — a new active repo or fresh activity event arriving mid-animation
+  falls in line on the next step. The per-tick interval follows a sine
+  ease-in-out: `ARRANGE_STEP_MAX_MS` (220 ms) at the first and last
+  gaps, `ARRANGE_STEP_MIN_MS` (80 ms) in the middle. `total` is
+  recomputed each tick by replaying the bubble algorithm in
+  `_simulate_remaining_swaps` — a plain mismatch count overestimates
+  when one id bubbles past several others (every row in between reads
+  as "wrong" right now but resolves implicitly).
+  `apply_terminal_grouping()` and `apply_auto_arrange()` (instant) are
+  still used when toggling the preference on, where animation would
+  feel laggy after the dialog closes.
   The working spinner uses one of five braille variants in
   `SPINNER_VARIANTS`, picked per `repo.id` via `spinner_for_id()`
   (`zlib.crc32` so the choice is stable across launches — Python's built-in

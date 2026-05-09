@@ -118,26 +118,32 @@ def test_set_terminal_active_does_not_reshuffle_immediately(
     assert sb._model._store.repos[3].path == "/d"
 
 
-def test_pending_regroup_fires_on_next_selection_change(
+def test_pending_regroup_fires_after_sidebar_quiet(
     qapp: QApplication, tmp_path: Path
 ) -> None:
+    """Reshuffle waits until the sidebar has been quiet — clicking around
+    in the sidebar keeps the walk deferred.
+    """
     sb = _sidebar_with(
         ["/a", "/b", "/c", "/d"], tmp_path / "repos.json", group=True
     )
     ids = [r.id for r in sb._model._store.repos]
 
-    # User clicks /d; terminal spawns; reshuffle is deferred.
+    # User clicks /d; terminal spawns; reshuffle is deferred (selection
+    # change just bumped the activity timestamp).
     sb._view.setCurrentIndex(sb._model.index(3))
     sb.set_terminal_active(ids[3], True)
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/d"]
+    assert sb._arrange_pending is True
 
-    # User clicks /b. The deferred regroup fires at the start of the
-    # selection-change handler — bubble-up animation kicks off with one
-    # immediate step; /b selection follows the row.
+    # User clicks /b — still on the sidebar, gate stays closed.
     sb._view.setCurrentIndex(sb._model.index(1))
-    # First step has already swapped /c and /d.
+    assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/d"]
+
+    # Sidebar goes quiet (test stand-in for the user typing in xterm).
+    sb._last_sidebar_activity = 0.0
+    sb._check_pending_walk()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/d", "/c"]
-    # Drive the animation to completion (stops itself when converged).
     while sb._step_arrange():
         pass
     assert sb._model._store.repos[0].path == "/d"
@@ -157,9 +163,11 @@ def test_grouping_animation_walks_one_swap_per_step(
     # /e becomes active; nothing reshuffles yet.
     sb._view.setCurrentIndex(sb._model.index(4))
     sb.set_terminal_active(ids[4], True)
-    sb._view.setCurrentIndex(sb._model.index(0))  # consume _regroup_pending
+    sb._view.setCurrentIndex(sb._model.index(0))
+    sb._last_sidebar_activity = 0.0
+    sb._check_pending_walk()  # quiet → fires the deferred walk
 
-    # Selection-change ran one immediate step → /e is now at row 3.
+    # Gate-open ran one immediate step → /e is now at row 3.
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/e", "/d"]
     sb._step_arrange()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/e", "/c", "/d"]
@@ -182,10 +190,12 @@ def test_grouping_animation_picks_up_new_active_mid_walk(
     )
     ids = [r.id for r in sb._model._store.repos]
 
-    # /e active → click off → first step taken.
+    # /e active → sidebar quiet → first step taken.
     sb._view.setCurrentIndex(sb._model.index(4))
     sb.set_terminal_active(ids[4], True)
     sb._view.setCurrentIndex(sb._model.index(0))
+    sb._last_sidebar_activity = 0.0
+    sb._check_pending_walk()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/e", "/d"]
 
     # Mid-walk: /c also becomes active. Target now wants both /c and /e on top.
@@ -225,7 +235,9 @@ def test_auto_arrange_uses_bubble_animation(
     # /d gets fresh activity — auto-arrange wants it at row 0.
     sb._model.set_status("/d", STATUS_DONE)
 
-    # Fire the debounce-end handler directly (skip the 2 s wait).
+    # Sidebar is quiet by default at construction (_last_sidebar_activity
+    # initialized to 0.0). Fire the debounce-end handler directly (skip
+    # the 2 s wait). _maybe_walk sees a wide-open quiet window and runs.
     sb._apply_auto_arrange()
     # First step ran inside _start_arrange_animation: /d moved from 3 → 2.
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/d", "/c"]
@@ -234,3 +246,69 @@ def test_auto_arrange_uses_bubble_animation(
     sb._step_arrange()
     assert [r.path for r in sb._model._store.repos] == ["/d", "/a", "/b", "/c"]
     assert sb._step_arrange() is False
+
+
+def test_walk_defers_while_sidebar_active(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """Auto-arrange must not reshuffle while the sidebar is being touched
+    — only after a quiet window stand-in for 'user is typing in xterm.'
+    """
+    import time as _t
+
+    cfg = tmp_path / "repos.json"
+    store = RepoStore(config_path=cfg)
+    settings = Settings(
+        ui=UISettings(group_active_repos=False, auto_arrange_repos=True)
+    )
+    sb = RepoSidebar(store, settings=settings)
+    sb._model.beginResetModel()
+    store.repos = [Repo(path=p) for p in ["/a", "/b", "/c", "/d"]]
+    sb._model.endResetModel()
+
+    sb._model.set_status("/d", STATUS_DONE)
+
+    # Pretend the user just touched the sidebar (recent activity).
+    sb._last_sidebar_activity = _t.monotonic()
+    sb._apply_auto_arrange()
+    assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/d"]
+    assert sb._arrange_pending is True
+    assert sb._arrange_step_timer.isActive() is False
+
+    # Sidebar goes quiet. The next check fires the walk.
+    sb._last_sidebar_activity = 0.0
+    sb._check_pending_walk()
+    assert sb._arrange_pending is False
+    assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/d", "/c"]
+
+
+def test_step_interval_eases_in_and_out(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """First and last gaps should be slow (MAX); middle gaps fast (MIN-ish)."""
+    from src.ui.repo_sidebar import ARRANGE_STEP_MAX_MS, ARRANGE_STEP_MIN_MS
+
+    cfg = tmp_path / "repos.json"
+    store = RepoStore(config_path=cfg)
+    settings = Settings(
+        ui=UISettings(group_active_repos=False, auto_arrange_repos=True)
+    )
+    sb = RepoSidebar(store, settings=settings)
+    sb._model.beginResetModel()
+    # 6 repos with /f having the freshest activity → 5-swap walk.
+    store.repos = [Repo(path=p) for p in ["/a", "/b", "/c", "/d", "/e", "/f"]]
+    sb._model.endResetModel()
+    sb._model.set_status("/f", STATUS_DONE)
+
+    sb._apply_auto_arrange()
+    intervals = [sb._arrange_step_timer.interval()]
+    while sb._step_arrange():
+        intervals.append(sb._arrange_step_timer.interval())
+
+    # 5 swaps → 4 gaps recorded (interval set after each swap, last gap
+    # is irrelevant — timer stops on the converging step).
+    # Endpoints reach MAX; middle is strictly faster than the endpoints.
+    assert intervals[0] == ARRANGE_STEP_MAX_MS  # gap after swap 1
+    assert intervals[-2] == ARRANGE_STEP_MAX_MS  # gap after second-to-last swap
+    middle = intervals[1:-2]
+    assert all(ARRANGE_STEP_MIN_MS <= i < ARRANGE_STEP_MAX_MS for i in middle)

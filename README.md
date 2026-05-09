@@ -83,9 +83,11 @@ Open with the gear button or `Ctrl+,`. Settings persist to
 - **Auto-arrange repos by recent Claude activity** — when on, the sidebar
   reorders itself so repos with the most recent Stop / Notification /
   UserPromptSubmit events sit on top. Reorder is debounced ~2 s after the
-  last event so rows don't shift while you're reading them, then the row
-  bubbles up one neighbor at a time (~125 ms per swap) instead of
-  teleporting. The violet "last focused" dot is user navigation, not
+  last event, and waits another ~800 ms after you stop touching the
+  sidebar (hover, click, scroll, selection) so rows don't shift under
+  your cursor. Once it fires, the row bubbles up one neighbor at a
+  time on a sine ease-in-out cadence (slow start, fast middle, slow
+  settle). The violet "last focused" dot is user navigation, not
   Claude activity, and never feeds the sort.
 
 Sidebar width isn't in the dialog — drag the splitter; the new width

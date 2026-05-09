@@ -35,8 +35,9 @@ xorg or XWayland; X11 session preferred):
       Preferences "Show desktop notifications" checkbox flips to match
       and notify-send is suppressed when muted.
 - [ ] Enable "Auto-arrange repos by recent Claude activity" with two or
-      more repos; trigger Stop in the lower repo and confirm it floats
-      to the top ~2 s later.
+      more repos; trigger Stop in the lower repo, then stop touching the
+      sidebar — the row should bubble up to the top within ~3 s
+      (2 s debounce + 0.8 s sidebar-quiet window).
 - [ ] `Ctrl+O` the same repo twice — confirm rows show `(I)` and `(II)`,
       each with its own terminal. Remove `(II)`; the survivor's suffix
       should disappear. Restart the app and confirm both ids round-trip
