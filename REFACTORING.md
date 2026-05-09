@@ -313,17 +313,45 @@ Touches: `src/main.py`, `src/ui/terminal_host.py`, `src/core/x11.py`.
 
 ### 7.1 [S] Replace XEmbed with a cross-platform terminal widget
 
-**Files:** `src/ui/terminal_host.py`, `src/core/x11.py`,
-`src/main.py:wayland-detection`
+**Status:** multi-PR project, not a single change. Realistic
+effort is 1–4 weeks depending on widget choice. See
+`docs/roadmap-cross-platform.md` for the full breakdown.
 
-Already mapped out in `docs/roadmap-cross-platform.md`. The XEmbed
-+ `xterm -into` approach is fundamentally Linux/X11-only.
+**Files (eventual):** `src/ui/terminal_host.py`, `src/core/x11.py`,
+`src/core/xterm_osc.py`, `src/main.py` (Wayland-detection block).
 
-**Change:** Replace with QTermWidget (maintained Qt terminal widget)
-or libvte via PyGObject. Drop `src/core/x11.py`.
+**Why it's not a single PR:**
+- Widget choice is a UX/legal decision (QTermWidget = mature but GPL,
+  termqt = MIT/single-maintainer/unverified TUI fidelity for Claude's
+  alt-screen UI, libvte via PyGObject = Linux-only, embed-an-emulator
+  via pyte = full custom renderer).
+- Once chosen, the dep adds either a compile-time toolchain
+  (`shiboken6`/C++ stub) or a new pure-Python renderer.
+- Wayland/macOS/Windows test environments are needed to verify each
+  before merge.
 
-**Why:** Unlocks Wayland, macOS, Windows. Largest item on this list
-by effort, but also the only one that opens new platforms.
+**First step (landed):**
+- `src/ui/terminal_host_protocol.py` defines `TerminalHostLike` — the
+  surface `TerminalLifecycle` and `MainWindow` consume from a host
+  (start, stop, is_running, focus_child, apply_live_settings,
+  paste_text). The current `TerminalHost` satisfies it structurally;
+  a future implementation can be slotted behind a factory.
+- `TerminalLifecycle` already exists (item 1.3) so the lifecycle
+  bookkeeping won't need to change when the host swaps.
+
+**Second step (future PR):**
+- Pick a widget. Soak-test against Claude Code's alt-screen UI in a
+  branch.
+- Inject the host class into `TerminalLifecycle` as a factory
+  parameter; MainWindow chooses based on settings (`xterm` vs
+  `termqt` vs …).
+
+**Third step (future PR):**
+- Wayland-native cleanup: drop the `QT_QPA_PLATFORM=xcb` force in
+  `src/main.py`; delete `src/core/x11.py` once XEmbed is gone.
+
+**Why bother:** unlocks Wayland-native, macOS, Windows. Largest item
+on this list, but the only one that opens new platforms.
 
 ---
 
