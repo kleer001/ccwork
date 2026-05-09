@@ -31,6 +31,30 @@ from typing import Iterator
 SCHEMA_VERSION = 1
 
 
+# Migration chain. Each function takes a dict at version N and returns
+# the dict at version N+1. Empty today; the seam exists so future
+# changes to repos.json (renames, restructures) are explicit instead
+# of relying on the load loop's silent default-application.
+_MIGRATIONS: dict[int, "object"] = {}
+
+
+def _migrate_repos(data: dict, from_version: int) -> dict:
+    import logging
+    log = logging.getLogger(__name__)
+    v = from_version
+    while v < SCHEMA_VERSION:
+        fn = _MIGRATIONS.get(v)
+        if fn is None:
+            log.warning(
+                "repos: no migration from v%d to v%d — leaving as-is",
+                v, v + 1,
+            )
+            break
+        data = fn(data)  # type: ignore[operator]
+        v += 1
+    return data
+
+
 def normalize_path(path: str) -> str:
     """Canonicalize a path so set/dict membership agrees regardless of how
     the path was supplied (trailing slash, symlink, relative segment).
@@ -136,6 +160,17 @@ class RepoStore:
             return
         if not isinstance(data, dict):
             raise ValueError(f"{self.config_path}: expected object, got {type(data).__name__}")
+        # Schema migration: bring older on-disk shapes up to current.
+        raw_version = data.get("version", 1)
+        file_version = raw_version if isinstance(raw_version, int) else 1
+        if file_version < SCHEMA_VERSION:
+            data = _migrate_repos(data, file_version)
+        elif file_version > SCHEMA_VERSION:
+            import logging
+            logging.getLogger(__name__).warning(
+                "%s: schema v%d is newer than this build's v%d — best-effort load",
+                self.config_path, file_version, SCHEMA_VERSION,
+            )
         repos_raw = data.get("repos", [])
         if not isinstance(repos_raw, list):
             raise ValueError(f"{self.config_path}: 'repos' must be a list")

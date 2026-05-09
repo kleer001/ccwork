@@ -43,6 +43,38 @@ log = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 
 
+# Migration chain. Each function takes a dict at version N and returns
+# the dict at version N+1. Empty for now — the seam exists so future
+# field renames/splits/removals are explicit and reviewable, instead of
+# relying on `_raw` round-tripping plus default-application to silently
+# absorb the change.
+#
+# Future example:
+#     def _v1_to_v2(d: dict) -> dict:
+#         """Split ui.sidebar_width into ui.sidebar.{width, side}."""
+#         ui = d.get("ui", {})
+#         ui["sidebar"] = {"width": ui.pop("sidebar_width", 240), ...}
+#         return d
+#     _MIGRATIONS = {1: _v1_to_v2}
+_MIGRATIONS: dict[int, "Callable[[dict[str, Any]], dict[str, Any]]"] = {}
+
+
+def _migrate(data: dict[str, Any], from_version: int) -> dict[str, Any]:
+    """Apply the migration chain from `from_version` up to SCHEMA_VERSION."""
+    v = from_version
+    while v < SCHEMA_VERSION:
+        fn = _MIGRATIONS.get(v)
+        if fn is None:
+            log.warning(
+                "settings: no migration from v%d to v%d — leaving as-is",
+                v, v + 1,
+            )
+            break
+        data = fn(data)
+        v += 1
+    return data
+
+
 def default_settings_path() -> Path:
     xdg = os.environ.get("XDG_CONFIG_HOME")
     base = Path(xdg) if xdg else Path.home() / ".config"
@@ -159,6 +191,20 @@ def load_settings(path: Path | None = None) -> Settings:
     if not isinstance(data, dict):
         log.warning("%s: expected object, got %s — using defaults", p, type(data).__name__)
         return Settings()
+
+    # Schema migration: bring older on-disk shapes up to SCHEMA_VERSION
+    # before the field-by-field unpacking below. Files predating the
+    # version field are treated as v1 (the schema before any rename
+    # ever happened).
+    raw_version = data.get("version", 1)
+    file_version = raw_version if isinstance(raw_version, int) else 1
+    if file_version < SCHEMA_VERSION:
+        data = _migrate(data, file_version)
+    elif file_version > SCHEMA_VERSION:
+        log.warning(
+            "%s: schema v%d is newer than this build's v%d — best-effort load",
+            p, file_version, SCHEMA_VERSION,
+        )
 
     x_raw = data.get("xterm", {}) if isinstance(data.get("xterm"), dict) else {}
     defaults = XtermSettings()
