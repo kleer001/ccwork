@@ -424,8 +424,10 @@ class MainWindow(QMainWindow):
     # ── slots ──
 
     def _on_repo_selected(self, repo: Repo) -> None:
-        # Refresh branches first so the title gets a fresh subtitle on click.
-        self._sidebar.refresh_branches()
+        # Single-repo branch refresh — click latency stays O(1) regardless
+        # of repo count. A periodic sweep (focusWindowChanged below) keeps
+        # the rest of the list fresh.
+        self._sidebar.refresh_branch(repo.path)
         self._title.set_repo(repo.display_name, self._branch_for(repo.path))
         host = self._lifecycle.ensure(repo)
         host.focus_child()
@@ -454,6 +456,10 @@ class MainWindow(QMainWindow):
             current = self._stack.currentWidget()
             if isinstance(current, TerminalHost):
                 QTimer.singleShot(0, current.focus_child)
+            # Full branch sweep on window focus. Per-repo selections only
+            # refresh the clicked branch, so this picks up branch
+            # switches the user did off-screen while ccwork was idle.
+            QTimer.singleShot(0, self._sidebar.refresh_branches)
 
     def _branch_for(self, path: str) -> str | None:
         return self._sidebar.branch_for(path)

@@ -255,6 +255,20 @@ class RepoListModel(QAbstractListModel):
             bot = self.index(len(self._store.repos) - 1)
             self.dataChanged.emit(top, bot, [ROLE_BRANCH])
 
+    def refresh_branch(self, path: str) -> None:
+        """Recompute branch subtitle for a single repo. One git call.
+
+        Click handlers use this instead of refresh_branches() so click
+        latency stays O(1) regardless of repo count — at 30+ repos the
+        full sweep was spawning 30+ `git symbolic-ref` subprocesses per
+        click.
+        """
+        new = repo_store.current_branch(path)
+        if self._branches.get(path) == new:
+            return
+        self._branches[path] = new
+        self._emit_changed_for_path(path, [ROLE_BRANCH])
+
     def set_status(self, path: str, status: str) -> None:
         """Set the per-repo status badge ("done", "attention", or "" to clear).
 
@@ -344,6 +358,23 @@ class RepoListModel(QAbstractListModel):
 
     def any_working(self) -> bool:
         return bool(self._working)
+
+    def working_rows(self) -> list[int]:
+        """Row indices currently in the working state.
+
+        Used by the spinner repaint loop. The set of working ids is
+        usually 0–2; resolving them to row indices in O(N) is fine
+        because rows don't move during a spin tick. The previous
+        approach iterated *every* row asking ROLE_WORKING — at 50 repos
+        × 10 Hz that was 500 dict-membership checks/sec for nothing.
+        """
+        if not self._working:
+            return []
+        rows: list[int] = []
+        for i, r in enumerate(self._store.repos):
+            if r.id in self._working:
+                rows.append(i)
+        return rows
 
     def set_emoji(self, repo_id: str, emoji: str) -> None:
         """Set or clear the optional leading emoji for one row.
@@ -869,6 +900,9 @@ class RepoSidebar(QWidget):
     def refresh_branches(self) -> None:
         self._model.refresh_branches()
 
+    def refresh_branch(self, path: str) -> None:
+        self._model.refresh_branch(path)
+
     def set_status(self, path: str, status: str) -> None:
         self._model.set_status(path, status)
         if status in CLAUDE_ACTIVITY_STATUSES:
@@ -905,13 +939,15 @@ class RepoSidebar(QWidget):
         Same applies on terminal close.
         """
         self._model.set_terminal_active(repo_id, active)
+        # Only the grouping path produces variable-height boundary rows.
+        # When grouping is off, every row is ROW_HEIGHT and sizeHints
+        # don't need re-querying.
+        if self._delegate.group_enabled:
+            self._view.scheduleDelayedItemsLayout()
         if self._settings is not None and getattr(
             self._settings.ui, "group_active_repos", False
         ):
             self._animator.request_walk()
-        # Boundary may have shifted (or the bold/italic font flipped) —
-        # re-query sizeHints. No reorder yet.
-        self._view.scheduleDelayedItemsLayout()
 
     # Activity sources we care about. Hover/move catches "cursor is on
     # the sidebar" even without a click, which is the visual state that
@@ -979,11 +1015,8 @@ class RepoSidebar(QWidget):
 
     def _advance_spinner(self) -> None:
         self._delegate.spinner_frame += 1
-        # Repaint only rows that are currently working.
-        for row in range(self._model.rowCount()):
-            idx = self._model.index(row)
-            if idx.data(ROLE_WORKING):
-                self._view.update(idx)
+        for row in self._model.working_rows():
+            self._view.update(self._model.index(row))
 
     # ── signals ──
 

@@ -116,22 +116,20 @@ trivially unit-testable without a `QApplication`.
 **Why:** SRP. Animation logic gains its own test file. Sidebar
 shrinks meaningfully.
 
-### 2.2 [S] Split `RepoListModel` from arrangement policy
+### 2.2 [S] ~~Split `RepoListModel` from arrangement policy~~ — superseded
 
-**Files:** `src/ui/repo_sidebar.py:182-528`
+**Status:** dropped after landing 2.1.
 
-`RepoListModel` currently owns: Qt model API, six state dicts
-(`_branches`, `_status`, `_working`, `_active_ids`, `_last_activity`),
-sort/group orchestration (`apply_auto_arrange`,
-`apply_terminal_grouping`, `target_order_ids`), and persistence
-triggers (`_store.save()` in mutators).
+After the animator extracted in 2.1, the remaining sort/group methods
+on `RepoListModel` (`_activity_key`, `_grouping_key`,
+`apply_auto_arrange`, `apply_terminal_grouping`, `target_order_ids`,
+`_stable_sort`, `_reorder_by`) are ~60 lines using model-resident
+state (`_last_activity`, `_active_ids`). Splitting into a separate
+class would add indirection without reducing coupling — the policy
+would still need to read model state, and every test touching the
+sort methods would need re-pointing.
 
-**Change:** Extract an `ArrangementPolicy(model)` that holds the
-sort/group methods. The Qt model becomes thin — just `data()`,
-`rowCount()`, and `dataChanged` plumbing.
-
-**Why:** SRP, and pairs with 2.1 — the animator consumes the policy
-without needing the full model surface.
+If the model grows further, revisit. For now, keep.
 
 ### 2.3 [E] Spinner repaint without per-row dispatch
 
