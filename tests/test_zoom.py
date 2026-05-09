@@ -65,7 +65,7 @@ class _RecordingHost:
 
 def test_zoom_in_increments_font_size(main_window) -> None:
     host = _RecordingHost()
-    main_window._terminals["/fake"] = host  # type: ignore[assignment]
+    main_window._lifecycle._terminals["/fake"] = host  # type: ignore[assignment]
     main_window._on_zoom_requested(+1)
     assert main_window._settings.xterm.font_size == 11
     assert host.applied == [11]
@@ -73,7 +73,7 @@ def test_zoom_in_increments_font_size(main_window) -> None:
 
 def test_zoom_out_decrements_font_size(main_window) -> None:
     host = _RecordingHost()
-    main_window._terminals["/fake"] = host  # type: ignore[assignment]
+    main_window._lifecycle._terminals["/fake"] = host  # type: ignore[assignment]
     main_window._on_zoom_requested(-1)
     assert main_window._settings.xterm.font_size == 9
     assert host.applied == [9]
@@ -82,7 +82,7 @@ def test_zoom_out_decrements_font_size(main_window) -> None:
 def test_zoom_clamps_at_upper_bound(main_window) -> None:
     main_window._settings.xterm.font_size = 48
     host = _RecordingHost()
-    main_window._terminals["/fake"] = host  # type: ignore[assignment]
+    main_window._lifecycle._terminals["/fake"] = host  # type: ignore[assignment]
     main_window._on_zoom_requested(+1)
     assert main_window._settings.xterm.font_size == 48
     # At the clamp, we skip the apply call entirely (no-op).
@@ -92,7 +92,7 @@ def test_zoom_clamps_at_upper_bound(main_window) -> None:
 def test_zoom_clamps_at_lower_bound(main_window) -> None:
     main_window._settings.xterm.font_size = 6
     host = _RecordingHost()
-    main_window._terminals["/fake"] = host  # type: ignore[assignment]
+    main_window._lifecycle._terminals["/fake"] = host  # type: ignore[assignment]
     main_window._on_zoom_requested(-1)
     assert main_window._settings.xterm.font_size == 6
     assert host.applied == []
@@ -104,7 +104,7 @@ def test_zoom_reset_reloads_from_disk(main_window, tmp_path) -> None:
     save_settings(Settings(xterm=XtermSettings(font_size=13)))
     main_window._settings.xterm.font_size = 99
     host = _RecordingHost()
-    main_window._terminals["/fake"] = host  # type: ignore[assignment]
+    main_window._lifecycle._terminals["/fake"] = host  # type: ignore[assignment]
     main_window._on_zoom_requested(0)
     assert main_window._settings.xterm.font_size == 13
     assert host.applied == [13]
@@ -112,8 +112,8 @@ def test_zoom_reset_reloads_from_disk(main_window, tmp_path) -> None:
 
 def test_zoom_applies_to_every_terminal(main_window) -> None:
     h1, h2, h3 = _RecordingHost(), _RecordingHost(), _RecordingHost()
-    main_window._terminals["/a"] = h1  # type: ignore[assignment]
-    main_window._terminals["/b"] = h2  # type: ignore[assignment]
-    main_window._terminals["/c"] = h3  # type: ignore[assignment]
+    main_window._lifecycle._terminals["/a"] = h1  # type: ignore[assignment]
+    main_window._lifecycle._terminals["/b"] = h2  # type: ignore[assignment]
+    main_window._lifecycle._terminals["/c"] = h3  # type: ignore[assignment]
     main_window._on_zoom_requested(+1)
     assert h1.applied == h2.applied == h3.applied == [11]

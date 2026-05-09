@@ -45,11 +45,11 @@ from src.core.hook_server import (
 )
 from src.core.repo_store import Repo, RepoStore
 from src.core.settings import Settings, load_settings, save_settings
-from src.core.terminal_session import build_session
 from src.ui.preferences_dialog import PreferencesDialog
 from src.ui.qt_theme import apply_theme
 from src.ui.repo_sidebar import EVENT_TO_STATUS, RepoSidebar
 from src.ui.terminal_host import TerminalHost
+from src.ui.terminal_lifecycle import TerminalLifecycle
 from src.ui.title_label import TitleLabel
 
 
@@ -71,15 +71,11 @@ class MainWindow(QMainWindow):
         self._store = store
         self._hook_server = hook_server
         self._settings = settings if settings is not None else Settings()
-        # One TerminalHost per repo *instance* (not per path) — duplicates of
-        # the same repo each get their own xterm. Keyed by Repo.id so the two
-        # rows for one path can't collide on a path-string key.
-        self._terminals: dict[str, TerminalHost] = {}
         # Repo ids whose Claude session is mid-turn (UserPromptSubmit fired,
         # Stop/Notification hasn't yet). Drives the quit-confirm prompt so we
-        # only nag when there's actual in-flight work to lose. With duplicate
-        # rows sharing a cwd, hook routing is ambiguous — we light up *every*
-        # id matching the cwd (broadcast). Per-session routing is future work.
+        # only nag when there's actual in-flight work to lose. Per-session
+        # routing (CCWORK_REPO_ID in the hook payload) keeps this set
+        # accurate even when duplicate rows share a cwd.
         self._working: set[str] = set()
 
         # ── top strip: centered repo · branch + right-side icon cluster ──
@@ -118,6 +114,16 @@ class MainWindow(QMainWindow):
         self._empty_placeholder = self._make_empty_placeholder()
         self._stack.addWidget(self._empty_placeholder)
         self._stack.setCurrentWidget(self._empty_placeholder)
+        # Centralizes spawn/dispose/reload bookkeeping so MainWindow only
+        # owns higher-level concerns (working-set, title, placeholder swap).
+        self._lifecycle = TerminalLifecycle(
+            self._stack, self._sidebar, lambda: self._settings, parent=self,
+        )
+        self._lifecycle.failed.connect(self._on_terminal_failed)
+        self._lifecycle.finished.connect(self._on_terminal_finished)
+        self._lifecycle.zoom_requested.connect(self._on_zoom_requested)
+        self._lifecycle.cycle_repo_requested.connect(self._on_cycle_repo_requested)
+        self._lifecycle.context_menu_requested.connect(self._on_terminal_context_menu)
 
         splitter = QSplitter(Qt.Horizontal, self)
         self._splitter = splitter
@@ -283,7 +289,7 @@ class MainWindow(QMainWindow):
         # need respawn.
         needs_restart_fields: set[str] = set()
         live_applied = 0
-        for host in self._terminals.values():
+        for host in self._lifecycle.hosts():
             unapplied = host.apply_live_settings(settings.xterm)
             if unapplied:
                 needs_restart_fields.update(unapplied)
@@ -307,28 +313,10 @@ class MainWindow(QMainWindow):
         else:
             bar.showMessage("Settings applied.", 3_000)
 
-    def _dispose_terminal(self, repo_id: str, *, stop: bool = True) -> bool:
-        """Tear down the TerminalHost for `repo_id`. Returns True if the
-        disposed host was the currently visible widget.
-
-        `stop=False` skips the explicit `host.stop()` — the TerminalHost is
-        already finished (e.g. xterm exited on its own), so calling stop()
-        would be redundant.
-        """
-        host = self._terminals.pop(repo_id, None)
-        if host is None:
-            return False
-        was_current = self._stack.currentWidget() is host
-        self._stack.removeWidget(host)
-        if stop:
-            host.stop()
-        host.deleteLater()
-        return was_current
-
     def _on_repo_removed(self, repo: Repo) -> None:
         """A repo was removed from the sidebar — also tear down its terminal."""
         self._working.discard(repo.id)
-        if self._dispose_terminal(repo.id):
+        if self._lifecycle.dispose(repo.id):
             self._stack.setCurrentWidget(self._empty_placeholder)
             self._title.set_repo(None, None)
 
@@ -338,8 +326,7 @@ class MainWindow(QMainWindow):
         Killing xterm kills the shell inside; any live Claude session is
         lost. Callers should confirm with the user before invoking.
         """
-        self._dispose_terminal(repo.id)
-        self._ensure_terminal(repo)
+        self._lifecycle.reload(repo)
 
     # ── zoom ──
 
@@ -367,7 +354,7 @@ class MainWindow(QMainWindow):
                 return  # at the clamp — nothing to do
             self._settings.xterm.font_size = new
 
-        for host in self._terminals.values():
+        for host in self._lifecycle.hosts():
             host.apply_live_settings(self._settings.xterm)
 
         self.statusBar().showMessage(f"Font size: {self._settings.xterm.font_size}pt", 1500)
@@ -422,7 +409,7 @@ class MainWindow(QMainWindow):
 
     def _paste_clipboard_to(self, repo: Repo) -> None:
         from PySide6.QtWidgets import QApplication
-        host = self._terminals.get(repo.id)
+        host = self._lifecycle.get(repo.id)
         if host is None:
             return
         host.paste_text(QApplication.clipboard().text())
@@ -434,44 +421,13 @@ class MainWindow(QMainWindow):
         w.setAutoFillBackground(True)
         return w
 
-    def _ensure_terminal(self, repo: Repo) -> TerminalHost:
-        """Lazy-spawn a TerminalHost for the given repo."""
-        host = self._terminals.get(repo.id)
-        if host is not None:
-            return host
-        spec = build_session(repo, xterm_settings=self._settings.xterm)
-        host = TerminalHost(
-            argv=spec.argv,
-            env=spec.env,
-            cwd=spec.cwd,
-            parent=self._stack,
-        )
-        host.failed.connect(lambda msg, r=repo: self._on_terminal_failed(r, msg))
-        host.finished.connect(lambda code, r=repo: self._on_terminal_finished(r, code))
-        host.zoom_requested.connect(self._on_zoom_requested)
-        host.cycle_repo_requested.connect(self._on_cycle_repo_requested)
-        host.context_menu_requested.connect(
-            lambda pos, r=repo: self._on_terminal_context_menu(r, pos)
-        )
-        self._terminals[repo.id] = host
-        self._sidebar.set_terminal_active(repo.id, True)
-        self._stack.addWidget(host)
-        # Make the host current + visible BEFORE starting xterm so the parent
-        # X window is mapped when xterm reparents into it.
-        self._stack.setCurrentWidget(host)
-        host.start()
-        return host
-
     # ── slots ──
 
     def _on_repo_selected(self, repo: Repo) -> None:
         # Refresh branches first so the title gets a fresh subtitle on click.
         self._sidebar.refresh_branches()
         self._title.set_repo(repo.display_name, self._branch_for(repo.path))
-        # _ensure_terminal handles setCurrentWidget on first spawn; for a
-        # pre-existing host we still need to swap to it.
-        host = self._ensure_terminal(repo)
-        self._stack.setCurrentWidget(host)
+        host = self._lifecycle.ensure(repo)
         host.focus_child()
         # Persist so the violet dot can be restored next launch. Best-effort:
         # a write failure here shouldn't block the click. last_focused_repo
@@ -515,7 +471,7 @@ class MainWindow(QMainWindow):
         # duplicates of the same path keep theirs if genuinely mid-turn.
         self._sidebar.set_working_for_id(repo.id, False)
         self._sidebar.set_terminal_active(repo.id, False)
-        if self._dispose_terminal(repo.id, stop=False):
+        if self._lifecycle.dispose(repo.id, stop=False):
             self._stack.setCurrentWidget(self._empty_placeholder)
         log.info("terminal for %s exited (code=%d)", repo.path, code)
 
@@ -587,11 +543,7 @@ class MainWindow(QMainWindow):
             self._sidebar.set_working_for_id(r.id, True)
 
     def _current_repo_id(self) -> str | None:
-        w = self._stack.currentWidget()
-        for repo_id, host in self._terminals.items():
-            if host is w:
-                return repo_id
-        return None
+        return self._lifecycle.current_repo_id()
 
     # ── lifecycle ──
 
@@ -602,7 +554,7 @@ class MainWindow(QMainWindow):
         # mid-turn and does not affect _working.
         working_ids = [
             rid for rid in self._working
-            if rid in self._terminals and self._terminals[rid].is_running()
+            if (host := self._lifecycle.get(rid)) is not None and host.is_running()
         ]
         if working_ids:
             id_to_repo = {r.id: r for r in self._store.repos}
@@ -623,9 +575,7 @@ class MainWindow(QMainWindow):
             if ans != QMessageBox.Yes:
                 event.ignore()
                 return
-        for host in list(self._terminals.values()):
-            host.stop()
-        self._terminals.clear()
+        self._lifecycle.shutdown()
         super().closeEvent(event)
 
 
