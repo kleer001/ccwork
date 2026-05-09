@@ -88,7 +88,17 @@ def step_interval_ms(steps_taken: int, total: int) -> int:
 
 
 class ArrangementAnimator(QObject):
-    """Three-timer state machine driving the sidebar reshuffle animation."""
+    """Three-timer state machine driving the sidebar reshuffle animation.
+
+    Thread invariant: all public methods + slots run on the Qt main
+    thread. `_pending` and `_steps_taken` are mutated from
+    `request_walk`, `_on_reorder_debounce_elapsed`, `_check_pending`,
+    and `_step` — all of which are either called from the Qt event loop
+    (timer fires, slots) or by Qt-main-thread callers (the sidebar
+    widget). No locking is required; do not call into this object from
+    a worker thread without first marshalling to main via
+    `QMetaObject.invokeMethod` (or equivalent).
+    """
 
     def __init__(
         self,

@@ -95,6 +95,16 @@ def to_roman(n: int) -> str:
 
 @dataclass
 class Repo:
+    """One repo entry in the sidebar.
+
+    Invariant: `path` is treated as immutable after construction. The
+    `resolved` attribute is a cache of `normalize_path(path)` populated
+    in __post_init__; mutating `path` afterwards would leave it stale.
+    No production code mutates `path` today — the convention is "create
+    a new Repo instead." If that ever changes, convert `resolved` to a
+    @property that recomputes when the underlying path differs.
+    """
+
     path: str
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     instance: int = 0
@@ -104,8 +114,8 @@ class Repo:
         # Cache the resolved path so RepoStore lookups (called per-row
         # per-paint and per-hook-event) compare strings instead of
         # re-stat'ing every repo. Set as a plain instance attribute, NOT
-        # a dataclass field — asdict() and the auto-generated __repr__
-        # ignore it, so the on-disk shape is unchanged.
+        # a dataclass field — asdict() includes init=False fields, so
+        # making `resolved` a field would leak it into repos.json.
         self.resolved: str = normalize_path(self.path)
 
     @property

@@ -19,6 +19,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from src.core.hook_server import (
+    EVENT_NOTIFICATION,
     EVENT_STOP,
     EVENT_USER_PROMPT_SUBMIT,
     HookServer,
@@ -27,7 +28,7 @@ from src.core.repo_store import RepoStore
 from src.core.settings import Settings
 from src.core.terminal_session import build_session
 from src.ui.main_window import MainWindow
-from src.ui.repo_sidebar import ROLE_WORKING
+from src.ui.repo_sidebar import ROLE_STATUS, ROLE_WORKING, STATUS_ATTENTION
 
 
 def _make_window(
@@ -125,5 +126,37 @@ def test_empty_repo_id_string_falls_back_to_broadcast(
         model = win._sidebar.model
         assert model.index(model.index_of_id(a.id)).data(ROLE_WORKING) is True
         assert model.index(model.index_of_id(b.id)).data(ROLE_WORKING) is True
+    finally:
+        win.close()
+
+
+def test_status_still_broadcasts_under_per_session_routing(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """Spinner state (_working) routes per-id; status badge does not.
+
+    Documents a deliberate scope limitation in REFACTORING.md 1.2:
+    `_status` remains path-keyed and broadcasts to every duplicate row
+    even when the hook supplies a repo_id. Making status per-instance
+    is tracked as future work.
+
+    This test pins the current behavior so a future change to
+    per-instance status will fail loudly here and force a deliberate
+    update.
+    """
+    real = tmp_path / "repo"
+    real.mkdir()
+    win, store = _make_window(real, tmp_path / "repos.json", qapp)
+    try:
+        a, b = store.repos[0], store.repos[1]
+        win._on_hook_event({
+            "event": EVENT_NOTIFICATION,
+            "cwd": str(real),
+            "repo_id": a.id,
+        })
+        model = win._sidebar.model
+        # Both rows share the path → both get the status badge.
+        assert model.index(model.index_of_id(a.id)).data(ROLE_STATUS) == STATUS_ATTENTION
+        assert model.index(model.index_of_id(b.id)).data(ROLE_STATUS) == STATUS_ATTENTION
     finally:
         win.close()

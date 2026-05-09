@@ -455,10 +455,26 @@ class MainWindow(QMainWindow):
             current = self._stack.currentWidget()
             if isinstance(current, TerminalHost):
                 QTimer.singleShot(0, current.focus_child)
-            # Full branch sweep on window focus. Per-repo selections only
-            # refresh the clicked branch, so this picks up branch
-            # switches the user did off-screen while ccwork was idle.
-            QTimer.singleShot(0, self._sidebar.refresh_branches)
+            # Full branch sweep, debounced — picks up branch switches the
+            # user did off-screen while ccwork was idle. Without the time
+            # gate, every alt-tab would spawn N `git symbolic-ref`
+            # subprocesses (the very cost item 2.4 removed from per-click
+            # selection). 60 s is well under "long enough that branches
+            # might have moved" while well over "rapid alt-tabbing".
+            self._maybe_sweep_branches()
+
+    # Cooldown floor (seconds) between full branch sweeps triggered by
+    # window-focus changes.
+    _BRANCH_SWEEP_COOLDOWN_S = 60.0
+
+    def _maybe_sweep_branches(self) -> None:
+        import time
+        now = time.monotonic()
+        last = getattr(self, "_last_branch_sweep", 0.0)
+        if now - last < self._BRANCH_SWEEP_COOLDOWN_S:
+            return
+        self._last_branch_sweep = now
+        QTimer.singleShot(0, self._sidebar.refresh_branches)
 
     def _branch_for(self, path: str) -> str | None:
         return self._sidebar.branch_for(path)
@@ -542,10 +558,8 @@ class MainWindow(QMainWindow):
                 seen_paths.add(r.path)
                 # Status is path-keyed; clear once per distinct path.
                 self._sidebar.clear_status(r.path)
-            self._working.discard(r.id)
-            self._working.add(r.id)
-            self._sidebar.set_working_for_id(r.id, False)
-            self._sidebar.set_working_for_id(r.id, True)
+            self._working.add(r.id)  # idempotent — set semantics
+            self._sidebar.set_working_for_id(r.id, True)  # no-op if already on
 
     def _current_repo_id(self) -> str | None:
         return self._lifecycle.current_repo_id()
