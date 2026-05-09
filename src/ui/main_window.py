@@ -511,16 +511,9 @@ class MainWindow(QMainWindow):
 
     def _on_terminal_finished(self, repo: Repo, code: int) -> None:
         self._working.discard(repo.id)
-        # Sidebar working state is path-keyed (broadcast across duplicates).
-        # Only clear the spinner if no *other* duplicate is still working,
-        # otherwise we'd silence a sibling that is genuinely mid-turn.
-        siblings_working = any(
-            r.id in self._working
-            for r in self._store.repos_for_path(repo.path)
-            if r.id != repo.id
-        )
-        if not siblings_working:
-            self._sidebar.set_working(repo.path, False)
+        # Per-id clear: only this instance's spinner stops; sibling
+        # duplicates of the same path keep theirs if genuinely mid-turn.
+        self._sidebar.set_working_for_id(repo.id, False)
         self._sidebar.set_terminal_active(repo.id, False)
         if self._dispose_terminal(repo.id, stop=False):
             self._stack.setCurrentWidget(self._empty_placeholder)

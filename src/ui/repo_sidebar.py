@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
 
 from src.core import repo_store
 from src.core.hook_server import EVENT_NOTIFICATION, EVENT_STOP
-from src.core.repo_store import Repo, RepoStore, normalize_path
+from src.core.repo_store import Repo, RepoStore
 
 
 # Custom roles — keep the model backed by a single Repo per row plus branch
@@ -204,18 +204,20 @@ class RepoListModel(QAbstractListModel):
     def __init__(self, store: RepoStore, parent=None) -> None:
         super().__init__(parent)
         self._store = store
+        # _branches and _status broadcast across duplicate rows for the
+        # same path — that's the intended UX (one path, one branch / one
+        # status). They stay path-keyed.
         self._branches: dict[str, str | None] = {}
         self._status: dict[str, str] = {}
+        # _working and _last_activity are per-instance: each duplicate
+        # row tracks its own session state. Keyed by repo.id. Hook
+        # dispatch fans path → ids in `set_working` / `set_status`.
         self._working: set[str] = set()
         # Repo ids whose TerminalHost has been spawned in the current ccwork
         # session. Drives the visual difference between "touched" rows (bold
         # upright) and "untouched" rows (regular italic). Cleared on terminal
         # exit so a closed-then-not-reopened repo reverts to italic.
         self._active_ids: set[str] = set()
-        # Per-repo timestamp of the last Claude-driven event
-        # (Stop / Notification / UserPromptSubmit). Feeds the optional
-        # auto-arrange sort. STATUS_LAST_FOCUSED is user navigation, not
-        # Claude activity, and does not stamp this dict.
         self._last_activity: dict[str, float] = {}
 
     # ── Qt model API ──
@@ -238,14 +240,14 @@ class RepoListModel(QAbstractListModel):
         if role == ROLE_STATUS:
             return self._status.get(repo.path, "")
         if role == ROLE_WORKING:
-            return normalize_path(repo.path) in self._working
+            return repo.id in self._working
         if role == ROLE_HAS_TERMINAL:
             return repo.id in self._active_ids
         if role == Qt.ToolTipRole:
             # Prepend a human-readable status line so hovering a row tells
             # the user what the badge means without having to memorize the
             # color palette. Path stays as the second line for context.
-            if normalize_path(repo.path) in self._working:
+            if repo.id in self._working:
                 return f"{WORKING_LABEL}\n{repo.path}"
             label = STATUS_LABELS.get(self._status.get(repo.path, ""))
             if label:
@@ -292,13 +294,18 @@ class RepoListModel(QAbstractListModel):
         """Set the per-repo status badge ("done", "attention", or "" to clear).
 
         Per-path state — every duplicate row for this path repaints together.
+        Claude-activity statuses also stamp `_last_activity` for every id
+        matching the path (per-id, so the auto-arrange sort can look up by
+        repo.id without re-resolving paths).
         """
         if status:
             self._status[path] = status
         else:
             self._status.pop(path, None)
         if status in CLAUDE_ACTIVITY_STATUSES:
-            self._last_activity[path] = time.monotonic()
+            now = time.monotonic()
+            for r in self._store.repos_for_path(path):
+                self._last_activity[r.id] = now
         self._emit_changed_for_path(path, [ROLE_STATUS])
 
     def clear_status(self, path: str) -> None:
@@ -322,20 +329,53 @@ class RepoListModel(QAbstractListModel):
             self.set_status(path, STATUS_LAST_FOCUSED)
 
     def set_working(self, path: str, working: bool) -> None:
-        """Toggle the spinner for `path`. No-op if state already matches.
+        """Toggle the spinner for every duplicate row matching `path`.
 
-        Per-path state — every duplicate row for this path spins together.
+        Hook events arrive cwd-keyed; we fan out to every id sharing that
+        cwd because hooks can't tell duplicates apart by path alone.
+        Per-instance state is keyed by repo.id under the hood — see
+        `set_working_for_id` for single-instance updates (used by
+        terminal-finished cleanup, where we know the exact id).
         """
-        key = normalize_path(path)
-        was = key in self._working
+        ids = [r.id for r in self._store.repos_for_path(path)]
+        if not ids:
+            return
+        now = time.monotonic()
+        changed = False
+        for repo_id in ids:
+            was = repo_id in self._working
+            if working == was:
+                continue
+            if working:
+                self._working.add(repo_id)
+                self._last_activity[repo_id] = now
+            else:
+                self._working.discard(repo_id)
+            changed = True
+        if changed:
+            self._emit_changed_for_path(path, [ROLE_WORKING])
+
+    def set_working_for_id(self, repo_id: str, working: bool) -> None:
+        """Toggle the spinner for one specific instance.
+
+        Used when the caller knows the exact id (e.g. terminal exit) and
+        wants to leave sibling duplicates' state untouched.
+        """
+        was = repo_id in self._working
         if working == was:
             return
         if working:
-            self._working.add(key)
-            self._last_activity[path] = time.monotonic()
+            self._working.add(repo_id)
+            self._last_activity[repo_id] = time.monotonic()
         else:
-            self._working.discard(key)
-        self._emit_changed_for_path(path, [ROLE_WORKING])
+            self._working.discard(repo_id)
+        row = self.index_of_id(repo_id)
+        if row >= 0:
+            idx = self.index(row)
+            self.dataChanged.emit(idx, idx, [ROLE_WORKING])
+
+    def is_working(self, repo_id: str) -> bool:
+        return repo_id in self._working
 
     def any_working(self) -> bool:
         return bool(self._working)
@@ -375,14 +415,22 @@ class RepoListModel(QAbstractListModel):
             self.dataChanged.emit(idx, idx, [ROLE_HAS_TERMINAL])
 
     def last_activity(self, path: str) -> float:
-        return self._last_activity.get(path, 0.0)
+        """Most-recent activity timestamp across every duplicate of `path`.
+
+        Activity is stored per-id; this aggregator preserves the
+        path-based public query the auto-arrange tests use.
+        """
+        ts = 0.0
+        for r in self._store.repos_for_path(path):
+            ts = max(ts, self._last_activity.get(r.id, 0.0))
+        return ts
 
     # Sort keys consumed by both the instant reorder (`apply_*`) and the
     # animated preview (`target_order_ids`). Defined here so both code paths
     # cannot drift.
     def _activity_key(self, item):
         i, r = item
-        ts = self._last_activity.get(r.path, 0.0)
+        ts = self._last_activity.get(r.id, 0.0)
         return (-ts if ts > 0 else float("inf"), i)
 
     def _grouping_key(self, item):
@@ -530,13 +578,13 @@ class RepoListModel(QAbstractListModel):
 
         # Per-id state always drops — the row is gone for good.
         self._active_ids.discard(repo.id)
-        # Per-path state stays only while at least one row still uses the
-        # path — drop it once the last duplicate is gone.
+        self._working.discard(repo.id)
+        self._last_activity.pop(repo.id, None)
+        # Path-keyed state stays only while at least one row still uses
+        # the path — drop it once the last duplicate is gone.
         if not self._store.repos_for_path(path):
             self._branches.pop(path, None)
             self._status.pop(path, None)
-            self._working.discard(normalize_path(path))
-            self._last_activity.pop(path, None)
         self._store.save()
         return True
 
@@ -971,13 +1019,22 @@ class RepoSidebar(QWidget):
 
     def set_working(self, path: str, working: bool) -> None:
         self._model.set_working(path, working)
+        self._refresh_spinner_timer()
+        if working:
+            self._maybe_schedule_reorder()
+
+    def set_working_for_id(self, repo_id: str, working: bool) -> None:
+        self._model.set_working_for_id(repo_id, working)
+        self._refresh_spinner_timer()
+        if working:
+            self._maybe_schedule_reorder()
+
+    def _refresh_spinner_timer(self) -> None:
         if self._model.any_working():
             if not self._spinner_timer.isActive():
                 self._spinner_timer.start()
         else:
             self._spinner_timer.stop()
-        if working:
-            self._maybe_schedule_reorder()
 
     def branch_for(self, path: str) -> str | None:
         """Cached branch name for the first row matching `path`, or None."""
