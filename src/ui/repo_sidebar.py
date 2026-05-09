@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import os
 import shutil
 import time
@@ -45,6 +44,7 @@ from PySide6.QtWidgets import (
 from src.core import repo_store
 from src.core.hook_server import EVENT_NOTIFICATION, EVENT_STOP
 from src.core.repo_store import Repo, RepoStore
+from src.ui.arrangement_animator import ArrangementAnimator
 
 
 # Custom roles — keep the model backed by a single Repo per row plus branch
@@ -126,41 +126,6 @@ SPINNER_VARIANTS: tuple[tuple[str, ...], ...] = (
     ("⠄","⠆","⠇","⠋","⠙","⠸","⠰","⠠","⠰","⠸","⠙","⠋","⠇","⠆"),  # center bounce
 )
 SPINNER_INTERVAL_MS = 100
-
-# Per-tick gap when reordering the sidebar (auto-arrange bubble-up after
-# Claude activity, or terminal-grouping after a deferred regroup). Eased
-# along a sine curve: MAX at the endpoints (slow ease-in to register the
-# motion has started, slow ease-out to settle), MIN in the middle (zip
-# through). Total walk time for ~5 swaps is ~620 ms — close to the old
-# constant 125 ms cadence but with deliberate start/finish texture.
-ARRANGE_STEP_MIN_MS = 80
-ARRANGE_STEP_MAX_MS = 220
-
-# Bubble walks defer until the sidebar has been "quiet" — no mouse
-# movement, click, key, or selection change — for this long. The user is
-# typically typing in their terminal at that point; walks happen during
-# their thinking pauses, not under the cursor while they're picking a
-# repo. XEmbed makes "is the user in the terminal" un-detectable from
-# Qt directly (xterm keystrokes never reach the Qt event loop), so we
-# invert the question: assume "user is engaged with terminal" iff the
-# sidebar has not seen any input for SIDEBAR_QUIET_MS.
-SIDEBAR_QUIET_MS = 800
-
-
-def _count_bubble_swaps(current: list[str], target: list[str]) -> int:
-    """Inversion count between `current` and `target` — the exact number
-    of `move_row_up` calls the topmost-mismatch bubble walk will make.
-    Order-sensitive on the contents; a plain mismatch count overestimates.
-    """
-    pos = {tid: i for i, tid in enumerate(target)}
-    swaps = 0
-    for i, cur_id in enumerate(current):
-        ti = pos.get(cur_id, i)
-        for cur_j in current[i + 1 :]:
-            tj = pos.get(cur_j, i)
-            if tj < ti:
-                swaps += 1
-    return swaps
 
 
 def spinner_for_id(repo_id: str) -> tuple[str, ...]:
@@ -836,47 +801,13 @@ class RepoSidebar(QWidget):
         self._spinner_timer = QTimer(self)
         self._spinner_timer.setInterval(SPINNER_INTERVAL_MS)
         self._spinner_timer.timeout.connect(self._advance_spinner)
-        # Debounced auto-arrange. Restarted on every Claude-driven event
-        # while ui.auto_arrange_repos is True; fires once after 2s of
-        # quiet to avoid reshuffling under the user's eye.
-        self._reorder_timer = QTimer(self)
-        self._reorder_timer.setSingleShot(True)
-        self._reorder_timer.setInterval(2000)
-        self._reorder_timer.timeout.connect(self._apply_auto_arrange)
-        # Quiet-window gate for the bubble walk. The walk fires only when
-        # the sidebar has had no input (mouse, key, selection) for
-        # SIDEBAR_QUIET_MS. While the user is hovering, scrolling, or
-        # picking a repo, _bump_activity() pushes the timestamp forward
-        # and pending walks keep deferring; while they're typing in
-        # xterm, no Qt events reach the sidebar so the timestamp
-        # naturally ages and queued walks fire. _check_pending_walk
-        # re-runs itself on _arrange_check_timer until the quiet
-        # condition is met or the pending state is cleared.
-        # Initial 0.0 lets the very first trigger fire immediately —
-        # there's no genuine sidebar activity at startup.
-        self._last_sidebar_activity = 0.0
-        self._arrange_pending = False
-        self._arrange_check_timer = QTimer(self)
-        self._arrange_check_timer.setSingleShot(True)
-        self._arrange_check_timer.timeout.connect(self._check_pending_walk)
-        # Stepwise bubble-up: each tick swaps one adjacent pair toward the
-        # composed target order (auto-arrange ⊕ grouping, whichever prefs
-        # are on). Self-correcting — if a new active repo or a fresh
-        # activity event arrives mid-animation, the next tick sees the
-        # updated target and keeps walking. Stops when current == target.
-        # Per-tick interval is recomputed by _step_arrange along a sine
-        # ease-in-out curve, so the constructor default is a placeholder.
-        self._arrange_step_timer = QTimer(self)
-        self._arrange_step_timer.setInterval(ARRANGE_STEP_MAX_MS)
-        self._arrange_step_timer.timeout.connect(self._step_arrange)
-        # Resets at every walk start. Drives the easing curve.
-        self._arrange_steps_taken = 0
-        # Total swaps the current walk will take, computed once at start
-        # and decremented per step. Recomputed only if the target shifts
-        # mid-walk (e.g. a new active repo arrives) so each tick is O(N)
-        # instead of O(N²).
-        self._arrange_total_estimate = 0
-        self._arrange_target_cache: list[str] = []
+        # Reshuffle animation lives in its own object so it can be tested
+        # without a QListView and the sidebar widget can focus on
+        # rendering + selection. The animator owns four timers and the
+        # quiet-window state machine.
+        self._animator = ArrangementAnimator(
+            self._model, lambda: self._settings, parent=self,
+        )
         self._view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._view.setSelectionMode(QAbstractItemView.SingleSelection)
         # Per-row sizeHint: the group-boundary row is taller than the rest
@@ -941,7 +872,7 @@ class RepoSidebar(QWidget):
     def set_status(self, path: str, status: str) -> None:
         self._model.set_status(path, status)
         if status in CLAUDE_ACTIVITY_STATUSES:
-            self._maybe_schedule_reorder()
+            self._animator.schedule_reorder()
 
     def clear_status(self, path: str) -> None:
         self._model.clear_status(path)
@@ -969,23 +900,18 @@ class RepoSidebar(QWidget):
         We deliberately do NOT reshuffle right now: the row whose terminal
         just spawned is the row the user just clicked, and yanking it out
         from under the cursor reads as "the wrong repo got selected." The
-        focus gate (_terminal_focused) defers until the user has actually
-        engaged with a terminal; until then this just queues via
-        _maybe_walk(). Same applies on terminal close.
+        animator's quiet-window gate defers until the user has actually
+        engaged with a terminal; until then this just queues a walk.
+        Same applies on terminal close.
         """
         self._model.set_terminal_active(repo_id, active)
         if self._settings is not None and getattr(
             self._settings.ui, "group_active_repos", False
         ):
-            self._maybe_walk()
+            self._animator.request_walk()
         # Boundary may have shifted (or the bold/italic font flipped) —
         # re-query sizeHints. No reorder yet.
         self._view.scheduleDelayedItemsLayout()
-
-    def _bump_activity(self) -> None:
-        """Mark the sidebar as just-touched. Pushes the quiet-window
-        deadline forward so any pending walk keeps deferring."""
-        self._last_sidebar_activity = time.monotonic()
 
     # Activity sources we care about. Hover/move catches "cursor is on
     # the sidebar" even without a click, which is the visual state that
@@ -1005,7 +931,7 @@ class RepoSidebar(QWidget):
         if event.type() in self._ACTIVITY_EVENTS and (
             obj is self._view or obj is self._view.viewport()
         ):
-            self._bump_activity()
+            self._animator.bump_activity()
         return super().eventFilter(obj, event)
 
     def set_badge_style(self, style: str) -> None:
@@ -1021,13 +947,13 @@ class RepoSidebar(QWidget):
         self._model.set_working(path, working)
         self._refresh_spinner_timer()
         if working:
-            self._maybe_schedule_reorder()
+            self._animator.schedule_reorder()
 
     def set_working_for_id(self, repo_id: str, working: bool) -> None:
         self._model.set_working_for_id(repo_id, working)
         self._refresh_spinner_timer()
         if working:
-            self._maybe_schedule_reorder()
+            self._animator.schedule_reorder()
 
     def _refresh_spinner_timer(self) -> None:
         if self._model.any_working():
@@ -1051,129 +977,6 @@ class RepoSidebar(QWidget):
         """Public entry-point for the terminal-context-menu reload flow."""
         self._confirm_reload(repo)
 
-    def _maybe_schedule_reorder(self) -> None:
-        if self._settings is None:
-            return
-        if not getattr(self._settings.ui, "auto_arrange_repos", False):
-            return
-        # QTimer.start() restarts an active single-shot timer — exactly
-        # the debounce we want.
-        self._reorder_timer.start()
-
-    def _apply_auto_arrange(self) -> None:
-        # Pref may have flipped off during the 2 s window — bail.
-        if self._settings is None:
-            return
-        if not getattr(self._settings.ui, "auto_arrange_repos", False):
-            return
-        self._maybe_walk()
-
-    def _maybe_walk(self) -> None:
-        """Start the bubble walk if the sidebar is quiet; else defer.
-
-        Single chokepoint for both auto-arrange and terminal-grouping
-        triggers. The defer-and-recheck loop ensures the walk only runs
-        when the user has been clearly off the sidebar for a moment —
-        typically while typing in their terminal.
-        """
-        self._arrange_pending = True
-        self._check_pending_walk()
-
-    def _check_pending_walk(self) -> None:
-        """Try to fire a pending walk. If the sidebar isn't quiet yet,
-        re-arm the timer for when the quiet window would next elapse.
-        """
-        if not self._arrange_pending:
-            return
-        elapsed_ms = (time.monotonic() - self._last_sidebar_activity) * 1000
-        if elapsed_ms >= SIDEBAR_QUIET_MS:
-            self._arrange_pending = False
-            self._start_arrange_animation()
-            return
-        # Re-check exactly when the quiet window would close, plus a
-        # small buffer so timer jitter can't undershoot.
-        self._arrange_check_timer.start(int(SIDEBAR_QUIET_MS - elapsed_ms) + 10)
-
-    def _start_arrange_animation(self) -> None:
-        """Walk one row toward the target order now, then keep ticking on
-        the timer. No-op if already at target. Idempotent — if the timer
-        is already running, it just keeps going (and naturally absorbs any
-        new target, since each tick recomputes).
-        """
-        if self._arrange_step_timer.isActive():
-            return
-        # New walk — reset the step counter so the easing curve restarts
-        # from the slow-start endpoint.
-        self._arrange_steps_taken = 0
-        # Step once now so the user sees motion immediately, not after a
-        # 220 ms gap (the eye reads "trigger → motion" as causal).
-        if self._step_arrange():
-            self._arrange_step_timer.start()
-
-    def _step_arrange(self) -> bool:
-        """Advance one adjacent swap toward the composed target. Returns
-        True if more work remains; False once converged (and stops timer).
-        """
-        if self._settings is None:
-            self._arrange_step_timer.stop()
-            return False
-        target = self._model.target_order_ids(
-            auto_arrange=bool(getattr(self._settings.ui, "auto_arrange_repos", False)),
-            group_active=bool(getattr(self._settings.ui, "group_active_repos", False)),
-        )
-        current = [
-            self._model.repo_at(i).id for i in range(self._model.rowCount())
-        ]
-        # If the target shifted mid-walk (a new active repo arrived,
-        # activity timestamps moved), refresh the total estimate so the
-        # easing curve stretches/contracts smoothly. Each step otherwise
-        # decrements by 1 — O(1) instead of recomputing per tick.
-        if target != self._arrange_target_cache:
-            self._arrange_target_cache = target
-            self._arrange_total_estimate = (
-                self._arrange_steps_taken + _count_bubble_swaps(current, target)
-            )
-        if current == target:
-            self._arrange_step_timer.stop()
-            return False
-        for i, (cur_id, tgt_id) in enumerate(zip(current, target)):
-            if cur_id == tgt_id:
-                continue
-            # The id that *should* sit at row i is currently lower; bubble
-            # it up by one. Topmost mismatch wins so rows settle from the
-            # top down — visually, the highest-priority repo finishes
-            # first, then the next, etc.
-            src_row = current.index(tgt_id)
-            self._model.move_row_up(src_row)
-            self._arrange_steps_taken += 1
-            self._arrange_step_timer.setInterval(self._next_step_interval())
-            return True
-        self._arrange_step_timer.stop()
-        return False
-
-    def _next_step_interval(self) -> int:
-        """Sine ease-in-out cadence between swaps.
-
-        Maps gap-to-next-swap onto sin(pi · x). x = 0 (first gap) and
-        x = 1 (last gap) both give MAX (slow); x = 0.5 gives MIN (fast
-        middle). `_arrange_total_estimate` is set at walk start and only
-        refreshed when the target shifts, so the curve stays stable.
-        """
-        total = self._arrange_total_estimate
-        if total <= 2:
-            return ARRANGE_STEP_MAX_MS
-        gap_index = self._arrange_steps_taken - 1  # gap that follows this swap
-        last_gap_index = total - 2
-        # Clamp at 1.0: on the converging swap, gap_index can momentarily
-        # exceed last_gap_index (the timer is about to be stopped anyway).
-        x = min(1.0, gap_index / last_gap_index)
-        eased = math.sin(math.pi * x)  # 0 at endpoints, 1 in middle
-        # round (not int) to absorb sin(π) ≈ 1.22e-16 float drift at the
-        # x=1.0 endpoint — int() would truncate to MAX-1 instead of MAX.
-        return round(
-            ARRANGE_STEP_MAX_MS - (ARRANGE_STEP_MAX_MS - ARRANGE_STEP_MIN_MS) * eased
-        )
-
     def _advance_spinner(self) -> None:
         self._delegate.spinner_frame += 1
         # Repaint only rows that are currently working.
@@ -1187,7 +990,7 @@ class RepoSidebar(QWidget):
     def _on_current_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
         # Selection change is a strong "user is on the sidebar" signal —
         # arguably stronger than mouse hover. Push the quiet deadline.
-        self._bump_activity()
+        self._animator.bump_activity()
         # Mark the row we're leaving as "last focused" so the user can spot
         # where they were before. Subject to priority rules in
         # RepoListModel.set_last_focused — won't overwrite Stop/Notification.
@@ -1208,7 +1011,7 @@ class RepoSidebar(QWidget):
         self.repo_added.emit(added)
 
     def _on_context_menu(self, pos: QPoint) -> None:
-        self._bump_activity()
+        self._animator.bump_activity()
         idx = self._view.indexAt(pos)
         if not idx.isValid():
             return
