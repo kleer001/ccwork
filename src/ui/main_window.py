@@ -523,20 +523,27 @@ class MainWindow(QMainWindow):
         event = str(obj.get("event", ""))
         payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else {}
         cwd = obj.get("cwd") or (payload.get("cwd") if isinstance(payload, dict) else None)
+        raw_id = obj.get("repo_id")
+        repo_id = raw_id if isinstance(raw_id, str) and raw_id else None
 
-        # Resolve the cwd to every repo instance sharing that path. With
-        # duplicates allowed, hooks can't tell duplicates apart by cwd alone
-        # — we broadcast to all of them. Per-session routing is future work.
-        matching: list[Repo] = (
-            self._store.repos_for_path(str(cwd)) if cwd else []
-        )
+        # Per-session routing: when the hook payload carries a repo_id
+        # (stamped via CCWORK_REPO_ID in terminal_session.build_session),
+        # scope `matching` to that single instance. Otherwise fall back
+        # to cwd-broadcast — legacy hooks and shells spawned before the
+        # repo_id field existed.
+        if repo_id is not None:
+            repo = self._store.find_by_id(repo_id)
+            matching: list[Repo] = [repo] if repo else []
+        else:
+            matching = self._store.repos_for_path(str(cwd)) if cwd else []
         log.info(
-            "hook event=%s cwd=%r matched=%d", event, cwd, len(matching),
+            "hook event=%s cwd=%r repo_id=%r matched=%d",
+            event, cwd, repo_id, len(matching),
         )
 
         if event == EVENT_USER_PROMPT_SUBMIT:
             if matching:
-                self._handle_user_prompt(matching, str(cwd))
+                self._handle_user_prompt(matching)
             return
 
         if event == EVENT_REPO_ADDED:
@@ -549,26 +556,35 @@ class MainWindow(QMainWindow):
         if event == EVENT_STOP and matching:
             for r in matching:
                 self._working.discard(r.id)
-            self._sidebar.set_working(str(cwd), False)
+                self._sidebar.set_working_for_id(r.id, False)
 
         if event in IDLE_EVENTS:
             self._bell_btn.set_unseen(True)
             status = EVENT_TO_STATUS.get(event)
             if matching and status is not None:
-                self._sidebar.set_status(str(cwd), status)
+                # Status is still path-keyed in the model (broadcasts to
+                # duplicates). Per-instance status is left as future work
+                # — see REFACTORING.md.
+                seen_paths: set[str] = set()
+                for r in matching:
+                    if r.path in seen_paths:
+                        continue
+                    seen_paths.add(r.path)
+                    self._sidebar.set_status(r.path, status)
 
-    def _handle_user_prompt(self, matching: list[Repo], cwd: str) -> None:
-        """A turn started in `cwd`. Self-heal stale ids (Esc-interrupt and
-        crashes don't emit Stop) before re-arming the spinner."""
+    def _handle_user_prompt(self, matching: list[Repo]) -> None:
+        """A turn started in these repos. Self-heal stale ids (Esc-interrupt
+        and crashes don't emit Stop) before re-arming the spinner."""
+        seen_paths: set[str] = set()
         for r in matching:
+            if r.path not in seen_paths:
+                seen_paths.add(r.path)
+                # Status is path-keyed; clear once per distinct path.
+                self._sidebar.clear_status(r.path)
             self._working.discard(r.id)
-        for r in matching:
             self._working.add(r.id)
-        # Sidebar state is path-keyed — one call per distinct path is
-        # enough; the dataChanged broadcast lights every matching row.
-        self._sidebar.clear_status(cwd)
-        self._sidebar.set_working(cwd, False)
-        self._sidebar.set_working(cwd, True)
+            self._sidebar.set_working_for_id(r.id, False)
+            self._sidebar.set_working_for_id(r.id, True)
 
     def _current_repo_id(self) -> str | None:
         w = self._stack.currentWidget()

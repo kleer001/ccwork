@@ -27,6 +27,12 @@ _sock="$_sock_dir/ccwork.sock"
 _event="${CCWORK_EVENT:-Unknown}"
 _ts=$(date +%s)
 _cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
+# Per-session routing: terminal_session.build_session stamps this so the
+# GUI can route to a specific duplicate row instead of broadcasting on
+# cwd. Empty when the user invokes claude outside ccwork (legacy hooks)
+# or from a shell spawned before this field was added — handler falls
+# back to cwd-broadcast.
+_repo_id="${CCWORK_REPO_ID:-}"
 
 # Drain stdin. Claude Code provides a small JSON object per hook call.
 _payload=$(cat)
@@ -53,8 +59,9 @@ _json_escape() {
 }
 _cwd_esc=$(_json_escape "$_cwd")
 _event_esc=$(_json_escape "$_event")
+_repo_id_esc=$(_json_escape "$_repo_id")
 
-_line="{\"event\":\"$_event_esc\",\"cwd\":\"$_cwd_esc\",\"ts\":$_ts,\"payload\":$_payload}"
+_line="{\"event\":\"$_event_esc\",\"cwd\":\"$_cwd_esc\",\"repo_id\":\"$_repo_id_esc\",\"ts\":$_ts,\"payload\":$_payload}"
 
 # Best-effort send. Short timeout so a dead socket doesn't stall Claude Code.
 if command -v socat >/dev/null 2>&1; then
