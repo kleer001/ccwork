@@ -29,7 +29,6 @@ from pathlib import Path
 
 from src.core.settings import XtermSettings
 
-
 log = logging.getLogger(__name__)
 
 

@@ -22,7 +22,6 @@ from PySide6.QtWidgets import QApplication
 
 from src.core.settings import Settings, XtermSettings
 
-
 _DARK_ACCENT = "#268bd2"   # Solarized blue — readable on every bundled dark bg
 _LIGHT_ACCENT = "#2aa198"  # Solarized cyan — readable on the bundled light bgs
 

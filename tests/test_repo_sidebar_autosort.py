@@ -12,7 +12,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from PySide6.QtCore import QPersistentModelIndex
 from PySide6.QtWidgets import QApplication
 

@@ -52,7 +52,6 @@ from src.ui.terminal_host import TerminalHost
 from src.ui.terminal_lifecycle import TerminalLifecycle
 from src.ui.title_label import TitleLabel
 
-
 log = logging.getLogger(__name__)
 
 

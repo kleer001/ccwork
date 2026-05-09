@@ -17,7 +17,6 @@ from src.ui.arrangement_animator import (
     step_interval_ms,
 )
 
-
 # ── count_bubble_swaps: equals the inversion count between current and target ──
 
 

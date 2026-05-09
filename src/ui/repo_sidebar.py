@@ -46,7 +46,6 @@ from src.core.hook_server import EVENT_NOTIFICATION, EVENT_STOP
 from src.core.repo_store import Repo, RepoStore
 from src.ui.arrangement_animator import ArrangementAnimator
 
-
 # Custom roles — keep the model backed by a single Repo per row plus branch
 # + status. The view's delegate reads these directly. STATUS is one of:
 # "" (no badge), "done" (Claude finished a turn), "attention" (Claude needs

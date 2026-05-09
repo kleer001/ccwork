@@ -17,7 +17,7 @@ import copy
 import shlex
 from dataclasses import dataclass
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -40,7 +40,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.settings import Settings, UISettings, XtermSettings, save_settings
-
 
 # ── Color-scheme presets ────────────────────────────────────────────────────
 # Curated: three dark and three light well-known schemes. Users can always

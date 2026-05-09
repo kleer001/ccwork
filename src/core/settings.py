@@ -33,10 +33,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass, field, asdict
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
-
 
 log = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ SCHEMA_VERSION = 1
 #         ui["sidebar"] = {"width": ui.pop("sidebar_width", 240), ...}
 #         return d
 #     _MIGRATIONS = {1: _v1_to_v2}
-_MIGRATIONS: dict[int, "Callable[[dict[str, Any]], dict[str, Any]]"] = {}
+_MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {}
 
 
 def _migrate(data: dict[str, Any], from_version: int) -> dict[str, Any]:

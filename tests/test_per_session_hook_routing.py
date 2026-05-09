@@ -16,7 +16,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from PySide6.QtWidgets import QApplication
 
 from src.core.hook_server import (

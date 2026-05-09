@@ -1,0 +1,16 @@
+# Pre-commit hooks for ccwork. Install once with:
+#
+#     pip install pre-commit
+#     pre-commit install
+#
+# Then ruff runs (lint + format) on every `git commit` against the staged
+# files. Push-time CI (.github/workflows/test.yml) re-runs ruff over the
+# whole tree as a backstop.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format

@@ -11,7 +11,6 @@ import shutil
 import tempfile
 
 import pytest
-
 from PySide6.QtWidgets import QApplication
 
 from src.core.settings import Settings, UISettings, XtermSettings, load_settings

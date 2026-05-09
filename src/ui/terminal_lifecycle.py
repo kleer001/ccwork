@@ -13,7 +13,7 @@ made it the natural seam to harden.
 
 from __future__ import annotations
 
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
 
 from PySide6.QtCore import QObject, QPoint, Signal
 from PySide6.QtWidgets import QStackedWidget

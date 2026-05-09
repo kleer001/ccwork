@@ -23,10 +23,9 @@ import json
 import os
 import subprocess
 import uuid
-from dataclasses import dataclass, field, asdict
+from collections.abc import Iterator
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterator
-
 
 SCHEMA_VERSION = 1
 
@@ -35,7 +34,7 @@ SCHEMA_VERSION = 1
 # the dict at version N+1. Empty today; the seam exists so future
 # changes to repos.json (renames, restructures) are explicit instead
 # of relying on the load loop's silent default-application.
-_MIGRATIONS: dict[int, "object"] = {}
+_MIGRATIONS: dict[int, object] = {}
 
 
 def _migrate_repos(data: dict, from_version: int) -> dict:

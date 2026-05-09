@@ -21,7 +21,6 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
-
 log = logging.getLogger(__name__)
 
 

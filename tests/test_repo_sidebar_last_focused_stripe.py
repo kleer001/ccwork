@@ -8,10 +8,10 @@ move, the badge column is reserved for genuine Claude alerts.
 from __future__ import annotations
 
 from src.ui.repo_sidebar import (
-    RepoDelegate,
     STATUS_ATTENTION,
     STATUS_DONE,
     STATUS_LAST_FOCUSED,
+    RepoDelegate,
 )
 
 
