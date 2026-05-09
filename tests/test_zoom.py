@@ -12,8 +12,6 @@ import tempfile
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
@@ -23,11 +21,6 @@ from src.core.settings import Settings, XtermSettings, save_settings
 
 class _StubHookServer(QObject):
     event_received = Signal(dict)
-
-
-@pytest.fixture(scope="session")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture

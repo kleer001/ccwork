@@ -13,8 +13,6 @@ from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from PySide6.QtCore import QPersistentModelIndex
 from PySide6.QtWidgets import QApplication
 
@@ -25,11 +23,6 @@ from src.ui.repo_sidebar import (
     STATUS_LAST_FOCUSED,
     RepoListModel,
 )
-
-
-@pytest.fixture(scope="session")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _store_with(paths: list[str], cfg_path: Path) -> RepoStore:

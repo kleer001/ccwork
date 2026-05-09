@@ -17,8 +17,6 @@ from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from PySide6.QtWidgets import QApplication
 
 from src.core.hook_server import (
@@ -31,11 +29,6 @@ from src.core.settings import Settings
 from src.core.terminal_session import build_session
 from src.ui.main_window import MainWindow
 from src.ui.repo_sidebar import ROLE_WORKING
-
-
-@pytest.fixture(scope="session")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _make_window(
