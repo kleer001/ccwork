@@ -24,6 +24,36 @@ def test_load_empty_when_missing(store_path: Path) -> None:
     assert s.repos == []
 
 
+def test_repo_caches_resolved_path(tmp_path: Path) -> None:
+    """Repo.__post_init__ populates `resolved` so RepoStore lookups
+    can compare strings instead of stat'ing every repo per call."""
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+
+    r = Repo(path=str(link))
+    assert r.resolved == str(real)
+    # Resolved is NOT a dataclass field — asdict drops it (on-disk shape
+    # stays {path, id, instance, emoji}).
+    from dataclasses import asdict
+    assert "resolved" not in asdict(r)
+
+
+def test_index_of_via_symlink_finds_realpath_row(tmp_path: Path) -> None:
+    """indices_of resolves the input path once and compares to cached
+    repo.resolved — symlink/canonical mismatch must still match."""
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+
+    s = RepoStore(config_path=tmp_path / "repos.json")
+    s.add(str(real))
+    assert s.index_of(str(link)) == 0
+    assert s.indices_of(str(link)) == [0]
+
+
 def test_save_creates_parent_dir(tmp_path: Path) -> None:
     p = tmp_path / "a" / "b" / "repos.json"
     s = RepoStore(config_path=p)

@@ -77,6 +77,14 @@ class Repo:
     instance: int = 0
     emoji: str = ""
 
+    def __post_init__(self) -> None:
+        # Cache the resolved path so RepoStore lookups (called per-row
+        # per-paint and per-hook-event) compare strings instead of
+        # re-stat'ing every repo. Set as a plain instance attribute, NOT
+        # a dataclass field — asdict() and the auto-generated __repr__
+        # ignore it, so the on-disk shape is unchanged.
+        self.resolved: str = normalize_path(self.path)
+
     @property
     def name(self) -> str:
         return os.path.basename(self.path.rstrip("/")) or self.path
@@ -161,18 +169,21 @@ class RepoStore:
     # ── lookup helpers ──
 
     def index_of(self, path: str) -> int:
-        """First row whose realpath matches `path`, or -1."""
+        """First row whose realpath matches `path`, or -1.
+
+        One realpath syscall on the input; the stored repos compare via
+        their cached `resolved` attribute (computed once at __post_init__).
+        """
         resolved = normalize_path(path)
         for i, r in enumerate(self.repos):
-            if normalize_path(r.path) == resolved:
+            if r.resolved == resolved:
                 return i
         return -1
 
     def indices_of(self, path: str) -> list[int]:
         """All rows whose realpath matches `path`, in order."""
         resolved = normalize_path(path)
-        return [i for i, r in enumerate(self.repos)
-                if normalize_path(r.path) == resolved]
+        return [i for i, r in enumerate(self.repos) if r.resolved == resolved]
 
     def find_by_id(self, repo_id: str) -> Repo | None:
         for r in self.repos:
@@ -227,7 +238,7 @@ class RepoStore:
         """
         for i, r in enumerate(self.repos):
             if r.id == repo_id:
-                resolved = normalize_path(r.path)
+                resolved = r.resolved
                 self.repos.pop(i)
                 survivors = [self.repos[j] for j in self.indices_of(resolved)]
                 if len(survivors) == 1:
