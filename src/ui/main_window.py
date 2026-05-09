@@ -37,7 +37,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.hook_server import (
-    EVENT_NOTIFICATION,
     EVENT_REPO_ADDED,
     EVENT_STOP,
     EVENT_USER_PROMPT_SUBMIT,
@@ -49,7 +48,7 @@ from src.core.settings import Settings, load_settings, save_settings
 from src.core.terminal_session import build_session
 from src.ui.preferences_dialog import PreferencesDialog
 from src.ui.qt_theme import apply_theme
-from src.ui.repo_sidebar import RepoSidebar
+from src.ui.repo_sidebar import EVENT_TO_STATUS, RepoSidebar
 from src.ui.terminal_host import TerminalHost
 from src.ui.title_label import TitleLabel
 
@@ -178,7 +177,7 @@ class MainWindow(QMainWindow):
         """
         for text, seq, slot in (
             ("Preferences", QKeySequence("Ctrl+,"), self._open_preferences),
-            ("Add Repo",    QKeySequence("Ctrl+O"), self._sidebar._on_add_clicked),
+            ("Add Repo",    QKeySequence("Ctrl+O"), self._sidebar.open_add_dialog),
             ("Quit",        QKeySequence.Quit,     self.close),
         ):
             act = QAction(text, self)
@@ -308,18 +307,30 @@ class MainWindow(QMainWindow):
         else:
             bar.showMessage("Settings applied.", 3_000)
 
+    def _dispose_terminal(self, repo_id: str, *, stop: bool = True) -> bool:
+        """Tear down the TerminalHost for `repo_id`. Returns True if the
+        disposed host was the currently visible widget.
+
+        `stop=False` skips the explicit `host.stop()` — the TerminalHost is
+        already finished (e.g. xterm exited on its own), so calling stop()
+        would be redundant.
+        """
+        host = self._terminals.pop(repo_id, None)
+        if host is None:
+            return False
+        was_current = self._stack.currentWidget() is host
+        self._stack.removeWidget(host)
+        if stop:
+            host.stop()
+        host.deleteLater()
+        return was_current
+
     def _on_repo_removed(self, repo: Repo) -> None:
         """A repo was removed from the sidebar — also tear down its terminal."""
         self._working.discard(repo.id)
-        host = self._terminals.pop(repo.id, None)
-        if host is not None:
-            was_current = self._stack.currentWidget() is host
-            self._stack.removeWidget(host)
-            host.stop()
-            host.deleteLater()
-            if was_current:
-                self._stack.setCurrentWidget(self._empty_placeholder)
-                self._title.set_repo(None, None)
+        if self._dispose_terminal(repo.id):
+            self._stack.setCurrentWidget(self._empty_placeholder)
+            self._title.set_repo(None, None)
 
     def _reload_terminal(self, repo: Repo) -> None:
         """Respawn the terminal for a repo with the current settings.
@@ -327,12 +338,7 @@ class MainWindow(QMainWindow):
         Killing xterm kills the shell inside; any live Claude session is
         lost. Callers should confirm with the user before invoking.
         """
-        host = self._terminals.pop(repo.id, None)
-        if host is not None:
-            self._stack.removeWidget(host)
-            host.stop()
-            host.deleteLater()
-        # Re-spawn.
+        self._dispose_terminal(repo.id)
         self._ensure_terminal(repo)
 
     # ── zoom ──
@@ -405,7 +411,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
 
         reload_act = QAction("Reload terminal", menu)
-        reload_act.triggered.connect(lambda _=False, r=repo: self._sidebar._confirm_reload(r))
+        reload_act.triggered.connect(lambda _=False, r=repo: self._sidebar.confirm_reload(r))
         menu.addAction(reload_act)
 
         prefs_act = QAction("Preferences…", menu)
@@ -494,12 +500,7 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(0, current.focus_child)
 
     def _branch_for(self, path: str) -> str | None:
-        """Pull the cached branch for `path` from the sidebar model."""
-        from src.ui.repo_sidebar import ROLE_BRANCH
-        row = self._sidebar.model.index_of(path)
-        if row < 0:
-            return None
-        return self._sidebar.model.data(self._sidebar.model.index(row), ROLE_BRANCH)
+        return self._sidebar.branch_for(path)
 
     def _on_repo_added(self, repo: Repo) -> None:
         self._sidebar.refresh_branches()
@@ -520,15 +521,8 @@ class MainWindow(QMainWindow):
         )
         if not siblings_working:
             self._sidebar.set_working(repo.path, False)
-        host = self._terminals.pop(repo.id, None)
         self._sidebar.set_terminal_active(repo.id, False)
-        was_current = host is not None and self._stack.currentWidget() is host
-        if host is not None:
-            self._stack.removeWidget(host)
-            host.deleteLater()
-        # If the departing terminal was visible, show the placeholder so we
-        # don't silently switch to some other repo's terminal.
-        if was_current:
+        if self._dispose_terminal(repo.id, stop=False):
             self._stack.setCurrentWidget(self._empty_placeholder)
         log.info("terminal for %s exited (code=%d)", repo.path, code)
 
@@ -547,49 +541,41 @@ class MainWindow(QMainWindow):
             "hook event=%s cwd=%r matched=%d", event, cwd, len(matching),
         )
 
-        # Track Claude's mid-turn state. UserPromptSubmit starts a turn;
-        # only Stop ends one. Notification fires mid-turn (permission_prompt
-        # while a tool waits on the user, idle_prompt as a post-Stop nag) —
-        # neither means the turn is over, so they do *not* clear _working.
-        # Esc-interrupt and crashes never emit Stop, so UserPromptSubmit
-        # also self-heals: drop any stale ids for this cwd before re-arming.
-        if matching and event == EVENT_USER_PROMPT_SUBMIT:
-            for r in matching:
-                self._working.discard(r.id)
-            for r in matching:
-                self._working.add(r.id)
-            # Sidebar state is path-keyed — one call per distinct path is
-            # enough; the dataChanged broadcast lights every matching row.
-            self._sidebar.clear_status(str(cwd))
-            self._sidebar.set_working(str(cwd), False)
-            self._sidebar.set_working(str(cwd), True)
+        if event == EVENT_USER_PROMPT_SUBMIT:
+            if matching:
+                self._handle_user_prompt(matching, str(cwd))
             return
 
-        if matching and event == EVENT_STOP:
-            for r in matching:
-                self._working.discard(r.id)
-            self._sidebar.set_working(str(cwd), False)
-
-        if event == EVENT_REPO_ADDED and cwd:
-            # Auto-add only when no row exists yet for this path. Manual
-            # Ctrl+O is the only way to create duplicates — every plain
-            # `claude` invocation in an existing repo dir would otherwise
-            # spawn a new tab.
-            if not self._store.repos_for_path(str(cwd)):
+        if event == EVENT_REPO_ADDED:
+            if cwd and not self._store.repos_for_path(str(cwd)):
                 self._sidebar.model.add_repo(cwd)
             return
 
+        # Stop both ends a turn (clear working) AND lights the idle-alert
+        # surface (bell + status badge); we deliberately fall through.
+        if event == EVENT_STOP and matching:
+            for r in matching:
+                self._working.discard(r.id)
+            self._sidebar.set_working(str(cwd), False)
+
         if event in IDLE_EVENTS:
-            # Light the bell dot so the user has a glanceable "something
-            # happened" signal even if the per-repo sidebar dot is off-screen.
             self._bell_btn.set_unseen(True)
-            # Status dot on the sidebar — fires for every repo, including
-            # the active one. Cleared on next UserPromptSubmit or when the
-            # user re-clicks the row.
-            if matching:
-                from src.ui.repo_sidebar import STATUS_ATTENTION, STATUS_DONE
-                status = STATUS_ATTENTION if event == EVENT_NOTIFICATION else STATUS_DONE
+            status = EVENT_TO_STATUS.get(event)
+            if matching and status is not None:
                 self._sidebar.set_status(str(cwd), status)
+
+    def _handle_user_prompt(self, matching: list[Repo], cwd: str) -> None:
+        """A turn started in `cwd`. Self-heal stale ids (Esc-interrupt and
+        crashes don't emit Stop) before re-arming the spinner."""
+        for r in matching:
+            self._working.discard(r.id)
+        for r in matching:
+            self._working.add(r.id)
+        # Sidebar state is path-keyed — one call per distinct path is
+        # enough; the dataChanged broadcast lights every matching row.
+        self._sidebar.clear_status(cwd)
+        self._sidebar.set_working(cwd, False)
+        self._sidebar.set_working(cwd, True)
 
     def _current_repo_id(self) -> str | None:
         w = self._stack.currentWidget()

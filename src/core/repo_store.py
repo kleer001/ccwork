@@ -31,6 +31,17 @@ from typing import Iterator
 SCHEMA_VERSION = 1
 
 
+def normalize_path(path: str) -> str:
+    """Canonicalize a path so set/dict membership agrees regardless of how
+    the path was supplied (trailing slash, symlink, relative segment).
+
+    Used as the single key shape for state keyed by path. Without this, a
+    hook reporting `/symlink/repo` when the sidebar holds `/real/repo`
+    would silently fail — e.g. the spinner wouldn't flip.
+    """
+    return os.path.realpath(path) if path else ""
+
+
 def default_config_path() -> Path:
     """Return `$XDG_CONFIG_HOME/ccwork/repos.json` (or `~/.config/...`)."""
     xdg = os.environ.get("XDG_CONFIG_HOME")
@@ -151,23 +162,30 @@ class RepoStore:
 
     def index_of(self, path: str) -> int:
         """First row whose realpath matches `path`, or -1."""
-        resolved = os.path.realpath(path)
+        resolved = normalize_path(path)
         for i, r in enumerate(self.repos):
-            if os.path.realpath(r.path) == resolved:
+            if normalize_path(r.path) == resolved:
                 return i
         return -1
 
     def indices_of(self, path: str) -> list[int]:
         """All rows whose realpath matches `path`, in order."""
-        resolved = os.path.realpath(path)
+        resolved = normalize_path(path)
         return [i for i, r in enumerate(self.repos)
-                if os.path.realpath(r.path) == resolved]
+                if normalize_path(r.path) == resolved]
 
     def find_by_id(self, repo_id: str) -> Repo | None:
         for r in self.repos:
             if r.id == repo_id:
                 return r
         return None
+
+    def index_of_id(self, repo_id: str) -> int:
+        """Row index for `repo_id`, or -1. Mirrors `index_of(path)`."""
+        for i, r in enumerate(self.repos):
+            if r.id == repo_id:
+                return i
+        return -1
 
     def repos_for_path(self, path: str) -> list[Repo]:
         """All entries whose realpath matches `path` (zero, one, or many)."""
@@ -188,7 +206,7 @@ class RepoStore:
         - otherwise → new instance = max(existing instance) + 1 (gaps from
           prior removals are preserved)
         """
-        resolved = os.path.realpath(path)
+        resolved = normalize_path(path)
         siblings = [self.repos[i] for i in self.indices_of(resolved)]
         if not siblings:
             new_inst = 0
@@ -209,7 +227,7 @@ class RepoStore:
         """
         for i, r in enumerate(self.repos):
             if r.id == repo_id:
-                resolved = os.path.realpath(r.path)
+                resolved = normalize_path(r.path)
                 self.repos.pop(i)
                 survivors = [self.repos[j] for j in self.indices_of(resolved)]
                 if len(survivors) == 1:
@@ -250,7 +268,7 @@ def is_git_root(path: str | os.PathLike[str]) -> bool:
     top = r.stdout.strip()
     if not top:
         return False
-    return os.path.realpath(top) == os.path.realpath(str(path))
+    return normalize_path(top) == normalize_path(str(path))
 
 
 def current_branch(path: str | os.PathLike[str]) -> str | None:
