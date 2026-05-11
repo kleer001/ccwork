@@ -141,21 +141,10 @@ class XtermSettings:
         # the threat model is fine. Using the specific class path leaves
         # extra_args free to override.
         args += ["-xrm", "XTerm.vt100.allowFontOps: true"]
-        # ╔══════════════════════════════════════════════════════════════════╗
-        # ║ SCROLLBAR_FEEL_EXPERIMENT — pinned 2026-05-10                    ║
-        # ║                                                                  ║
-        # ║ The Athena scrollbar feels "jumpy" because xterm snaps the      ║
-        # ║ viewport to the bottom on every new tty line. scrollTtyOutput=  ║
-        # ║ false suppresses that auto-snap, so the user's scroll position  ║
-        # ║ is sticky and dragging feels less like fighting the terminal.   ║
-        # ║                                                                  ║
-        # ║ TRADEOFF: when you're tailing live output and want it to        ║
-        # ║ follow, you'll have to scroll-to-bottom yourself (End, or the   ║
-        # ║ scrollbar). If that becomes annoying, REMOVE this -xrm line.    ║
-        # ║                                                                  ║
-        # ║ Grep `SCROLLBAR_FEEL_EXPERIMENT` to find every touched site.    ║
-        # ╚══════════════════════════════════════════════════════════════════╝
-        args += ["-xrm", "XTerm*scrollTtyOutput: false"]  # SCROLLBAR_FEEL_EXPERIMENT
+        # Suppress xterm's auto-snap-to-bottom on every new tty line — the
+        # user's scroll position stays sticky. Tradeoff: tailing live output
+        # no longer auto-follows; use End / scroll-to-bottom to catch up.
+        args += ["-xrm", "XTerm*scrollTtyOutput: false"]
         args.extend(self.extra_args)
         return args
 
