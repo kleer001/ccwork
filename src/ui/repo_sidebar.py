@@ -1212,6 +1212,10 @@ class RepoSidebar(QWidget):
         path = QFileDialog.getExistingDirectory(self, "Add repo directory", os.path.expanduser("~"))
         if not path:
             return
+        self._add_path(path)
+
+    def _add_path(self, path: str) -> Repo:
+        """Append a row for `path`, select it, emit repo_added. Returns the new Repo."""
         added = self._model.add_repo(path)
         # Select the just-added row by id (path may be ambiguous now that
         # duplicates are allowed).
@@ -1219,6 +1223,7 @@ class RepoSidebar(QWidget):
         if row >= 0:
             self._view.setCurrentIndex(self._model.index(row))
         self.repo_added.emit(added)
+        return added
 
     def _on_context_menu(self, pos: QPoint) -> None:
         self._bump_activity()
@@ -1234,6 +1239,11 @@ class RepoSidebar(QWidget):
         reload_act.setToolTip("Respawn xterm to pick up new settings. Loses in-flight shell state.")
         reload_act.triggered.connect(lambda _=False, r=repo: self._confirm_reload(r))
         menu.addAction(reload_act)
+
+        clone_act = QAction("Clone this repo", menu)
+        clone_act.setToolTip("Add a second sidebar row pointing at the same directory (parallel session).")
+        clone_act.triggered.connect(lambda _=False, r=repo: self._add_path(r.path))
+        menu.addAction(clone_act)
 
         menu.addSeparator()
         set_badge_act = QAction("Set badge…", menu)
