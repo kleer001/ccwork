@@ -178,10 +178,13 @@ Esc-interrupt and crashes don't emit `Stop`). Only `Stop` clears working.
 the user, `idle_prompt` as a post-Stop nag) — it sets the status badge and
 lights the bell but does **not** clear working, so the spinner keeps
 running through a permission pause and resumes correctly when the user
-approves. The right-edge column shows spinner-OR-status (spinner wins
-when both are set), so during a `permission_prompt` the spinner preempts
-the attention dot — the desktop `notify-send` and the in-terminal yes/no
-UI carry the user-action cue.
+approves. The right-edge column shows attention-OR-spinner-OR-status:
+`STATUS_ATTENTION` wins over the spinner so a `permission_prompt` is
+glanceable even when desktop notifications are off (the bell aggregates
+across repos, so it can't identify *which* repo is waiting). The spinner
+timer keeps ticking while attention is shown, so once the user approves
+and the next event clears the status, the spinner reappears for the rest
+of the turn.
 
 ## Conventions worth knowing
 

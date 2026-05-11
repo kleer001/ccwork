@@ -698,12 +698,12 @@ class RepoDelegate(QStyledItemDelegate):
             painter.restore()
             return
 
-        # Right-edge glyph: braille spinner when working (preempts dot), else
-        # color-coded status dot. Working state is mutually exclusive with
-        # done/attention in the hook flow — UserPromptSubmit clears status
-        # before setting working; Stop/Notification clears working before
-        # setting status.
-        if working:
+        # Right-edge glyph: attention dot wins over the spinner so a
+        # permission_prompt is glanceable even with desktop notifications
+        # off; otherwise the braille spinner runs while Claude is working;
+        # otherwise the color-coded status dot. STATUS_DONE never coincides
+        # with working (Stop clears working before setting done).
+        if working and status != STATUS_ATTENTION:
             spin_font = QFont(option.font)
             spin_font.setPointSizeF(option.font.pointSizeF() * 1.4)
             spin_font.setBold(True)
