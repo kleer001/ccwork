@@ -294,6 +294,7 @@ class PreferencesDialog(QDialog):
         self._sidebar_side = QComboBox(w)
         self._sidebar_side.addItems(["left", "right"])
         self._sidebar_side.setCurrentText(ui.sidebar_side)
+        self._sidebar_side.setToolTip("Which side of the window the repo list lives on.")
         form.addRow("Sidebar position", self._sidebar_side)
 
         self._badge_style = QComboBox(w)
@@ -301,36 +302,45 @@ class PreferencesDialog(QDialog):
         self._badge_style.addItem("Glyph (! ✓ ·)", "glyph")
         idx = self._badge_style.findData(ui.status_badge_style)
         self._badge_style.setCurrentIndex(idx if idx >= 0 else 0)
+        self._badge_style.setToolTip(
+            "Shape of the right-edge alert on each repo row: a colored dot or a single character."
+        )
         form.addRow("Status badge", self._badge_style)
 
         self._restore_last = QCheckBox("Reopen the last-used repo on launch", w)
         self._restore_last.setChecked(ui.restore_last_repo)
+        self._restore_last.setToolTip(
+            "On startup, re-select whichever repo row was active when ccwork last closed."
+        )
         form.addRow("", self._restore_last)
 
         self._desktop_notifs = QCheckBox("Show desktop notifications (Stop / Notification)", w)
         self._desktop_notifs.setChecked(ui.desktop_notifications)
+        self._desktop_notifs.setToolTip(
+            "Off suppresses notify-send pop-ups; in-window cues (bell dot, sidebar status) "
+            "stay on. The 🔊 / 🔇 top-bar button mirrors this setting."
+        )
         form.addRow("", self._desktop_notifs)
 
         self._auto_arrange = QCheckBox("Auto-arrange repos by recent Claude activity", w)
         self._auto_arrange.setChecked(ui.auto_arrange_repos)
+        self._auto_arrange.setToolTip(
+            "Reorders rows by Claude-driven events (Stop / Notification / UserPromptSubmit) "
+            "~2 s after the last event. User-driven row switches don't count."
+        )
         form.addRow("", self._auto_arrange)
 
         self._group_active = QCheckBox(
             "Group active terminals at the top of the sidebar", w,
         )
         self._group_active.setChecked(ui.group_active_repos)
+        self._group_active.setToolTip(
+            "Repos with a live xterm float to the top of the list."
+        )
         form.addRow("", self._group_active)
 
         help_lbl = QLabel(
-            "Sidebar width is set by dragging the splitter — drags persist. "
-            "Desktop notifications are "
-            "fired by ccwork-hook-sink — disabling them here suppresses the "
-            "notify-send pop-ups but keeps in-window indicators (bell dot, "
-            "sidebar status colors) intact. The 🔊 / 🔇 button in the top "
-            "bar is a one-click shortcut for the same setting. "
-            "Auto-arrange reorders the sidebar by Claude-driven events "
-            "(Stop / Notification / UserPromptSubmit) ~2 s after the last "
-            "event; user-driven row switches do not count.",
+            "Tip: drag the splitter to resize the sidebar — the width persists.",
             w,
         )
         help_lbl.setWordWrap(True)
