@@ -1,14 +1,8 @@
-"""Preferences dialog — tabbed, konsole-ish UX.
+"""Tabbed preferences editor for ccwork.
 
-IA borrowed from iTerm2 / qt6ct / lxqt-qterminal: a QTabWidget with a tab
-per category (Text / Colors / Scrolling / Advanced) and a single Save/Cancel
-bar at the bottom. Color schemes come from a preset combo so users can
-switch to a known-good palette without hunting for hex values.
-
-Settings are applied on Save by writing `~/.config/ccwork/settings.json`.
-Open repos keep their current terminal settings until the user closes the
-repo's terminal and clicks it again — future work can wire this up to
-xtermcontrol for live apply.
+Save writes `~/.config/ccwork/settings.toml`. Font / bg / fg apply live
+to running terminals via OSC (see `xterm_osc.py`); scrollback, scrollbar,
+and extra args need a respawn (right-click a repo → Reload terminal).
 """
 
 from __future__ import annotations
@@ -163,9 +157,8 @@ class PreferencesDialog(QDialog):
         tabs.addTab(self._build_advanced_tab(), "Advanced")
 
         hint = QLabel(
-            "Changes apply to terminals opened after saving. To refresh a "
-            "running terminal, close the repo's window and click it again "
-            "in the sidebar.",
+            "Most edits apply live to running terminals. Scrollback, scrollbar, "
+            "and extra args need a respawn — right-click a repo → Reload terminal.",
             self,
         )
         hint.setWordWrap(True)
@@ -200,6 +193,7 @@ class PreferencesDialog(QDialog):
         self._font.setFontFilters(QFontComboBox.MonospacedFonts)
         self._font.setCurrentText(self._settings.xterm.font_family)
         self._font.currentFontChanged.connect(lambda *_: self._refresh_preview())
+        self._font.setToolTip("Terminal font. The list is filtered to monospaced families.")
         form.addRow("Font family", self._font)
 
         self._font_size = QSpinBox(w)
@@ -207,6 +201,7 @@ class PreferencesDialog(QDialog):
         self._font_size.setValue(self._settings.xterm.font_size)
         self._font_size.setSuffix(" pt")
         self._font_size.valueChanged.connect(lambda *_: self._refresh_preview())
+        self._font_size.setToolTip("Terminal font size in points.")
         form.addRow("Font size", self._font_size)
 
         return w
@@ -222,12 +217,15 @@ class PreferencesDialog(QDialog):
         # Select scheme matching current bg/fg, else "Custom".
         self._scheme.setCurrentText(self._match_scheme_name(self._settings.xterm.bg, self._settings.xterm.fg))
         self._scheme.currentIndexChanged.connect(self._on_scheme_picked)
+        self._scheme.setToolTip("Pick a known palette. Overwrites both swatches below.")
         form.addRow("Preset", self._scheme)
 
         self._bg = _ColorButton(self._settings.xterm.bg, w)
         self._fg = _ColorButton(self._settings.xterm.fg, w)
         self._bg.color_changed.connect(self._on_color_changed_manually)
         self._fg.color_changed.connect(self._on_color_changed_manually)
+        self._bg.setToolTip("Terminal background. Picking a custom color switches the preset to Custom.")
+        self._fg.setToolTip("Terminal foreground (text). Picking a custom color switches the preset to Custom.")
 
         swatch_row = QWidget(w)
         lay = QHBoxLayout(swatch_row)
@@ -262,20 +260,25 @@ class PreferencesDialog(QDialog):
         self._scrollback.setSingleStep(1000)
         self._scrollback.setValue(self._settings.xterm.scrollback)
         self._scrollback.setSuffix(" lines")
+        self._scrollback.setToolTip("Lines of terminal history retained. 0 disables scrollback.")
         form.addRow("Scrollback buffer", self._scrollback)
 
         self._scrollbar = QComboBox(w)
         self._scrollbar.addItems(["right", "left", "none"])
         self._scrollbar.setCurrentText(self._settings.xterm.scrollbar)
+        self._scrollbar.setToolTip("Where to draw xterm's scrollbar, if at all.")
         form.addRow("Scrollbar", self._scrollbar)
 
         self._jump = QCheckBox("Jump scroll (redraw one screen at a time when output is heavy)", w)
         self._jump.setChecked(self._settings.xterm.jump_scroll)
+        self._jump.setToolTip(
+            "During heavy output, redraw a screen at a time instead of every line. "
+            "Lets the terminal keep up at the cost of skipping intermediate frames."
+        )
         form.addRow("", self._jump)
 
         help_lbl = QLabel(
-            "ccwork configures mouse-wheel scrolling automatically. Also: "
-            "Shift+PgUp / Shift+PgDn page through scrollback in xterm.",
+            "Tip: Shift+PgUp / Shift+PgDn page through scrollback in xterm.",
             w,
         )
         help_lbl.setWordWrap(True)
@@ -358,18 +361,11 @@ class PreferencesDialog(QDialog):
         self._extras = QLineEdit(w)
         self._extras.setText(" ".join(shlex.quote(a) for a in self._settings.xterm.extra_args))
         self._extras.setPlaceholderText("-bdc -xrm 'XTerm*cursorBlink: true'")
-        form.addRow("Extra xterm args", self._extras)
-
-        help_lbl = QLabel(
-            "Raw flags appended to every xterm command we spawn. Parsed "
-            "with shell quoting rules. See <code>man xterm</code> for the "
-            "full list.",
-            w,
+        self._extras.setToolTip(
+            "Raw flags appended to every xterm spawn. Parsed with shell "
+            "quoting rules. See <code>man xterm</code> for the full list."
         )
-        help_lbl.setWordWrap(True)
-        help_lbl.setTextFormat(Qt.RichText)
-        help_lbl.setStyleSheet("color: #888;")
-        form.addRow("", help_lbl)
+        form.addRow("Extra xterm args", self._extras)
 
         return w
 
