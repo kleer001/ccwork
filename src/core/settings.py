@@ -208,8 +208,8 @@ class UISettings:
     status_badge_style: str = "dot"
     # When True, the sidebar reorders itself by most-recent Claude activity
     # (Stop / Notification / UserPromptSubmit) ~2s after the last event.
-    # User-driven STATUS_LAST_FOCUSED transitions are not "Claude activity"
-    # and do not feed the sort.
+    # The user-navigation bookmark (RepoListModel._last_focused) lives on a
+    # separate axis and does not feed the sort.
     auto_arrange_repos: bool = False
     # When True, repos with a live terminal float to the top of the sidebar
     # and a small visual gap separates them from the inactive rows below.

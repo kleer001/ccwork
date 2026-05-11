@@ -2,8 +2,9 @@
 
 The sidebar can optionally re-sort itself so the repos with the most
 recent Claude-driven status changes (Stop / Notification /
-UserPromptSubmit) bubble to the top. STATUS_LAST_FOCUSED is set by user
-navigation, not Claude, and must not feed the sort.
+UserPromptSubmit) bubble to the top. The last-focused bookmark is set by
+user navigation, not Claude, and lives in its own field — so it must not
+feed the sort.
 """
 
 from __future__ import annotations
@@ -22,7 +23,6 @@ from src.core.repo_store import Repo, RepoStore
 from src.ui.repo_sidebar import (
     STATUS_ATTENTION,
     STATUS_DONE,
-    STATUS_LAST_FOCUSED,
     RepoListModel,
 )
 
@@ -84,8 +84,9 @@ def test_last_focused_does_not_stamp_activity(
 
     # Only A gets a Claude-driven event.
     model.set_status("/a", STATUS_DONE)
-    # Setting STATUS_LAST_FOCUSED on B is user navigation, not Claude.
-    model.set_status("/b", STATUS_LAST_FOCUSED)
+    # Marking B as last-focused is user navigation, not Claude — it must
+    # not feed the recency sort.
+    model.set_last_focused("/b")
 
     assert model.last_activity("/a") > 0
     assert model.last_activity("/b") == 0.0

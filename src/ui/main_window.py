@@ -76,12 +76,6 @@ class MainWindow(QMainWindow):
         # the same repo each get their own xterm. Keyed by Repo.id so the two
         # rows for one path can't collide on a path-string key.
         self._terminals: dict[str, TerminalHost] = {}
-        # Repo ids whose Claude session is mid-turn (UserPromptSubmit fired,
-        # Stop/Notification hasn't yet). Drives the quit-confirm prompt so we
-        # only nag when there's actual in-flight work to lose. With duplicate
-        # rows sharing a cwd, hook routing is ambiguous — we light up *every*
-        # id matching the cwd (broadcast). Per-session routing is future work.
-        self._working: set[str] = set()
 
         # ── top strip: centered repo · branch + right-side icon cluster ──
         self._title = TitleLabel(self)
@@ -312,7 +306,6 @@ class MainWindow(QMainWindow):
 
     def _on_repo_removed(self, repo: Repo) -> None:
         """A repo was removed from the sidebar — also tear down its terminal."""
-        self._working.discard(repo.id)
         host = self._terminals.pop(repo.id, None)
         if host is not None:
             was_current = self._stack.currentWidget() is host
@@ -511,23 +504,22 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, f"xterm failed for {repo.display_name}", msg)
 
     def _on_terminal_finished(self, repo: Repo, code: int) -> None:
-        self._working.discard(repo.id)
-        # Sidebar working state is path-keyed (broadcast across duplicates).
-        # Only clear the spinner if no *other* duplicate is still working,
-        # otherwise we'd silence a sibling that is genuinely mid-turn.
-        siblings_working = any(
-            r.id in self._working
-            for r in self._store.repos_for_path(repo.path)
-            if r.id != repo.id
-        )
-        if not siblings_working:
-            self._sidebar.set_working(repo.path, False)
         host = self._terminals.pop(repo.id, None)
         self._sidebar.set_terminal_active(repo.id, False)
         was_current = host is not None and self._stack.currentWidget() is host
         if host is not None:
             self._stack.removeWidget(host)
             host.deleteLater()
+        # Working state is path-broadcast. If another terminal at this path
+        # is still alive, leave the spinner — that other session may still
+        # be mid-turn. Otherwise clear it.
+        any_alive = any(
+            r.id in self._terminals and self._terminals[r.id].is_running()
+            for r in self._store.repos_for_path(repo.path)
+            if r.id != repo.id
+        )
+        if not any_alive:
+            self._sidebar.set_working(repo.path, False)
         # If the departing terminal was visible, show the placeholder so we
         # don't silently switch to some other repo's terminal.
         if was_current:
@@ -535,42 +527,20 @@ class MainWindow(QMainWindow):
         log.info("terminal for %s exited (code=%d)", repo.path, code)
 
     def _on_hook_event(self, obj: dict) -> None:
+        """Thin dispatcher: route by event type and delegate per-row state
+        transitions to the sidebar's apply_hook_event entry point.
+
+        Per-row state ownership lives entirely in RepoListModel — see the
+        docstring on RepoListModel.apply_hook_event for the event →
+        mutation table. This method only handles cross-cutting concerns:
+        the RepoAdded auto-add and the bell-dot for idle events. The
+        quit-confirm prompt derives its working list on demand from the
+        model (closeEvent), so there's no id-keyed shadow state to
+        maintain here.
+        """
         event = str(obj.get("event", ""))
         payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else {}
         cwd = obj.get("cwd") or (payload.get("cwd") if isinstance(payload, dict) else None)
-
-        # Resolve the cwd to every repo instance sharing that path. With
-        # duplicates allowed, hooks can't tell duplicates apart by cwd alone
-        # — we broadcast to all of them. Per-session routing is future work.
-        matching: list[Repo] = (
-            self._store.repos_for_path(str(cwd)) if cwd else []
-        )
-        log.info(
-            "hook event=%s cwd=%r matched=%d", event, cwd, len(matching),
-        )
-
-        # Track Claude's mid-turn state. UserPromptSubmit starts a turn;
-        # only Stop ends one. Notification fires mid-turn (permission_prompt
-        # while a tool waits on the user, idle_prompt as a post-Stop nag) —
-        # neither means the turn is over, so they do *not* clear _working.
-        # Esc-interrupt and crashes never emit Stop, so UserPromptSubmit
-        # also self-heals: drop any stale ids for this cwd before re-arming.
-        if matching and event == EVENT_USER_PROMPT_SUBMIT:
-            for r in matching:
-                self._working.discard(r.id)
-            for r in matching:
-                self._working.add(r.id)
-            # Sidebar state is path-keyed — one call per distinct path is
-            # enough; the dataChanged broadcast lights every matching row.
-            self._sidebar.clear_status(str(cwd))
-            self._sidebar.set_working(str(cwd), False)
-            self._sidebar.set_working(str(cwd), True)
-            return
-
-        if matching and event == EVENT_STOP:
-            for r in matching:
-                self._working.discard(r.id)
-            self._sidebar.set_working(str(cwd), False)
 
         if event == EVENT_REPO_ADDED and cwd:
             # Auto-add only when no row exists yet for this path. Manual
@@ -581,17 +551,23 @@ class MainWindow(QMainWindow):
                 self._sidebar.model.add_repo(cwd)
             return
 
+        # Resolve the cwd to every repo instance sharing that path. With
+        # duplicates allowed, hooks can't tell duplicates apart by cwd alone
+        # — sidebar state is path-keyed so a single apply_hook_event call
+        # paints every matching row. Per-session routing is future work.
+        matching: list[Repo] = (
+            self._store.repos_for_path(str(cwd)) if cwd else []
+        )
+        log.info("hook event=%s cwd=%r matched=%d", event, cwd, len(matching))
+        if not matching:
+            return
+
+        self._sidebar.apply_hook_event(event, str(cwd))
+
         if event in IDLE_EVENTS:
-            # Light the bell dot so the user has a glanceable "something
-            # happened" signal even if the per-repo sidebar dot is off-screen.
+            # Bell dot: glanceable "something happened" signal even when
+            # desktop notifications are off or the sidebar is scrolled.
             self._bell_btn.set_unseen(True)
-            # Status dot on the sidebar — fires for every repo, including
-            # the active one. Cleared on next UserPromptSubmit or when the
-            # user re-clicks the row.
-            if matching:
-                from src.ui.repo_sidebar import STATUS_ATTENTION, STATUS_DONE
-                status = STATUS_ATTENTION if event == EVENT_NOTIFICATION else STATUS_DONE
-                self._sidebar.set_status(str(cwd), status)
 
     def _current_repo_id(self) -> str | None:
         w = self._stack.currentWidget()
@@ -604,12 +580,14 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         # Only nag when Claude is mid-turn somewhere — an idle shell sitting
-        # at a prompt is fine to kill silently. Working state is tracked via
-        # UserPromptSubmit (sets) / Stop (clears) hooks; Notification fires
-        # mid-turn and does not affect _working.
+        # at a prompt is fine to kill silently. Working state lives on the
+        # model (path-keyed); we intersect with the set of repos that have
+        # a running terminal here. Notification fires mid-turn and does
+        # not clear working, so a permission_prompt still nags.
+        model = self._sidebar.model
         working_ids = [
-            rid for rid in self._working
-            if rid in self._terminals and self._terminals[rid].is_running()
+            rid for rid, host in self._terminals.items()
+            if host.is_running() and model.is_working(self._store.find_by_id(rid).path)
         ]
         if working_ids:
             id_to_repo = {r.id: r for r in self._store.repos}

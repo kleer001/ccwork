@@ -43,30 +43,45 @@ from PySide6.QtWidgets import (
 )
 
 from src.core import repo_store
+from src.core.hook_server import (
+    EVENT_NOTIFICATION,
+    EVENT_STOP,
+    EVENT_USER_PROMPT_SUBMIT,
+)
 from src.core.repo_store import Repo, RepoStore
 
 
-# Custom roles — keep the model backed by a single Repo per row plus branch
-# + status. The view's delegate reads these directly. STATUS is one of:
-# "" (no badge), "done" (Claude finished a turn), "attention" (Claude needs
-# input). Color-coded by the delegate.
-ROLE_REPO    = Qt.UserRole + 1
-ROLE_BRANCH  = Qt.UserRole + 2
-ROLE_STATUS  = Qt.UserRole + 3
-ROLE_WORKING = Qt.UserRole + 4  # bool — Claude mid-turn in this repo
-ROLE_HAS_TERMINAL = Qt.UserRole + 5  # bool — a TerminalHost exists for this repo this session
+# Hook events that drive per-row Claude-state transitions in
+# RepoListModel.apply_hook_event. Other events (e.g. RepoAdded) are handled
+# at the MainWindow level since they don't mutate per-row state.
+_CLAUDE_STATE_EVENTS = frozenset(
+    {EVENT_USER_PROMPT_SUBMIT, EVENT_STOP, EVENT_NOTIFICATION}
+)
+
+
+# Custom roles. Two orthogonal axes feed the row paint:
+#   • Claude-driven alerts: ROLE_STATUS ("" / "done" / "attention") and
+#     ROLE_WORKING. These ride the right-edge badge column.
+#   • User-navigation cue: ROLE_LAST_FOCUSED. Boolean. Paints as a thin
+#     left-edge stripe so it can't compete with the alert column.
+# These two axes have completely separate storage and mutation paths in
+# RepoListModel — a Claude event must never clobber the user's bookmark,
+# and a user navigation must never clobber a Claude alert.
+ROLE_REPO         = Qt.UserRole + 1
+ROLE_BRANCH       = Qt.UserRole + 2
+ROLE_STATUS       = Qt.UserRole + 3
+ROLE_WORKING      = Qt.UserRole + 4   # bool — Claude mid-turn in this repo
+ROLE_HAS_TERMINAL = Qt.UserRole + 5   # bool — a TerminalHost exists for this repo this session
+ROLE_LAST_FOCUSED = Qt.UserRole + 6   # bool — user's previous selection (bookmark)
+
 
 @dataclass(frozen=True)
 class StatusDefinition:
-    """Single source of truth for a row-status: tooltip label + badge paint.
-
-    `color`/`glyph` of None means the status does not paint in the right-edge
-    badge column (it may paint elsewhere, e.g. as a left-edge stripe).
-    """
+    """Single source of truth for a Claude alert: tooltip label + badge paint."""
     value: str
     label: str
-    color: QColor | None
-    glyph: str | None
+    color: QColor
+    glyph: str
 
 
 # Solarized-ish palette: red = needs attention (urgent), green = done (calmer).
@@ -82,23 +97,15 @@ STATUS_ATTENTION_DEF = StatusDefinition(
     color=QColor(220, 50, 47),
     glyph="!",
 )
-# `last_focused` paints as a left-edge stripe, not a right-edge badge — so the
-# badge column stays reserved for genuine Claude alerts.
-STATUS_LAST_FOCUSED_DEF = StatusDefinition(
-    value="last_focused",
-    label="Last focused",
-    color=None,
-    glyph=None,
-)
 
-_ALL_STATUSES = (STATUS_DONE_DEF, STATUS_ATTENTION_DEF, STATUS_LAST_FOCUSED_DEF)
+_ALL_STATUSES = (STATUS_DONE_DEF, STATUS_ATTENTION_DEF)
 
-STATUS_DONE         = STATUS_DONE_DEF.value
-STATUS_ATTENTION    = STATUS_ATTENTION_DEF.value
-STATUS_LAST_FOCUSED = STATUS_LAST_FOCUSED_DEF.value
+STATUS_DONE      = STATUS_DONE_DEF.value
+STATUS_ATTENTION = STATUS_ATTENTION_DEF.value
 
-STATUS_LABELS = {s.value: s.label for s in _ALL_STATUSES if s.label}
+STATUS_LABELS = {s.value: s.label for s in _ALL_STATUSES}
 WORKING_LABEL = "Claude is working…"
+LAST_FOCUSED_LABEL = "Last focused"
 
 
 def _norm(path: str) -> str:
@@ -170,6 +177,8 @@ class RepoListModel(QAbstractListModel):
         super().__init__(parent)
         self._store = store
         self._branches: dict[str, str | None] = {}
+        # Claude alerts only. Values: "", STATUS_DONE, STATUS_ATTENTION.
+        # User-navigation state lives in _last_focused below, with its own role.
         self._status: dict[str, str] = {}
         self._working: set[str] = set()
         # Repo ids whose TerminalHost has been spawned in the current ccwork
@@ -179,9 +188,13 @@ class RepoListModel(QAbstractListModel):
         self._active_ids: set[str] = set()
         # Per-repo timestamp of the last Claude-driven event
         # (Stop / Notification / UserPromptSubmit). Feeds the optional
-        # auto-arrange sort. STATUS_LAST_FOCUSED is user navigation, not
+        # auto-arrange sort. Setting _last_focused is user navigation, not
         # Claude activity, and does not stamp this dict.
         self._last_activity: dict[str, float] = {}
+        # The previously-selected row path (normalized). Single value — only
+        # one bookmark exists at a time. Mutated exclusively by set_last_focused;
+        # no Claude event handler touches this field.
+        self._last_focused: str | None = None
 
     # ── Qt model API ──
 
@@ -206,15 +219,20 @@ class RepoListModel(QAbstractListModel):
             return _norm(repo.path) in self._working
         if role == ROLE_HAS_TERMINAL:
             return repo.id in self._active_ids
+        if role == ROLE_LAST_FOCUSED:
+            return _norm(repo.path) == self._last_focused
         if role == Qt.ToolTipRole:
             # Prepend a human-readable status line so hovering a row tells
             # the user what the badge means without having to memorize the
             # color palette. Path stays as the second line for context.
+            # Priority: working > Claude alert > last-focused bookmark.
             if _norm(repo.path) in self._working:
                 return f"{WORKING_LABEL}\n{repo.path}"
             label = STATUS_LABELS.get(self._status.get(repo.path, ""))
             if label:
                 return f"{label}\n{repo.path}"
+            if _norm(repo.path) == self._last_focused:
+                return f"{LAST_FOCUSED_LABEL}\n{repo.path}"
             return repo.path
         return None
 
@@ -257,9 +275,13 @@ class RepoListModel(QAbstractListModel):
             self.dataChanged.emit(top, bot, [ROLE_BRANCH])
 
     def set_status(self, path: str, status: str) -> None:
-        """Set the per-repo status badge ("done", "attention", or "" to clear).
+        """Set the Claude-alert status for `path` ("done", "attention", or
+        "" to clear). Stamps last_activity on DONE/ATTENTION so the
+        auto-arrange sort reflects this event.
 
         Per-path state — every duplicate row for this path repaints together.
+        User-navigation state (last-focused) lives in a separate field and
+        is unaffected.
         """
         if status:
             self._status[path] = status
@@ -272,22 +294,36 @@ class RepoListModel(QAbstractListModel):
     def clear_status(self, path: str) -> None:
         self.set_status(path, "")
 
-    def set_last_focused(self, path: str) -> None:
-        """Mark `path` as the most-recently-focused repo.
+    def touch_activity(self, path: str) -> None:
+        """Stamp `_last_activity[path]` without touching working/status state.
 
-        Lower priority than Stop/Notification: if the row already has one of
-        those status dots, it stays — Claude-side signals matter more than
-        "you were here." The violet dot only lights on rows whose status is
-        otherwise empty. Also clears LAST_FOCUSED from any other row so the
-        dot is unique.
+        Lets a UserPromptSubmit refresh the sort-recency key even when
+        working was already True (the old code used a False→True toggle on
+        set_working as a back-channel; this is the explicit version).
         """
-        # Strip prior last-focused from any other row.
-        for other in [p for p, s in self._status.items()
-                      if s == STATUS_LAST_FOCUSED and p != path]:
-            self.clear_status(other)
-        # Only set on the target if nothing higher-priority is there.
-        if not self._status.get(path):
-            self.set_status(path, STATUS_LAST_FOCUSED)
+        self._last_activity[path] = time.monotonic()
+
+    def set_last_focused(self, path: str | None) -> None:
+        """Set the user-navigation bookmark (or clear it with None).
+
+        Independent of Claude alerts: setting this never clobbers a DONE /
+        ATTENTION dot, and a Claude event never clobbers this. Paint
+        composes the two via separate roles.
+        """
+        new_key = _norm(path) if path else None
+        if new_key == self._last_focused:
+            return
+        old_key = self._last_focused
+        self._last_focused = new_key
+        # Repaint old row (stripe disappears) and new row (stripe appears).
+        # Both lookups are by un-normalized path; we walk every row whose
+        # _norm matches so duplicates share the bookmark state.
+        for row in range(len(self._store.repos)):
+            rp = self._store.repos[row].path
+            n = _norm(rp)
+            if n == old_key or n == new_key:
+                idx = self.index(row)
+                self.dataChanged.emit(idx, idx, [ROLE_LAST_FOCUSED, Qt.ToolTipRole])
 
     def set_working(self, path: str, working: bool) -> None:
         """Toggle the spinner for `path`. No-op if state already matches.
@@ -307,6 +343,39 @@ class RepoListModel(QAbstractListModel):
 
     def any_working(self) -> bool:
         return bool(self._working)
+
+    def working_paths(self) -> set[str]:
+        """Normalized paths currently flagged as working. Read-only view."""
+        return set(self._working)
+
+    def is_working(self, path: str) -> bool:
+        return _norm(path) in self._working
+
+    def apply_hook_event(self, event: str, path: str) -> None:
+        """Atomic per-row state transition for one Claude hook event.
+
+        Owns the entire event → state mapping; callers don't need to know
+        the per-event mutator sequence. UI side-effects (spinner timer,
+        reorder scheduling) are handled by the RepoSidebar wrapper.
+
+          • UserPromptSubmit — clear prior alert, mark working, stamp
+            recency. Self-heals: if a prior turn never got a Stop, the
+            existing working=True state is preserved (set_working no-ops)
+            and touch_activity refreshes the timestamp anyway.
+          • Stop — clear working, set DONE. Stamping is implicit in
+            set_status for DONE/ATTENTION.
+          • Notification — set ATTENTION. Does NOT clear working: a
+            permission_prompt fires mid-turn and the turn is still live.
+        """
+        if event == EVENT_USER_PROMPT_SUBMIT:
+            self.clear_status(path)
+            self.set_working(path, True)
+            self.touch_activity(path)
+        elif event == EVENT_STOP:
+            self.set_working(path, False)
+            self.set_status(path, STATUS_DONE)
+        elif event == EVENT_NOTIFICATION:
+            self.set_status(path, STATUS_ATTENTION)
 
     def set_emoji(self, repo_id: str, emoji: str) -> None:
         """Set or clear the optional leading emoji for one row.
@@ -506,6 +575,8 @@ class RepoListModel(QAbstractListModel):
             self._status.pop(path, None)
             self._working.discard(_norm(path))
             self._last_activity.pop(path, None)
+            if self._last_focused == _norm(path):
+                self._last_focused = None
         self._store.save()
         return True
 
@@ -520,11 +591,11 @@ class RepoDelegate(QStyledItemDelegate):
     names are kept to minimize delta in the paint code.
     """
 
-    # Derived from _ALL_STATUSES — statuses with color=None (e.g. last_focused)
-    # are excluded so the right-edge badge column stays reserved for genuine
-    # Claude alerts (working / done / attention).
-    STATUS_COLORS = {s.value: s.color for s in _ALL_STATUSES if s.color is not None}
-    STATUS_GLYPHS = {s.value: s.glyph for s in _ALL_STATUSES if s.glyph is not None}
+    # The right-edge badge column is reserved for genuine Claude alerts
+    # (working / done / attention). The last-focused bookmark paints a
+    # left-edge stripe in a different code path and is NOT in these dicts.
+    STATUS_COLORS = {s.value: s.color for s in _ALL_STATUSES}
+    STATUS_GLYPHS = {s.value: s.glyph for s in _ALL_STATUSES}
     # Muted blue for the working spinner — distinct from the red/green
     # status dots so glance-state is unambiguous.
     SPINNER_COLOR = QColor(38, 139, 210)  # solarized blue
@@ -632,11 +703,12 @@ class RepoDelegate(QStyledItemDelegate):
         status: str = index.data(ROLE_STATUS) or ""
         working: bool = bool(index.data(ROLE_WORKING))
         has_terminal: bool = bool(index.data(ROLE_HAS_TERMINAL))
+        last_focused: bool = bool(index.data(ROLE_LAST_FOCUSED))
 
         # Last-focused bookmark: thin left-edge stripe instead of a right-edge
         # dot, so the badge column stays reserved for genuine Claude alerts.
         # Skip when the row is selected — the active stripe owns that edge.
-        if not selected and status == STATUS_LAST_FOCUSED:
+        if not selected and last_focused:
             lf_rect = QRect(
                 option.rect.left(), option.rect.top(),
                 self.LAST_FOCUSED_STRIPE_W, option.rect.height(),
@@ -942,13 +1014,30 @@ class RepoSidebar(QWidget):
 
     def set_working(self, path: str, working: bool) -> None:
         self._model.set_working(path, working)
+        self._refresh_spinner_timer()
+        if working:
+            self._maybe_schedule_reorder()
+
+    def apply_hook_event(self, event: str, path: str) -> None:
+        """Single entry point for a Claude hook event affecting one path.
+
+        Delegates state mutation to the model and refreshes UI side-effects
+        (spinner timer + auto-arrange schedule). MainWindow._on_hook_event
+        is a thin dispatcher over this method.
+        """
+        if event not in _CLAUDE_STATE_EVENTS:
+            return
+        self._model.apply_hook_event(event, path)
+        self._refresh_spinner_timer()
+        self._maybe_schedule_reorder()
+
+    def _refresh_spinner_timer(self) -> None:
+        """Start the spinner ticker when any row is working; stop otherwise."""
         if self._model.any_working():
             if not self._spinner_timer.isActive():
                 self._spinner_timer.start()
         else:
             self._spinner_timer.stop()
-        if working:
-            self._maybe_schedule_reorder()
 
     def _maybe_schedule_reorder(self) -> None:
         if self._settings is None:

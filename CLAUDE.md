@@ -177,20 +177,35 @@ Claude Code hook ─▶ ccwork-hook-sink ─▶ unix socket ─▶ HookServer
                                             └─ desktop notify-send (gated)
 ```
 
-`UserPromptSubmit` clears any prior status and sets working=True (and
-self-heals by dropping any stale id for that cwd before re-arming, since
-Esc-interrupt and crashes don't emit `Stop`). Only `Stop` clears working.
-`Notification` fires *mid-turn* (`permission_prompt` while a tool waits on
-the user, `idle_prompt` as a post-Stop nag) — it sets the status badge and
-lights the bell but does **not** clear working, so the spinner keeps
-running through a permission pause and resumes correctly when the user
-approves. The right-edge column shows attention-OR-spinner-OR-status:
+`MainWindow._on_hook_event` is a thin dispatcher: it special-cases
+`RepoAdded` (auto-add a row) and toggles the bell dot for idle events;
+everything else routes through `RepoSidebar.apply_hook_event(event,
+path)` → `RepoListModel.apply_hook_event`, which owns the entire
+event → state mutation table. The model knows three Claude events:
+
+  • `UserPromptSubmit` — clear any prior alert, mark working,
+    `touch_activity()` the path. Self-healing for Esc-interrupted /
+    crashed turns is automatic: `set_working(True)` no-ops when already
+    True and `touch_activity` refreshes the recency stamp unconditionally.
+  • `Stop` — clear working, set `STATUS_DONE`.
+  • `Notification` — set `STATUS_ATTENTION`. Does **not** touch working:
+    `permission_prompt` fires mid-turn and the turn is still live, so
+    the spinner keeps running underneath the attention dot.
+
+`MainWindow` no longer keeps a parallel id-keyed `_working` set; the
+quit-confirm derives its list on demand via `model.is_working(path)`
+intersected with running terminals.
+
+The right-edge column shows attention-OR-spinner-OR-status:
 `STATUS_ATTENTION` wins over the spinner so a `permission_prompt` is
 glanceable even when desktop notifications are off (the bell aggregates
 across repos, so it can't identify *which* repo is waiting). The spinner
 timer keeps ticking while attention is shown, so once the user approves
 and the next event clears the status, the spinner reappears for the rest
-of the turn.
+of the turn. The left-edge **last-focused stripe** is on a separate
+axis: stored in `RepoListModel._last_focused` (single value), surfaced
+via `ROLE_LAST_FOCUSED`, mutated only by `set_last_focused()`. Claude
+events never touch it; user navigation never touches `_status`.
 
 ## Conventions worth knowing
 
@@ -204,24 +219,35 @@ of the turn.
   via `asdict` over `_raw`, so unknown keys survive.
 - **xterm spawn args are centralized** in `XtermSettings.to_xterm_args()`.
   Don't append flags ad-hoc from the UI layer — extend the settings dataclass.
-- **Auto-arrange sort excludes `STATUS_LAST_FOCUSED`.** The violet "last
-  focused" mark is set by user navigation, not Claude. `_last_activity` is
-  bumped only by Stop / Notification / UserPromptSubmit. If you add a new
-  status, decide deliberately whether it represents Claude activity (and
-  therefore should stamp the timestamp) or user state (and should not).
+- **User-state and Claude-alert state are storage-separate.** Last-focused
+  lives in `RepoListModel._last_focused` (one path, its own role
+  `ROLE_LAST_FOCUSED`). Claude alerts live in `_status` (DONE/ATTENTION
+  only) and `_working`. A Claude event must never mutate `_last_focused`;
+  a user navigation must never mutate `_status` or `_working`. If you add
+  a new cue, decide first which side it belongs on, then give it its own
+  field + role + mutator.
+- **Auto-arrange sort is keyed off `_last_activity`**, stamped only by
+  the three Claude events (via `set_status` for DONE/ATTENTION,
+  `set_working` on the off→on edge for UserPromptSubmit, plus
+  `touch_activity` for the explicit case where UPS arrives while
+  working is already True). Setting `_last_focused` does not stamp.
 - **The right-edge badge column is reserved for Claude alerts.** Working
-  spinner, `STATUS_DONE`, `STATUS_ATTENTION` paint there. `STATUS_LAST_FOCUSED`
-  is rendered as a thin left-edge stripe (a quiet bookmark) so a frequently-
-  navigating user doesn't tune the alert column out as noise. If you add
-  another status, decide whether it's a Claude alert (right-edge column,
-  add to `STATUS_COLORS`/`STATUS_GLYPHS`) or a user-state cue (paint
-  somewhere else).
+  spinner, `STATUS_DONE`, `STATUS_ATTENTION` paint there. The last-focused
+  bookmark renders as a thin left-edge stripe in a distinct paint pass
+  so the two never compete for the same eye-level.
+- **`apply_hook_event` is the single entry point for hook-driven state
+  changes.** Don't sequence `set_working` + `set_status` + `clear_status`
+  ad-hoc from new call sites — extend the event → mutation table on
+  `RepoListModel.apply_hook_event` instead, and add the event to
+  `_CLAUDE_STATE_EVENTS` if it should drive the spinner timer +
+  reorder schedule.
 - **Terminals are keyed by `repo.id`, not `repo.path`.** `MainWindow._terminals`
-  and `_working` are dicts/sets of repo ids so duplicate rows on the same
-  path get independent xterms. Hook events arrive with `cwd` and broadcast
-  to every matching id (per-session routing is future work). Sidebar
-  per-path state (`_branches`, `_status`, working spinner) stays
-  path-keyed — broadcast across duplicates is the intended UX.
+  is a dict of repo ids so duplicate rows on the same path get
+  independent xterms. Hook events arrive with `cwd` and the sidebar
+  state is path-keyed — `apply_hook_event(event, path)` broadcasts to
+  every duplicate row. The quit-confirm derives its working-id list on
+  demand from `model.is_working(path)` rather than maintaining a
+  parallel set. Per-session routing is future work.
 - Tests use `QT_QPA_PLATFORM=offscreen`. The `qapp` fixture in
   `tests/test_preferences_dialog.py` is the pattern to follow when a test
   needs a `QApplication`.
