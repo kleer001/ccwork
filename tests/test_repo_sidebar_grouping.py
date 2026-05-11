@@ -286,14 +286,14 @@ def test_step_interval_eases_in_and_out(
     qapp: QApplication, tmp_path: Path
 ) -> None:
     """First and last gaps should be slow (MAX); middle gaps fast (MIN-ish)."""
-    from src.ui.repo_sidebar import ARRANGE_STEP_MAX_MS, ARRANGE_STEP_MIN_MS
-
     cfg = tmp_path / "repos.json"
     store = RepoStore(config_path=cfg)
     settings = Settings(
         ui=UISettings(group_active_repos=False, auto_arrange_repos=True)
     )
     sb = RepoSidebar(store, settings=settings)
+    arrange_step_max_ms = settings.ui.animation.arrange_step_max_ms
+    arrange_step_min_ms = settings.ui.animation.arrange_step_min_ms
     sb._model.beginResetModel()
     # 6 repos with /f having the freshest activity → 5-swap walk.
     store.repos = [Repo(path=p) for p in ["/a", "/b", "/c", "/d", "/e", "/f"]]
@@ -308,7 +308,7 @@ def test_step_interval_eases_in_and_out(
     # 5 swaps → 4 gaps recorded (interval set after each swap, last gap
     # is irrelevant — timer stops on the converging step).
     # Endpoints reach MAX; middle is strictly faster than the endpoints.
-    assert intervals[0] == ARRANGE_STEP_MAX_MS  # gap after swap 1
-    assert intervals[-2] == ARRANGE_STEP_MAX_MS  # gap after second-to-last swap
+    assert intervals[0] == arrange_step_max_ms  # gap after swap 1
+    assert intervals[-2] == arrange_step_max_ms  # gap after second-to-last swap
     middle = intervals[1:-2]
-    assert all(ARRANGE_STEP_MIN_MS <= i < ARRANGE_STEP_MAX_MS for i in middle)
+    assert all(arrange_step_min_ms <= i < arrange_step_max_ms for i in middle)

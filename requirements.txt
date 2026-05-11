@@ -1,4 +1,5 @@
 # Project dependencies
 PySide6>=6.6
+tomlkit>=0.12
 pytest
 pytest-cov

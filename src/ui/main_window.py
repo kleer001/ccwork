@@ -125,7 +125,9 @@ class MainWindow(QMainWindow):
         # Debounce sidebar-width persistence: drags fire splitterMoved many
         # times per second, but we only need to write the final value.
         self._sidebar_save_timer = QTimer(self)
-        self._sidebar_save_timer.setInterval(300)
+        self._sidebar_save_timer.setInterval(
+            self._settings.ui.animation.splitter_debounce_ms
+        )
         self._sidebar_save_timer.setSingleShot(True)
         self._sidebar_save_timer.timeout.connect(self._persist_settings_now)
         self._apply_sidebar_layout()
@@ -230,7 +232,7 @@ class MainWindow(QMainWindow):
         if new_width <= 0 or new_width == self._settings.ui.sidebar_width:
             return
         self._settings.ui.sidebar_width = int(new_width)
-        self._sidebar_save_timer.start()  # restart resets the 300ms window
+        self._sidebar_save_timer.start()  # restart resets the debounce window
 
     def _persist_settings_now(self) -> None:
         try:

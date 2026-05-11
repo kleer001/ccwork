@@ -113,10 +113,16 @@ Pure logic with no Qt-widget dependencies (some modules use `QObject`/signals
 but no widgets):
 
 - `settings.py` — `Settings = {xterm: XtermSettings, ui: UISettings, ...}`
-  persisted to `~/.config/ccwork/settings.json`. **Unknown keys round-trip
-  via `_raw`**, so older ccwork versions don't drop fields written by newer
-  ones. `XtermSettings.to_xterm_args()` is the single source of truth for
-  spawn flags.
+  persisted to `~/.config/ccwork/settings.toml` via `tomlkit`. **Unknown
+  keys *and user-added comments* round-trip via `_raw`** (a `TOMLDocument`),
+  so hand-edited files survive a GUI save. A legacy `settings.json` is
+  migrated in place on first launch and renamed to `settings.json.bak`.
+  `XtermSettings.to_xterm_args()` is the single source of truth for spawn
+  flags. `UISettings` nests `layout: LayoutSettings` (row geometry) and
+  `animation: AnimationSettings` (spinner / bubble-walk / debounce timings)
+  — these are **TOML-only power knobs** with no GUI control; tweak by
+  hand and restart. The save path uses `_merge_into` (key-by-key) rather
+  than table reassignment so in-section comments survive.
 - `repo_store.py` — `~/.config/ccwork/repos.json`. Plain value object; no
   file watcher. Each `Repo` carries a uuid `id`, an `instance` integer,
   and an optional `emoji` string. Duplicate paths are allowed (multiple

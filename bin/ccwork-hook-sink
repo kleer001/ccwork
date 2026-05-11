@@ -70,15 +70,20 @@ fi
 # visible, focused, or even running. Catches the case where you're on
 # another workspace or the window is buried.
 #
-# Honors the "desktop_notifications" toggle in ccwork's settings.json.
-# We grep the JSON instead of pulling in a parser; the GUI is the sole
-# writer and emits one key per line via json.dumps(indent=2).
-_settings="${XDG_CONFIG_HOME:-$HOME/.config}/ccwork/settings.json"
+# Honors the "desktop_notifications" toggle in ccwork's settings.toml.
+# We grep for the key directly — it's unique across the file, so we don't
+# need a section-aware parser. The legacy settings.json key uses a colon
+# instead of an equals sign; we cover both shapes for the brief window
+# before the GUI completes migration.
+_cfg_dir="${XDG_CONFIG_HOME:-$HOME/.config}/ccwork"
 _notify_disabled=0
-if [ -r "$_settings" ] && \
-   grep -Eq '"desktop_notifications"[[:space:]]*:[[:space:]]*false' "$_settings"; then
-    _notify_disabled=1
-fi
+for _f in "$_cfg_dir/settings.toml" "$_cfg_dir/settings.json"; do
+    if [ -r "$_f" ] && \
+       grep -Eq 'desktop_notifications[[:space:]]*[:=][[:space:]]*false' "$_f"; then
+        _notify_disabled=1
+        break
+    fi
+done
 
 if [ "$_notify_disabled" = "0" ] && command -v notify-send >/dev/null 2>&1; then
     _repo=$(basename "$_cwd")

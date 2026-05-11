@@ -122,26 +122,10 @@ SPINNER_VARIANTS: tuple[tuple[str, ...], ...] = (
     ("⣀","⣄","⣤","⣦","⣶","⣷","⣿","⣷","⣶","⣦","⣤","⣄"),          # pulse fill
     ("⠄","⠆","⠇","⠋","⠙","⠸","⠰","⠠","⠰","⠸","⠙","⠋","⠇","⠆"),  # center bounce
 )
-SPINNER_INTERVAL_MS = 100
-
-# Per-tick gap when reordering the sidebar (auto-arrange bubble-up after
-# Claude activity, or terminal-grouping after a deferred regroup). Eased
-# along a sine curve: MAX at the endpoints (slow ease-in to register the
-# motion has started, slow ease-out to settle), MIN in the middle (zip
-# through). Total walk time for ~5 swaps is ~620 ms — close to the old
-# constant 125 ms cadence but with deliberate start/finish texture.
-ARRANGE_STEP_MIN_MS = 80
-ARRANGE_STEP_MAX_MS = 220
-
-# Bubble walks defer until the sidebar has been "quiet" — no mouse
-# movement, click, key, or selection change — for this long. The user is
-# typically typing in their terminal at that point; walks happen during
-# their thinking pauses, not under the cursor while they're picking a
-# repo. XEmbed makes "is the user in the terminal" un-detectable from
-# Qt directly (xterm keystrokes never reach the Qt event loop), so we
-# invert the question: assume "user is engaged with terminal" iff the
-# sidebar has not seen any input for SIDEBAR_QUIET_MS.
-SIDEBAR_QUIET_MS = 800
+# Animation timing now lives in Settings.ui.animation — read from the
+# instance, not at module level, so the TOML config controls these. See
+# docstrings on AnimationSettings (src/core/settings.py) for the rationale
+# behind the bubble-walk cadence and the sidebar-quiet-window proxy.
 
 
 def spinner_for_id(repo_id: str) -> tuple[str, ...]:
@@ -527,20 +511,15 @@ class RepoListModel(QAbstractListModel):
 
 
 class RepoDelegate(QStyledItemDelegate):
-    """Two-line row: name (bold) + branch (subtitle), unread badge right-aligned."""
+    """Two-line row: name (bold) + branch (subtitle), unread badge right-aligned.
 
-    ROW_HEIGHT = 52
-    PADDING_X = 10
-    # Vertical gap painted *above* the first inactive (no-terminal) row
-    # when ui.group_active_repos is on. Thin strip of widget background,
-    # outside any row's border, so the two groups read as separate clusters.
-    GROUP_GAP_H = 10
-    # Right-edge glyph column (status dot or spinner). Reserved whenever the
-    # row has a status to show — text elides to fit. The badge is a
-    # first-class UI element: glance-state matters more than seeing an
-    # extra character or two of the repo name on a very narrow sidebar.
-    GLYPH_W = 14
-    GLYPH_GAP = 4
+    All numeric layout knobs (row_height, padding_x, group_gap_h, glyph_w,
+    glyph_gap, active_stripe_w, last_focused_stripe_w) come from
+    `settings.ui.layout` — assigned as instance attributes by __init__ so
+    they're read consistently as `self.ROW_HEIGHT` etc. The legacy uppercase
+    names are kept to minimize delta in the paint code.
+    """
+
     # Derived from _ALL_STATUSES — statuses with color=None (e.g. last_focused)
     # are excluded so the right-edge badge column stays reserved for genuine
     # Claude alerts (working / done / attention).
@@ -554,7 +533,7 @@ class RepoDelegate(QStyledItemDelegate):
     # Modulated per-theme by _last_focused_stripe_color so it stays subtle.
     LAST_FOCUSED_BASE = QColor(108, 113, 196)
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, layout=None) -> None:
         super().__init__(parent)
         # Advanced by RepoSidebar's QTimer; read every paint.
         self.spinner_frame = 0
@@ -562,6 +541,17 @@ class RepoDelegate(QStyledItemDelegate):
         self.badge_style = "dot"
         # Mirrors ui.group_active_repos. RepoSidebar keeps it in sync.
         self.group_enabled = False
+        # Layout knobs from settings; defaults match the historical hardcodes
+        # so tests that construct a delegate without settings still behave.
+        from src.core.settings import LayoutSettings
+        L = layout or LayoutSettings()
+        self.ROW_HEIGHT = L.row_height
+        self.PADDING_X = L.padding_x
+        self.GROUP_GAP_H = L.group_gap_h
+        self.GLYPH_W = L.glyph_w
+        self.GLYPH_GAP = L.glyph_gap
+        self.ACTIVE_STRIPE_W = L.active_stripe_w
+        self.LAST_FOCUSED_STRIPE_W = L.last_focused_stripe_w
 
     def _is_group_boundary(self, index: QModelIndex) -> bool:
         """Is `index` the first inactive row directly below an active one?"""
@@ -577,13 +567,6 @@ class RepoDelegate(QStyledItemDelegate):
         if self._is_group_boundary(index):
             h += self.GROUP_GAP_H
         return QSize(option.rect.width(), h)
-
-    # Left-edge stripe width for the active/selected row. Thin enough to
-    # not crowd the text, thick enough to read at a glance.
-    ACTIVE_STRIPE_W = 3
-    # Last-focused stripe sits in the same left column but slightly thinner
-    # so the active stripe still reads as the dominant cue when both apply.
-    LAST_FOCUSED_STRIPE_W = 2
 
     @classmethod
     def _last_focused_stripe_color(cls, palette) -> QColor:
@@ -760,29 +743,38 @@ class RepoSidebar(QWidget):
         super().__init__(parent)
         self._store = store
         self._settings = settings
+        # Resolve animation knobs once; fall back to defaults when called
+        # without settings (some test paths do this).
+        from src.core.settings import AnimationSettings
+        self._anim = (
+            settings.ui.animation if settings is not None
+            else AnimationSettings()
+        )
         self._model = RepoListModel(store, self)
 
         self._view = QListView(self)
         self._view.setModel(self._model)
-        self._delegate = RepoDelegate(self._view)
+        layout_cfg = settings.ui.layout if settings is not None else None
+        self._delegate = RepoDelegate(self._view, layout=layout_cfg)
         self._view.setItemDelegate(self._delegate)
 
         # Braille-spinner ticker. Only runs while at least one repo is in
         # the "working" state — otherwise it would repaint the viewport 10×
         # per second for no reason.
         self._spinner_timer = QTimer(self)
-        self._spinner_timer.setInterval(SPINNER_INTERVAL_MS)
+        self._spinner_timer.setInterval(self._anim.spinner_interval_ms)
         self._spinner_timer.timeout.connect(self._advance_spinner)
         # Debounced auto-arrange. Restarted on every Claude-driven event
-        # while ui.auto_arrange_repos is True; fires once after 2s of
-        # quiet to avoid reshuffling under the user's eye.
+        # while ui.auto_arrange_repos is True; fires once after the
+        # configured reorder_debounce_ms of quiet to avoid reshuffling
+        # under the user's eye.
         self._reorder_timer = QTimer(self)
         self._reorder_timer.setSingleShot(True)
-        self._reorder_timer.setInterval(2000)
+        self._reorder_timer.setInterval(self._anim.reorder_debounce_ms)
         self._reorder_timer.timeout.connect(self._apply_auto_arrange)
         # Quiet-window gate for the bubble walk. The walk fires only when
         # the sidebar has had no input (mouse, key, selection) for
-        # SIDEBAR_QUIET_MS. While the user is hovering, scrolling, or
+        # the configured sidebar_quiet_ms. While the user is hovering, scrolling, or
         # picking a repo, _bump_activity() pushes the timestamp forward
         # and pending walks keep deferring; while they're typing in
         # xterm, no Qt events reach the sidebar so the timestamp
@@ -804,7 +796,7 @@ class RepoSidebar(QWidget):
         # Per-tick interval is recomputed by _step_arrange along a sine
         # ease-in-out curve, so the constructor default is a placeholder.
         self._arrange_step_timer = QTimer(self)
-        self._arrange_step_timer.setInterval(ARRANGE_STEP_MAX_MS)
+        self._arrange_step_timer.setInterval(self._anim.arrange_step_max_ms)
         self._arrange_step_timer.timeout.connect(self._step_arrange)
         # Resets at every walk start. Drives the easing curve.
         self._arrange_steps_taken = 0
@@ -993,13 +985,13 @@ class RepoSidebar(QWidget):
         if not self._arrange_pending:
             return
         elapsed_ms = (time.monotonic() - self._last_sidebar_activity) * 1000
-        if elapsed_ms >= SIDEBAR_QUIET_MS:
+        if elapsed_ms >= self._anim.sidebar_quiet_ms:
             self._arrange_pending = False
             self._start_arrange_animation()
             return
         # Re-check exactly when the quiet window would close, plus a
         # small buffer so timer jitter can't undershoot.
-        self._arrange_check_timer.start(int(SIDEBAR_QUIET_MS - elapsed_ms) + 10)
+        self._arrange_check_timer.start(int(self._anim.sidebar_quiet_ms - elapsed_ms) + 10)
 
     def _start_arrange_animation(self) -> None:
         """Walk one row toward the target order now, then keep ticking on
@@ -1061,10 +1053,12 @@ class RepoSidebar(QWidget):
         """
         remaining = self._simulate_remaining_swaps(target)
         total = self._arrange_steps_taken + remaining
+        max_ms = self._anim.arrange_step_max_ms
+        min_ms = self._anim.arrange_step_min_ms
         if total <= 2:
             # 1 or 2 swaps total: too few for a meaningful curve. Slow &
             # deliberate reads better than abrupt.
-            return ARRANGE_STEP_MAX_MS
+            return max_ms
         gap_index = self._arrange_steps_taken - 1  # gap that follows this swap
         last_gap_index = total - 2
         # Clamp at 1.0: on the converging swap, gap_index can momentarily
@@ -1074,7 +1068,7 @@ class RepoSidebar(QWidget):
         # round (not int) to absorb sin(π) ≈ 1.22e-16 float drift at the
         # x=1.0 endpoint — int() would truncate to MAX-1 instead of MAX.
         return round(
-            ARRANGE_STEP_MAX_MS - (ARRANGE_STEP_MAX_MS - ARRANGE_STEP_MIN_MS) * eased
+            max_ms - (max_ms - min_ms) * eased
         )
 
     def _simulate_remaining_swaps(self, target: list[str]) -> int:
