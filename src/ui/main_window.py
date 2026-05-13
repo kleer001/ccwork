@@ -246,7 +246,9 @@ class MainWindow(QMainWindow):
         ]
         # Ctrl+Shift+1..9 → jump to sidebar row 1..9 (zero-indexed internally).
         # ASCII digit keysyms are contiguous, so XK_1 + n - 1 is the keysym
-        # for digit n.
+        # for digit n. range(1, 10) deliberately excludes XK_0 — Ctrl+Shift+0
+        # is reserved for a possible future "last row" / "10th row" binding;
+        # mapping it now and changing later would break muscle memory.
         for n in range(1, 10):
             bindings.append((
                 x11.XK_1 + (n - 1),
@@ -284,13 +286,20 @@ class MainWindow(QMainWindow):
         self._key_bindings = []
 
     def _jump_to_row(self, row: int) -> None:
-        """Select sidebar row by zero-based index. Out-of-range is a no-op
-        (so missing rows just don't fire — same UX as the f95566f attempt)."""
+        """Select sidebar row by zero-based index.
+
+        Out-of-range presses (fewer than `row+1` repos) flash a transient
+        status-bar hint so the keystroke registers visibly rather than
+        feeling broken. `row+1` in the message because the user pressed
+        a 1-indexed digit (`Ctrl+Shift+9` → "slot 9").
+        """
         model = self._sidebar.model
-        if 0 <= row < model.rowCount():
-            repo = model.repo_at(row)
-            if repo is not None:
-                self._sidebar.select_id(repo.id)
+        if row < 0 or row >= model.rowCount():
+            self.statusBar().showMessage(f"No repo at slot {row + 1}", 1500)
+            return
+        repo = model.repo_at(row)
+        if repo is not None:
+            self._sidebar.select_id(repo.id)
 
     # ── sidebar layout (side + width) ──
 
