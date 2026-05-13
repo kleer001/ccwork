@@ -771,6 +771,29 @@ class RepoDelegate(QStyledItemDelegate):
             )
             painter.fillRect(lf_rect, self._last_focused_stripe_color(option.palette))
 
+        # Row-number hint in the top-left gutter — discoverability for the
+        # Ctrl+Shift+N jump bindings (only mapped for slots 1..9). Lives in
+        # the PADDING_X gutter between the left-edge stripes and the text,
+        # so the existing layout math is undisturbed. Alpha-reduced and at
+        # 0.75x the row font so it reads as an ambient label rather than a
+        # competing visual.
+        row_num = index.row() + 1
+        if row_num <= 9:
+            num_color = QColor(text_color)
+            num_color.setAlpha(140)
+            num_font = QFont(option.font)
+            num_font.setPointSizeF(option.font.pointSizeF() * 0.75)
+            painter.setFont(num_font)
+            painter.setPen(QPen(num_color))
+            stripe_w = max(self.ACTIVE_STRIPE_W, self.LAST_FOCUSED_STRIPE_W)
+            num_rect = QRect(
+                option.rect.left() + stripe_w + 1,
+                option.rect.top() + 2,
+                self.PADDING_X - stripe_w - 1,
+                12,
+            )
+            painter.drawText(num_rect, Qt.AlignLeft | Qt.AlignTop, str(row_num))
+
         rect = option.rect.adjusted(self.PADDING_X, 4, -self.PADDING_X, -4)
 
         # Reserve the right-edge glyph column whenever the row has a status

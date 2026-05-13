@@ -16,8 +16,11 @@ notify-send handles the text). The 🔊 / 🔇 toolbutton mirrors the
 "Show desktop notifications" Preferences checkbox — one click mute,
 shared state. Keyboard shortcuts (Ctrl+Shift+P/O/Q for prefs/add/quit,
 Ctrl+Tab to cycle, Ctrl+Shift+1..9 for row jumps, Ctrl+= / Ctrl+- /
-Ctrl+0 for zoom) are wired through a root-window XGrabKey rather than
-Qt's QAction shortcut system — see ``_install_global_keys`` for why.
+Ctrl+0 for zoom, F1 for the shortcut cheatsheet) are wired through a
+passive XGrabKey on MainWindow's own X window rather than Qt's
+QAction shortcut system — see ``_install_global_keys`` for why.
+The grab is scoped to MainWindow's X subtree so it fires when ccwork
+has focus (sidebar, terminal, dialog) but not when another app does.
 """
 
 from __future__ import annotations
@@ -100,7 +103,7 @@ class MainWindow(QMainWindow):
         # Lazy — populated by _install_global_keys when running under xcb.
         self._key_xdisplay: XDisplay | None = None
         self._key_filter: KeyGrabFilter | None = None
-        self._key_root: int = 0
+        self._key_grab_window: int = 0
         self._key_bindings: list[tuple[int, int]] = []
 
         # ── top strip: centered repo · branch + right-side icon cluster ──
@@ -163,10 +166,12 @@ class MainWindow(QMainWindow):
         v.addWidget(splitter, 1)
         self.setCentralWidget(central)
 
-        # ── shortcuts: root-window XGrabKey + QAbstractNativeEventFilter ──
-        # Same recipe as Skycoder42/QHotkey and CopyQ's QxtGlobalShortcut:
-        # grab on the X root so the press lands here regardless of which
-        # widget (or alien XEmbed child) holds focus.
+        # ── shortcuts: XGrabKey on MainWindow + QAbstractNativeEventFilter ──
+        # Same mechanism as Skycoder42/QHotkey and CopyQ's QxtGlobalShortcut
+        # (passive grab + native event filter), but scoped to MainWindow's
+        # own X window instead of root — fires for any focus inside our
+        # subtree (Qt widgets + XEmbed'd xterm), stays out of the way when
+        # another app is focused.
         self._install_global_keys()
 
         # ── wiring ──
@@ -210,17 +215,30 @@ class MainWindow(QMainWindow):
     # ── shortcuts ──
 
     def _install_global_keys(self) -> None:
-        """Install one passive XGrabKey per shortcut on the X root window,
-        paired with a single ``QAbstractNativeEventFilter`` on the
-        ``QApplication``. Skipped under any non-xcb Qt platform (offscreen
-        tests, Wayland-without-XWayland), where there is no X display to
-        grab on.
+        """Install one passive XGrabKey per shortcut on MainWindow's own
+        X window, paired with a single ``QAbstractNativeEventFilter`` on
+        the ``QApplication``. Skipped under any non-xcb Qt platform
+        (offscreen tests, Wayland-without-XWayland), where there is no X
+        display to grab on.
 
-        Root grabs fire whether xterm or a Qt widget holds focus, so
-        ``Ctrl+Shift+P`` (etc.) works uniformly from any focus state. The
-        QAction/ApplicationShortcut path won't fire when xterm holds X
-        input focus because xterm isn't a Qt widget — that's the whole
-        reason we bypass Qt's shortcut system here.
+        Grabbing on ``self.winId()`` rather than ``DefaultRootWindow``
+        gives **app-scoped** shortcuts: the X11 passive-grab activation
+        condition is "grab_window is an ancestor of (or is) the focus
+        window," and MainWindow is an ancestor of every Qt widget and
+        of the XEmbed'd xterm (which lives inside a TerminalHost child
+        widget). So:
+
+          • Sidebar focused → MainWindow in focus chain → grab fires. ✓
+          • xterm focused (XEmbed'd) → MainWindow in focus chain → grab
+            fires. ✓
+          • Firefox / any other app focused → MainWindow NOT in focus
+            chain → grab silently doesn't activate, the other app sees
+            the press normally. ✓
+
+        The QAction/ApplicationShortcut path won't fire when xterm holds
+        X input focus because xterm isn't a Qt widget — that's the whole
+        reason we bypass Qt's shortcut system here. Root grabs would be
+        global; MainWindow-scoped grabs aren't.
         """
         app = QApplication.instance()
         plat = app.platformName() if app is not None else None
@@ -237,7 +255,12 @@ class MainWindow(QMainWindow):
         self._key_xdisplay = XDisplay.attach(int(iface.display()))
         self._key_filter = KeyGrabFilter(self._key_xdisplay)
         app.installNativeEventFilter(self._key_filter)
-        self._key_root = self._key_xdisplay.default_root_window()
+        # Force creation of MainWindow's X window now (winId() is lazy on
+        # QMainWindow) so XGrabKey has a real Window to install on. The
+        # grab persists for the app's lifetime — no per-TerminalHost
+        # lifecycle to track, and it's not global so other apps' keys are
+        # untouched.
+        self._key_grab_window = int(self.winId())
 
         Ctrl = x11.ControlMask
         Shift = x11.ShiftMask
@@ -247,10 +270,6 @@ class MainWindow(QMainWindow):
             (x11.XK_o,        Ctrl | Shift, self._sidebar._on_add_clicked),
             (x11.XK_q,        Ctrl | Shift, self.close),
             (x11.XK_F1,       0,            self._open_shortcuts),
-            # `?` is Shift+/ on US layouts. On layouts where it requires
-            # AltGr the keysym lookup returns 0 and KeyGrabFilter.register
-            # logs a warning and skips — F1 is the documented primary.
-            (x11.XK_question, Shift,        self._open_shortcuts),
             (x11.XK_Tab,      Ctrl,         lambda: self._on_cycle_repo_requested(+1)),
             (x11.XK_Tab,      Ctrl | Shift, lambda: self._on_cycle_repo_requested(-1)),
             # Ctrl+= / Ctrl++: both "zoom in" because the unshifted glyph
@@ -275,11 +294,11 @@ class MainWindow(QMainWindow):
         # Track (keysym, mods) for ungrab on shutdown.
         self._key_bindings = [(ks, m) for ks, m, _ in bindings]
         for keysym, mods, callback in bindings:
-            self._key_xdisplay.grab_key(self._key_root, keysym, mods)
+            self._key_xdisplay.grab_key(self._key_grab_window, keysym, mods)
             self._key_filter.register(keysym, mods, callback)
         self._key_xdisplay.flush()
-        log.info("global keys: %d shortcuts on root=0x%x",
-                 len(bindings), self._key_root)
+        log.info("global keys: %d shortcuts on MainWindow=0x%x",
+                 len(bindings), self._key_grab_window)
 
     def _uninstall_global_keys(self) -> None:
         """Release the root grabs and detach the native event filter. Safe
@@ -288,7 +307,7 @@ class MainWindow(QMainWindow):
             return
         try:
             for keysym, mods in self._key_bindings:
-                self._key_xdisplay.ungrab_key(self._key_root, keysym, mods)
+                self._key_xdisplay.ungrab_key(self._key_grab_window, keysym, mods)
             self._key_xdisplay.flush()
         except Exception:
             log.exception("global keys: ungrab failed")

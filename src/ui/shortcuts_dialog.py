@@ -1,11 +1,12 @@
 """Modal dialog listing every keyboard shortcut, grouped by context.
 
-Triggered by F1 (and `?`, which is Shift+/ on US layouts — silently
-fails to bind on layouts where `?` requires AltGr; F1 is the
-documented primary). Wired in
-``MainWindow._install_global_keys`` alongside the rest of the
-root-window XGrabKey table, and dispatched via the
-``QAbstractNativeEventFilter`` — see ``src/core/key_grab.py``.
+Triggered by F1. Wired in ``MainWindow._install_global_keys`` alongside
+the rest of the MainWindow-scoped XGrabKey table, and dispatched via
+the ``QAbstractNativeEventFilter`` — see ``src/core/key_grab.py``.
+
+(Shift+? as a secondary trigger was considered and removed —
+``?`` reaches the user's shell prompt and code editors too often for
+ccwork to be allowed to intercept it.)
 
 The shortcut table is **manual**: a derived list would auto-sync with
 the bindings table in ``_install_global_keys`` but couldn't cover the
@@ -53,7 +54,7 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
         ("Preferences",         "Ctrl+Shift+P"),
         ("Add repo",            "Ctrl+Shift+O"),
         ("Quit",                "Ctrl+Shift+Q"),
-        ("Keyboard shortcuts",  "F1  /  ?"),
+        ("Keyboard shortcuts",  "F1"),
     ]),
     ("Sidebar", [
         ("Jump to repo 1..9",   "Ctrl+Shift+1 … Ctrl+Shift+9"),

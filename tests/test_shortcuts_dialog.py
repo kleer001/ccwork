@@ -99,3 +99,12 @@ def test_shortcuts_namespace_is_post_rework(qapp: QApplication) -> None:
     # it; the namespace is Ctrl+Shift+N now.
     alt_n = [k for k in flat_keystrokes if k.startswith("Alt+") and any(d in k for d in "0123456789")]
     assert alt_n == [], f"unexpected Alt+digit rows: {alt_n}"
+
+
+def test_question_mark_is_not_a_trigger(qapp: QApplication) -> None:
+    """Regression guard: ? was briefly a secondary cheatsheet trigger
+    but conflicted with typing `?` in the embedded xterm / shells / code
+    editors. Dropped 2026-05-13. SHORTCUTS must not list it."""
+    flat = [row for _, rows in SHORTCUTS for row in rows]
+    f1_rows = [k for _, k in flat if "F1" in k]
+    assert f1_rows == ["F1"], f"F1 row should be just 'F1', got: {f1_rows}"
