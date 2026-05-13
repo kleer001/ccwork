@@ -16,14 +16,14 @@ the same method body.
 
 | Item | Status | Notes |
 |---|---|---|
-| Keybinding infrastructure | shipped 2026-05-13 | Root `XGrabKey` + single `QAbstractNativeEventFilter` on the `QApplication`. Lives in `src/core/key_grab.py` + `MainWindow._install_global_keys`. Replaces the QAction / `_install_shortcuts` approach (which never fired while xterm held X focus). Verified live via XTest injection — see `docs/specs/SMOKE-TEST.md`. |
+| Keybinding infrastructure | shipped 2026-05-13 | Passive `XGrabKey` on **MainWindow's own X window** + single `QAbstractNativeEventFilter` on the `QApplication`. Lives in `src/core/key_grab.py` + `MainWindow._install_global_keys`. Replaces the QAction / `_install_shortcuts` approach (which never fired while xterm held X focus). Originally grabbed on the X root (the QHotkey idiom) but rescoped same-day after the combos started leaking to other apps — see Resolved decisions. Verified live via `tests/live/check_focus_scoping.py`. |
 | 1. working-elapsed-time | shipped 2026-05-13 | `RepoListModel._turn_started` dict + `mark_turn_start` / `clear_turn_start` mutators + module-level `_format_elapsed`. Tooltip on working rows appends `Working 27s` / `1m 23s` / `1h 5m`. 7 tests in `test_repo_sidebar_working_elapsed.py`. |
 | 2. window-geometry-restore | shipped 2026-05-13 | New top-level `[window]` section with base64-encoded `QMainWindow.saveGeometry()`. Restore in `__init__`, persist in `closeEvent`. Corrupt blob → WARNING log only (per user feedback: log-only, no status-bar, no modal). 4 tests in `test_settings.py`; live-verified via XTest-injected Ctrl+Shift+Q. |
 | 3. row-context-path-actions | shipped 2026-05-13 | *Open in file manager* (xdg-open via `QProcess.startDetached`, disabled + tooltip when missing) + *Copy path* (QClipboard + new `path_copied` signal flashing a status-bar confirmation in `MainWindow._on_path_copied`). Refactored `_on_context_menu` into a `_build_context_menu` helper for testability. 7 tests in `test_repo_sidebar_path_actions.py`. |
 | 4. working-count-in-title | shipped 2026-05-13 | `RepoListModel.working_changed` signal emitted on True↔False edge inside `set_working`. `MainWindow._refresh_title` reads `working_paths()` size and rewrites the title — `ccwork` / `ccwork — 1 working` / `ccwork — N working`. Path-keyed so duplicate rows count once. 8 tests in `test_main_window_title.py`. |
 | 5. row-jump (was alt-n-row-jump) | shipped 2026-05-13 | Closed out: `_jump_to_row` now emits `statusBar().showMessage("No repo at slot N", 1500)` on out-of-range. 7 tests in `test_alt_row_jump.py` (filename preserved for spec traceability; namespace is Ctrl+Shift+N). |
 | 6. empty-state-placeholder | shipped 2026-05-13 | New `src/ui/empty_state.py` with `EmptyState(QWidget)`: centered logo (silent hide on SVG load failure) + heading + version subhead + three hint labels referencing the post-rework shortcut names. 6 tests in `test_empty_state.py`. |
-| 7. keyboard-cheatsheet | shipped 2026-05-13 | New `src/ui/shortcuts_dialog.py` with `SHORTCUTS` table + `ShortcutsDialog`. F1 (and Shift+?) added to `_install_global_keys` bindings — not as a QAction, since that path doesn't fire while xterm holds X focus. Empty-state hints gain the F1 line that was deferred to this PR. 4 tests in `test_shortcuts_dialog.py`; live-verified F1 opens the dialog via XTest. |
+| 7. keyboard-cheatsheet | shipped 2026-05-13 | New `src/ui/shortcuts_dialog.py` with `SHORTCUTS` table + `ShortcutsDialog`. F1 added to `_install_global_keys` bindings — not as a QAction, since that path doesn't fire while xterm holds X focus. Empty-state hints gain the F1 line that was deferred to this PR. 4 tests in `test_shortcuts_dialog.py`; live-verified via `tests/live/check_f1_cheatsheet.py`. (Shift+? was briefly added as a secondary trigger then dropped same-day — see Resolved decisions.) |
 
 ### Note on stale spec files
 
@@ -47,8 +47,10 @@ in-place to point at:
 
 | Spec | Decision | Source |
 |---|---|---|
-| (infrastructure) | Shortcuts use **root-window XGrabKey** on Qt's own xcb connection (`QX11Application.display()`), dispatched via one `QAbstractNativeEventFilter`. Mirrors QHotkey/CopyQ. Per-`TerminalHost` grabs were a dead-end. | claude (2026-05-13) |
+| (infrastructure) | Shortcuts use **passive XGrabKey on Qt's own xcb connection** (`QX11Application.display()`), dispatched via one `QAbstractNativeEventFilter`. Mechanism mirrors QHotkey/CopyQ; per-`TerminalHost` grabs were a dead-end. | claude (2026-05-13) |
+| (infrastructure) | Grab on **MainWindow's X window**, not the X root — passive-grab activation requires the grab_window to be an ancestor of (or equal to) the focus window, so a MainWindow-scoped grab fires only when ccwork is in the focus chain. Originally root-grabbed (the QHotkey idiom for *global* hotkeys); rescoped after combos started leaking to other apps. | user (2026-05-13) |
 | (infrastructure) | Shortcut namespace is **Ctrl+Shift+\<letter\|digit\>** for window actions; plain Ctrl for zoom; F-keys reserved. Readline / stty / claude leave shifted-Ctrl alone, so a missed grab is harmless. | claude (2026-05-13) |
+| keyboard-cheatsheet | F1 is the **only** trigger. Shift+? was added as a secondary then removed same-day — typing `?` is too common in shells / editors / chat for ccwork to intercept it even when focused. | user (2026-05-13) |
 | row-jump | Empty-slot feedback: status-bar `"No repo at slot N"`, 1.5 s transient | user |
 | row-jump | Namespace moved from `Alt+N` to `Ctrl+Shift+N` because xterm `metaSendsEscape` consumes Alt+digit | claude (2026-05-13) |
 | empty-state-placeholder | Logo fallback: **silently hide image**, keep heading + hints | user |
@@ -109,8 +111,9 @@ Rebase each on top of Wave 1 sequentially.
 - **Tests:** new `tests/test_main_window_title.py`
 
 ### 5. row-jump — remaining work
-- **Status:** binding shipped on `Ctrl+Shift+1`..`Ctrl+Shift+9` via root-window
-  XGrabKey; `MainWindow._jump_to_row(row)` slot wired and verified.
+- **Status:** binding shipped on `Ctrl+Shift+1`..`Ctrl+Shift+9` via the
+  MainWindow-scoped XGrabKey; `MainWindow._jump_to_row(row)` slot wired
+  and verified.
 - **Remaining edits:** `src/ui/main_window.py` — extend `_jump_to_row` with the
   status-bar transient (`self.statusBar().showMessage(f"No repo at slot {row+1}", 1500)`)
   on the `row >= rowCount()` branch. Currently the slot silently no-ops.

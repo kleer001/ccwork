@@ -61,7 +61,20 @@ collaborate:
 
 `MainWindow` lays out a sidebar + a `QStackedWidget` of `TerminalHost`s (one
 per repo, swapped on selection). There is no menu bar — Preferences /
-Add Repo / Quit are window-level `QAction`s on `Ctrl+,` / `Ctrl+O` / `Ctrl+Q`.
+Add Repo / Quit / F1 / row-jumps / cycle / zoom are bound via a passive
+`XGrabKey` on MainWindow's own X window plus a single
+`QAbstractNativeEventFilter` on the `QApplication` (see
+`MainWindow._install_global_keys` and `src/core/key_grab.py`). Grabbing
+on `self.winId()` rather than the X root keeps the combos scoped to
+ccwork's focus chain — they fire when sidebar / terminal / dialog has
+focus and stay out of the way when another app is focused.
+Namespace is `Ctrl+Shift+<letter|digit>` for window actions
+(`Ctrl+Shift+P/O/Q` = prefs/add/quit, `Ctrl+Shift+1..9` = row jump),
+plain `Ctrl` for zoom, `Ctrl+Tab` / `Ctrl+Shift+Tab` for cycle, `F1`
+for the keyboard cheatsheet. **Why not Qt's `QAction` shortcut path:**
+the XEmbed'd xterm isn't a Qt widget, so when it holds X input focus
+Qt's normal shortcut chain never sees the press. The XGrabKey path
+intercepts presses at the X-server level before xterm can consume them.
 The top bar holds, right-to-left: the gear (Preferences), the 🔔 unread
 indicator, and a 🔊/🔇 toolbutton mirroring the "Show desktop
 notifications" preference (single source of truth:

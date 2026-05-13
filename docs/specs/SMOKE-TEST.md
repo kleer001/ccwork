@@ -1,13 +1,15 @@
 # Manual smoke test — keyboard shortcuts
 
-Verifies the root-window `XGrabKey` + `QAbstractNativeEventFilter`
+Verifies the MainWindow-scoped `XGrabKey` + `QAbstractNativeEventFilter`
 shortcut surface shipped in `src/core/key_grab.py` and
 `MainWindow._install_global_keys`. The mechanism is the load-bearing
 piece that previous attempts kept getting wrong — it has to work from
 **both** focus modes (Qt widget focus, alien xterm focus) because the
 embedded xterm is not a Qt widget and Qt's normal `QAction` /
 `Qt.ApplicationShortcut` path doesn't fire when xterm holds X input
-focus.
+focus. Scoping to MainWindow (rather than the X root) keeps the combos
+out of other apps when ccwork isn't focused — see section 12 below
+for the regression check.
 
 ```bash
 # Boot with INFO logging so the dispatch line is visible if you want to

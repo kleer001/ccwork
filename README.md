@@ -10,7 +10,7 @@ driven by Claude Code's Stop/Notification hooks.
   Click a repo to bring up its terminal; right-click for reload / remove.
   Repos you haven't opened yet this session render in regular italic;
   once a terminal exists they flip to bold upright.
-- **Multiple sessions per repo** — `Ctrl+O` the same repo twice to spawn
+- **Multiple sessions per repo** — `Ctrl+Shift+O` the same repo twice to spawn
   parallel Claude sessions on it. Duplicates get Roman-numeral suffixes
   (`myrepo (I)`, `myrepo (II)`, …); remove all but one and the suffix
   disappears. Hook events (status badge, working spinner) currently light
@@ -40,16 +40,22 @@ driven by Claude Code's Stop/Notification hooks.
   sidebar row gets an unread badge if you weren't looking at it.
 - **Auto-registration** — running `claude` inside the GUI from a git root
   not yet in the sidebar adds it silently. Auto-add only fires when no row
-  exists for that path; duplicates require manual `Ctrl+O`.
+  exists for that path; duplicates require manual `Ctrl+Shift+O`.
 - **Preferences dialog** with color-scheme presets (Solarized Dark/Light,
   Dracula, Gruvbox Dark, GitHub Light, Tomorrow), font/scrollback/
   scrollbar controls, and live OSC-based apply for colors and fonts.
+- **Keyboard surface** — `Ctrl+Shift+P` Preferences, `Ctrl+Shift+O` Add
+  Repo, `Ctrl+Shift+Q` Quit, `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle repos,
+  `Ctrl+Shift+1`..`Ctrl+Shift+9` jump to row N (digits visible in the
+  top-left corner of each row), `Ctrl+=` / `Ctrl+-` / `Ctrl+0` zoom
+  terminals. **`F1` opens the full cheatsheet.** Shortcuts only fire
+  when ccwork has focus — they don't leak into your other apps.
 
 <details>
 <summary><b>Preferences reference</b></summary>
 
-Open with the gear button or `Ctrl+,`. Settings persist to
-`~/.config/ccwork/settings.json`.
+Open with the gear button or `Ctrl+Shift+P`. Settings persist to
+`~/.config/ccwork/settings.toml`.
 
 **Text tab**
 
@@ -99,8 +105,9 @@ text is squeezed below ~4 chars.
 - **Extra xterm args** — raw flags appended to every xterm spawn, parsed
   with shell quoting rules. See `man xterm`.
 
-Unknown keys in `settings.json` round-trip on save, so hand-edited fields
-not exposed by the dialog aren't dropped when ccwork rewrites the file.
+Unknown keys in `settings.toml` round-trip on save, so hand-edited fields
+(including user comments) aren't dropped when ccwork rewrites the file.
+Legacy `settings.json` is migrated to `.toml` on first launch.
 
 </details>
 
