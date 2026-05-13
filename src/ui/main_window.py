@@ -41,6 +41,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pathlib import Path
+
+from src import __version__
 from src.core import x11
 from src.core.hook_server import (
     EVENT_NOTIFICATION,
@@ -55,11 +58,18 @@ from src.core.repo_store import Repo, RepoStore
 from src.core.settings import Settings, load_settings, save_settings
 from src.core.terminal_session import build_session
 from src.core.x11 import XDisplay
+from src.ui.empty_state import EmptyState
 from src.ui.preferences_dialog import PreferencesDialog
 from src.ui.qt_theme import apply_theme
 from src.ui.repo_sidebar import RepoSidebar
 from src.ui.terminal_host import TerminalHost
 from src.ui.title_label import TitleLabel
+
+
+# Logo lives at <repo>/logo/v2-icon.svg. Resolve relative to this module
+# the same way src/main.py does for the window icon, so an installed
+# package and an in-tree run both find it without a runtime config lookup.
+_LOGO_PATH = Path(__file__).resolve().parent.parent.parent / "logo" / "v2-icon.svg"
 
 
 log = logging.getLogger(__name__)
@@ -564,9 +574,13 @@ class MainWindow(QMainWindow):
     # ── helpers ──
 
     def _make_empty_placeholder(self) -> QWidget:
-        w = QWidget(self)
-        w.setAutoFillBackground(True)
-        return w
+        """Construct the placeholder shown when no terminal is current.
+
+        Same widget instance is reused for both empty-states (cold start
+        with no repos, and a terminal that just exited while it was
+        visible). See `src/ui/empty_state.py` for the layout.
+        """
+        return EmptyState(version=__version__, logo_path=_LOGO_PATH, parent=self)
 
     def _ensure_terminal(self, repo: Repo) -> TerminalHost:
         """Lazy-spawn a TerminalHost for the given repo."""
