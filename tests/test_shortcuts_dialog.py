@@ -6,9 +6,9 @@ keystrokes are listed, catching the most common drift (a binding gets
 added to `_install_global_keys` but nobody updates SHORTCUTS, or
 someone deletes the table during a refactor).
 
-The F1 / Shift+? trigger registration in `_install_global_keys` is not
-unit-tested — it needs a real xcb display to verify the XGrabKey grab.
-That's covered by the manual SMOKE-TEST checklist instead.
+The F1 trigger registration in `_install_global_keys` is not unit-tested
+— it needs a real xcb display to verify the XGrabKey grab. That's
+covered by `tests/live/check_f1_cheatsheet.py` instead.
 """
 
 from __future__ import annotations

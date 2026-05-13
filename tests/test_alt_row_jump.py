@@ -1,11 +1,11 @@
 """Tests for the row-jump slot (`MainWindow._jump_to_row`).
 
 The binding side — `Ctrl+Shift+1`..`Ctrl+Shift+9` grabbing the keys via
-the root-window XGrabKey — is platform-dependent (needs a real xcb
-display) and verified manually via the SMOKE-TEST. Here we exercise
-the dispatch slot directly: in-range hands the right repo id to
-`select_id`, out-of-range emits the status-bar message, and empty
-sidebar doesn't crash.
+the MainWindow-scoped XGrabKey — is platform-dependent (needs a real
+xcb display) and verified by the live scripts under `tests/live/`.
+Here we exercise the dispatch slot directly: in-range hands the right
+repo id to `select_id`, out-of-range emits the status-bar message, and
+empty sidebar doesn't crash.
 
 We spy on `RepoSidebar.select_id` rather than asserting on
 `QListView.currentIndex()` after the fact: a successful selection
