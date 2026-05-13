@@ -1,17 +1,16 @@
 # Specs Roadmap
 
-Implementation plan for the seven specs in `docs/specs/`. Status was last
-audited **2026-05-13**. One prerequisite landed since the original write-up
-— the application-wide keybinding mechanism — and one spec (row-jump) is
-partially shipped as a side-effect of that prerequisite. The remaining six
-specs are still pending, in the Wave order they were originally sequenced in.
+Implementation plan for the seven specs in `docs/specs/`. **All seven plus
+the keybinding-infrastructure prerequisite shipped 2026-05-13.** Status
+table below carries the per-feature notes; the spec files themselves are
+retained as historical design documents (they predate the keybinding
+rework — see "Note on stale spec files" below for what's outdated in them).
 
-All seven are still rated **Small** difficulty. The bottleneck is
-`src/ui/main_window.py` (touched by 6 of 7), but the edits land in disjoint
-zones (`_install_global_keys`, `__init__`, `closeEvent`, terminal lifecycle,
-signal wiring). Sequencing matters more than parallelism for a solo dev —
-order below is chosen to keep each PR self-contained and to land the
-cross-referencing specs last.
+The original sequencing logic (Wave 1 → Wave 2 → Wave 3) held up in
+practice: each spec landed self-contained with no rebase pain. The
+bottleneck file `src/ui/main_window.py` saw edits from 6 of 7 specs as
+predicted, but the disjoint-zones bet paid off — no two specs touched
+the same method body.
 
 ## Status
 
@@ -24,7 +23,7 @@ cross-referencing specs last.
 | 4. working-count-in-title | shipped 2026-05-13 | `RepoListModel.working_changed` signal emitted on True↔False edge inside `set_working`. `MainWindow._refresh_title` reads `working_paths()` size and rewrites the title — `ccwork` / `ccwork — 1 working` / `ccwork — N working`. Path-keyed so duplicate rows count once. 8 tests in `test_main_window_title.py`. |
 | 5. row-jump (was alt-n-row-jump) | shipped 2026-05-13 | Closed out: `_jump_to_row` now emits `statusBar().showMessage("No repo at slot N", 1500)` on out-of-range. 7 tests in `test_alt_row_jump.py` (filename preserved for spec traceability; namespace is Ctrl+Shift+N). |
 | 6. empty-state-placeholder | shipped 2026-05-13 | New `src/ui/empty_state.py` with `EmptyState(QWidget)`: centered logo (silent hide on SVG load failure) + heading + version subhead + three hint labels referencing the post-rework shortcut names. 6 tests in `test_empty_state.py`. |
-| 7. keyboard-cheatsheet | pending | |
+| 7. keyboard-cheatsheet | shipped 2026-05-13 | New `src/ui/shortcuts_dialog.py` with `SHORTCUTS` table + `ShortcutsDialog`. F1 (and Shift+?) added to `_install_global_keys` bindings — not as a QAction, since that path doesn't fire while xterm holds X focus. Empty-state hints gain the F1 line that was deferred to this PR. 4 tests in `test_shortcuts_dialog.py`; live-verified F1 opens the dialog via XTest. |
 
 ### Note on stale spec files
 

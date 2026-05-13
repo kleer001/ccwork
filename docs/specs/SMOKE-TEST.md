@@ -296,6 +296,48 @@ heading + version subhead + three keyboard hints.
 
 ---
 
+## 11. keyboard-cheatsheet (F1 / Shift+?)
+
+**What changed:** `F1` (and Shift+? on US layouts) opens a modal dialog
+titled *Keyboard shortcuts* listing every shortcut ccwork exposes,
+grouped Window / Sidebar / Terminal.
+
+With **sidebar focus**:
+
+- [ ] Click an empty area of the sidebar. Press `F1`. Modal dialog
+  opens titled *Keyboard shortcuts*.
+- [ ] Three group boxes visible: Window, Sidebar, Terminal.
+- [ ] Window group lists: Preferences `Ctrl+Shift+P`, Add repo
+  `Ctrl+Shift+O`, Quit `Ctrl+Shift+Q`, Keyboard shortcuts `F1 / ?`.
+- [ ] Sidebar group lists: Jump to repo 1..9
+  `Ctrl+Shift+1 … Ctrl+Shift+9`, Next repo `Ctrl+Tab`, Previous repo
+  `Ctrl+Shift+Tab`.
+- [ ] Terminal group lists zoom in/out/reset, mouse-wheel zoom, copy
+  selection `(xterm)`, paste, context menu (right-click).
+- [ ] Keystroke column is in a fixed-width font; multi-key sequences
+  align visually.
+- [ ] Press `Esc` (or click Close). Dialog dismisses.
+
+With **xterm focus** (the load-bearing case):
+
+- [ ] Click into a repo's terminal. Type a few characters at the shell
+  prompt without pressing Enter.
+- [ ] Press `F1`. Dialog still opens — xterm never sees the F1 press
+  because the root grab routed it to ccwork first.
+- [ ] The xterm shell line has **no extra characters** appended. If
+  any garbage appears the grab regressed.
+- [ ] Press `Esc` to dismiss.
+
+**Shift+? fallback:**
+
+- [ ] On a US keyboard, with the sidebar or an xterm focused, press
+  `Shift+/` (i.e. `?`). Dialog opens.
+- [ ] (On non-US layouts where `?` requires AltGr or a dead key, the
+  binding may silently fail to register. That's documented behavior —
+  F1 is the primary trigger.)
+
+---
+
 ## Synthetic verification (optional)
 
 For CI-style regression checks without a human pressing keys, the script
