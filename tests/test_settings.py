@@ -292,3 +292,63 @@ def test_no_legacy_no_toml_returns_defaults(tmp_path: Path) -> None:
     s = S.load_settings(toml_path)
     assert s.xterm == S.XtermSettings()
     assert not toml_path.exists()
+
+
+# ── Window geometry ───────────────────────────────────────────────────────
+
+
+def test_window_state_defaults() -> None:
+    assert S.WindowState().geometry == ""
+    assert S.Settings().window == S.WindowState()
+
+
+def test_window_state_round_trip(tmp_path: Path) -> None:
+    """The geometry blob is opaque base64 — settings.py never decodes it,
+    just stores and retrieves byte-for-byte."""
+    import base64
+    blob = base64.b64encode(b"fake-Qt-saveGeometry-output").decode("ascii")
+    p = tmp_path / "s.toml"
+    orig = S.Settings(window=S.WindowState(geometry=blob))
+    S.save_settings(orig, p)
+    loaded = S.load_settings(p)
+    assert loaded.window.geometry == blob
+
+
+def test_window_state_survives_unknown_keys_and_comments(tmp_path: Path) -> None:
+    """Hand-edited comments inside [window] must round-trip a GUI save —
+    same _raw / _merge_into invariant as the other sections."""
+    p = tmp_path / "s.toml"
+    p.write_text(
+        "version = 2\n"
+        "\n"
+        "[xterm]\n"
+        "font_size = 11\n"
+        "\n"
+        "# I dragged the window onto monitor 2 and want it to stay\n"
+        "[window]\n"
+        '# this blob was captured 2026-05-13\n'
+        'geometry = "AAAA-fake-blob"\n'
+    )
+    loaded = S.load_settings(p)
+    assert loaded.window.geometry == "AAAA-fake-blob"
+    S.save_settings(loaded, p)
+    text = p.read_text()
+    assert "monitor 2" in text
+    assert "captured 2026-05-13" in text
+    assert "AAAA-fake-blob" in text
+
+
+def test_corrupt_window_geometry_loads_clean(tmp_path: Path) -> None:
+    """settings.py doesn't validate the blob — base64-decode happens in
+    MainWindow._restore_window_geometry. Load must succeed with whatever
+    string the file contains; the decode/restore failure is handled later
+    via a WARNING log."""
+    p = tmp_path / "s.toml"
+    p.write_text(
+        "version = 2\n"
+        "\n"
+        "[window]\n"
+        'geometry = "not-valid-base64!!!"\n'
+    )
+    loaded = S.load_settings(p)
+    assert loaded.window.geometry == "not-valid-base64!!!"

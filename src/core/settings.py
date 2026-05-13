@@ -40,6 +40,9 @@ arrange_step_max_ms = 220
 sidebar_quiet_ms = 800
 reorder_debounce_ms = 2000
 splitter_debounce_ms = 300
+
+[window]
+geometry = ""    # base64(QMainWindow.saveGeometry()); app-managed
 ```
 
 Mirrors the xterm knobs a konsole user typically cares about. Unknown keys
@@ -210,9 +213,26 @@ class UISettings:
 
 
 @dataclass
+class WindowState:
+    """Main window geometry persisted across launches.
+
+    `geometry` is base64-encoded bytes from `QMainWindow.saveGeometry()`,
+    which opaquely encodes size + position + maximize/fullscreen state +
+    which screen the window is on. Restored via `restoreGeometry(bytes)`
+    in MainWindow.__init__.
+
+    Not nested under UISettings because this is runtime state the app
+    writes on the user's behalf, not a preference the user deliberately
+    tunes — same posture as the top-level `last_focused_repo`.
+    """
+    geometry: str = ""  # base64(QMainWindow.saveGeometry())
+
+
+@dataclass
 class Settings:
     xterm: XtermSettings = field(default_factory=XtermSettings)
     ui: UISettings = field(default_factory=UISettings)
+    window: WindowState = field(default_factory=WindowState)
     # Path of the repo whose row was most recently selected. Drives the
     # violet "last-focused" dot so the user can spot where they left off
     # after closing and reopening ccwork.
@@ -289,13 +309,25 @@ def _coerce_ui(raw: dict | None) -> UISettings:
     )
 
 
+def _coerce_window(raw: dict | None) -> WindowState:
+    d = WindowState()
+    raw = raw if isinstance(raw, dict) else {}
+    return WindowState(
+        geometry=str(raw.get("geometry", d.geometry)),
+    )
+
+
 def _settings_from_mapping(data: dict, raw_doc: TOMLDocument) -> Settings:
     xterm = _coerce_xterm(data.get("xterm"))
     ui = _coerce_ui(data.get("ui"))
+    window = _coerce_window(data.get("window"))
     last_focused = data.get("last_focused_repo")
     if not isinstance(last_focused, str):
         last_focused = None
-    return Settings(xterm=xterm, ui=ui, last_focused_repo=last_focused, _raw=raw_doc)
+    return Settings(
+        xterm=xterm, ui=ui, window=window,
+        last_focused_repo=last_focused, _raw=raw_doc,
+    )
 
 
 def _migrate_json_to_toml(json_path: Path, toml_path: Path) -> Settings | None:
@@ -368,9 +400,11 @@ def _build_document_from(data: dict[str, Any]) -> TOMLDocument:
     # exact same values save_settings will write.
     xterm_d = asdict(_coerce_xterm(data.get("xterm")))
     ui_obj = _coerce_ui(data.get("ui"))
+    window_obj = _coerce_window(data.get("window"))
     last_focused = data.get("last_focused_repo")
     doc["xterm"] = xterm_d
     doc["ui"] = _ui_to_toml(ui_obj)
+    doc["window"] = _window_to_toml(window_obj)
     if isinstance(last_focused, str) and last_focused:
         doc["last_focused_repo"] = last_focused
     return doc
@@ -387,6 +421,12 @@ def _ui_to_toml(ui: UISettings) -> dict[str, Any]:
         "group_active_repos": ui.group_active_repos,
         "layout": asdict(ui.layout),
         "animation": asdict(ui.animation),
+    }
+
+
+def _window_to_toml(window: WindowState) -> dict[str, Any]:
+    return {
+        "geometry": window.geometry,
     }
 
 
@@ -417,6 +457,7 @@ def save_settings(settings: Settings, path: Path | None = None) -> None:
     doc["version"] = SCHEMA_VERSION
     _merge_into(doc, "xterm", asdict(settings.xterm))
     _merge_into(doc, "ui", _ui_to_toml(settings.ui))
+    _merge_into(doc, "window", _window_to_toml(settings.window))
     if settings.last_focused_repo:
         doc["last_focused_repo"] = settings.last_focused_repo
     elif "last_focused_repo" in doc:

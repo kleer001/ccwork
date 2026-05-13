@@ -22,6 +22,8 @@ Qt's QAction shortcut system — see ``_install_global_keys`` for why.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 from typing import Callable
 
@@ -73,6 +75,8 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("ccwork")
+        # First-run fallback. restoreGeometry runs at the end of __init__
+        # and overrides this when a valid saved blob exists.
         self.resize(1280, 820)
 
         self._store = store
@@ -176,6 +180,12 @@ class MainWindow(QMainWindow):
             and self._sidebar.model.index_of(self._settings.last_focused_repo) >= 0
         ):
             QTimer.singleShot(0, lambda: self._sidebar.select_path(self._settings.last_focused_repo))
+
+        # Restore saved window geometry last — after the child hierarchy is
+        # in place (Qt documents that restoreGeometry should run post-
+        # setCentralWidget). The earlier self.resize(1280, 820) is the
+        # fallback for first-run / corrupt-blob / Qt-version-skew cases.
+        self._restore_window_geometry()
 
     # ── shortcuts ──
 
@@ -323,6 +333,33 @@ class MainWindow(QMainWindow):
             save_settings(self._settings)
         except OSError as e:
             log.warning("could not persist settings: %s", e)
+
+    def _restore_window_geometry(self) -> None:
+        """Decode the persisted geometry blob and hand it to Qt. On any
+        failure (no blob, base64 decode error, Qt version-skew rejection)
+        log at WARNING and fall through to the 1280x820 set earlier in
+        ``__init__``."""
+        blob = self._settings.window.geometry
+        if not blob:
+            return
+        try:
+            data = base64.b64decode(blob.encode("ascii"))
+        except (binascii.Error, ValueError) as e:
+            log.warning("corrupt window.geometry blob (%s) — using default", e)
+            return
+        if not self.restoreGeometry(data):
+            log.warning("restoreGeometry rejected the saved blob "
+                        "(Qt version skew?) — using default")
+
+    def _persist_window_state(self) -> None:
+        """Stamp the current geometry into Settings and write to disk.
+        Errors are logged and swallowed so a save failure can't block quit."""
+        try:
+            blob = bytes(self.saveGeometry())
+            self._settings.window.geometry = base64.b64encode(blob).decode("ascii")
+            save_settings(self._settings)
+        except OSError as e:
+            log.warning("could not persist window geometry: %s", e)
 
     def _refresh_alerts_button(self) -> None:
         on = bool(self._settings.ui.desktop_notifications)
@@ -697,6 +734,10 @@ class MainWindow(QMainWindow):
             if ans != QMessageBox.Yes:
                 event.ignore()
                 return
+        # Capture geometry before tearing down terminals — must happen on
+        # the path past the working-session prompt so a cancelled quit
+        # doesn't persist a transient size.
+        self._persist_window_state()
         for host in list(self._terminals.values()):
             host.stop()
         self._terminals.clear()
