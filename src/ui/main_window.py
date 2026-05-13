@@ -425,9 +425,8 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _open_shortcuts(self) -> None:
-        """Show the modal cheatsheet. Triggered by F1 and Shift+? via the
-        root-window grab table; also reachable from any future Help button
-        wired to this slot."""
+        """Show the modal cheatsheet. Triggered by F1 via the MainWindow-scoped
+        grab table; also reachable from any future Help button wired to this slot."""
         ShortcutsDialog(self).exec()
 
     def _on_settings_changed(self, settings: Settings) -> None:
