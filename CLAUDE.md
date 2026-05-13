@@ -278,9 +278,9 @@ events never touch it; user navigation never touches `_status`.
   every duplicate row. The quit-confirm derives its working-id list on
   demand from `model.is_working(path)` rather than maintaining a
   parallel set. Per-session routing is future work.
-- Tests use `QT_QPA_PLATFORM=offscreen`. The `qapp` fixture in
-  `tests/test_preferences_dialog.py` is the pattern to follow when a test
-  needs a `QApplication`.
+- Tests use `QT_QPA_PLATFORM=offscreen`. The shared `qapp` fixture and
+  `StubHookServer` stand-in live in `tests/conftest.py` — depend on those
+  rather than re-rolling them per file.
 
 ## Install / packaging
 
