@@ -119,6 +119,22 @@ def _norm(path: str) -> str:
     """
     return os.path.realpath(path) if path else ""
 
+
+def _format_elapsed(seconds: float) -> str:
+    """Human "Ns / Nm Ms / Nh Mm" elapsed-time format.
+
+    Bare seconds under a minute; `1m 23s` up to an hour; `1h 5m` thereafter
+    (seconds dropped in the hours bucket — at multi-hour scale the digit
+    isn't useful and would jitter the tooltip on every re-show).
+    """
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m {s % 60}s"
+    h, rem = divmod(s, 3600)
+    return f"{h}h {rem // 60}m"
+
 # Five braille spinner variants. Each repo gets one deterministically
 # (crc32 of repo.id mod len) so the sidebar feels lightly varied without
 # being noisy — the same repo always animates the same way.
@@ -195,6 +211,12 @@ class RepoListModel(QAbstractListModel):
         # one bookmark exists at a time. Mutated exclusively by set_last_focused;
         # no Claude event handler touches this field.
         self._last_focused: str | None = None
+        # Per-path monotonic timestamp of the most recent UserPromptSubmit.
+        # Set on UPS, cleared on Stop. Distinct from _last_activity (which
+        # also stamps on Stop and Notification) — we need "turn began",
+        # not "any Claude event happened". Path-keyed unnormalized to match
+        # _status and _last_activity (not _working, which is normalized).
+        self._turn_started: dict[str, float] = {}
 
     # ── Qt model API ──
 
@@ -227,6 +249,10 @@ class RepoListModel(QAbstractListModel):
             # color palette. Path stays as the second line for context.
             # Priority: working > Claude alert > last-focused bookmark.
             if _norm(repo.path) in self._working:
+                started = self._turn_started.get(repo.path)
+                if started is not None:
+                    elapsed = _format_elapsed(time.monotonic() - started)
+                    return f"{WORKING_LABEL}\n{repo.path}\nWorking {elapsed}"
                 return f"{WORKING_LABEL}\n{repo.path}"
             label = STATUS_LABELS.get(self._status.get(repo.path, ""))
             if label:
@@ -303,6 +329,19 @@ class RepoListModel(QAbstractListModel):
         """
         self._last_activity[path] = time.monotonic()
 
+    def mark_turn_start(self, path: str) -> None:
+        """Stamp the start of a Claude turn for tooltip elapsed-time display.
+
+        Dict assignment overwrites on interrupt: a second UPS without an
+        intervening Stop (Esc-interrupted turn, crashed turn) correctly
+        restarts the elapsed counter from zero.
+        """
+        self._turn_started[path] = time.monotonic()
+
+    def clear_turn_start(self, path: str) -> None:
+        """Drop the turn-start timestamp on Stop. Idempotent."""
+        self._turn_started.pop(path, None)
+
     def set_last_focused(self, path: str | None) -> None:
         """Set the user-navigation bookmark (or clear it with None).
 
@@ -371,9 +410,11 @@ class RepoListModel(QAbstractListModel):
             self.clear_status(path)
             self.set_working(path, True)
             self.touch_activity(path)
+            self.mark_turn_start(path)
         elif event == EVENT_STOP:
             self.set_working(path, False)
             self.set_status(path, STATUS_DONE)
+            self.clear_turn_start(path)
         elif event == EVENT_NOTIFICATION:
             self.set_status(path, STATUS_ATTENTION)
 
@@ -575,6 +616,7 @@ class RepoListModel(QAbstractListModel):
             self._status.pop(path, None)
             self._working.discard(_norm(path))
             self._last_activity.pop(path, None)
+            self._turn_started.pop(path, None)
             if self._last_focused == _norm(path):
                 self._last_focused = None
         self._store.save()
