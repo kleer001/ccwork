@@ -296,11 +296,12 @@ heading + version subhead + three keyboard hints.
 
 ---
 
-## 11. keyboard-cheatsheet (F1 / Shift+?)
+## 11. keyboard-cheatsheet (F1)
 
-**What changed:** `F1` (and Shift+? on US layouts) opens a modal dialog
-titled *Keyboard shortcuts* listing every shortcut ccwork exposes,
-grouped Window / Sidebar / Terminal.
+**What changed:** `F1` opens a modal dialog titled *Keyboard shortcuts*
+listing every shortcut ccwork exposes, grouped Window / Sidebar /
+Terminal. (Shift+? was briefly a secondary trigger; removed because it
+interferes with typing `?` in any shell / editor.)
 
 With **sidebar focus**:
 
@@ -308,7 +309,7 @@ With **sidebar focus**:
   opens titled *Keyboard shortcuts*.
 - [ ] Three group boxes visible: Window, Sidebar, Terminal.
 - [ ] Window group lists: Preferences `Ctrl+Shift+P`, Add repo
-  `Ctrl+Shift+O`, Quit `Ctrl+Shift+Q`, Keyboard shortcuts `F1 / ?`.
+  `Ctrl+Shift+O`, Quit `Ctrl+Shift+Q`, Keyboard shortcuts `F1`.
 - [ ] Sidebar group lists: Jump to repo 1..9
   `Ctrl+Shift+1 … Ctrl+Shift+9`, Next repo `Ctrl+Tab`, Previous repo
   `Ctrl+Shift+Tab`.
@@ -323,18 +324,57 @@ With **xterm focus** (the load-bearing case):
 - [ ] Click into a repo's terminal. Type a few characters at the shell
   prompt without pressing Enter.
 - [ ] Press `F1`. Dialog still opens — xterm never sees the F1 press
-  because the root grab routed it to ccwork first.
+  because the MainWindow-scoped grab routed it to ccwork first.
 - [ ] The xterm shell line has **no extra characters** appended. If
   any garbage appears the grab regressed.
 - [ ] Press `Esc` to dismiss.
 
-**Shift+? fallback:**
+**`?` does NOT open the dialog (regression guard):**
 
-- [ ] On a US keyboard, with the sidebar or an xterm focused, press
-  `Shift+/` (i.e. `?`). Dialog opens.
-- [ ] (On non-US layouts where `?` requires AltGr or a dead key, the
-  binding may silently fail to register. That's documented behavior —
-  F1 is the primary trigger.)
+- [ ] With ccwork focused, press `Shift+/` (i.e. `?`). **Dialog does
+  not open** — `?` should reach the shell / editor / wherever as a
+  normal character. If the dialog opens, the binding was re-added by
+  mistake.
+
+---
+
+## 12. Focus scoping (load-bearing)
+
+**What changed:** shortcuts are now scoped to ccwork's window — they
+fire when ccwork (sidebar, terminal, child dialog) has X focus, and
+NOT when another app does. Previously root-window grabs intercepted
+the same combos globally, popping ccwork dialogs from inside Firefox
+or any other app.
+
+- [ ] Click ccwork to focus it. Press `Ctrl+Shift+P`. Preferences
+  opens. Close it.
+- [ ] Click into Firefox / another app to focus it. Press
+  `Ctrl+Shift+P`. **Nothing happens in ccwork** — Firefox sees the
+  press normally (in most browsers Ctrl+Shift+P is private browsing).
+- [ ] Same negative check for `Ctrl+Shift+Q` (ccwork unfocused — must
+  not quit ccwork): focus another app, press `Ctrl+Shift+Q`, verify
+  ccwork is still running.
+- [ ] Same for `Ctrl+Tab` while another app is focused — ccwork must
+  not cycle its sidebar.
+
+---
+
+## 13. Row-number hints
+
+**What changed:** the first nine sidebar rows render a small "1"..."9"
+in the top-left corner so the `Ctrl+Shift+N` jump binding is visually
+discoverable. Subtle styling (smaller font, reduced alpha) so the
+number reads as an ambient hint rather than competing with the status
+badge.
+
+- [ ] With at least 3 repos in the sidebar, observe each row has a
+  small digit in the top-left corner: row 1 shows "1", row 2 shows
+  "2", etc.
+- [ ] With ≥10 repos, the 10th row and below have **no** digit (only
+  `Ctrl+Shift+1`..`Ctrl+Shift+9` are bound).
+- [ ] With auto-arrange enabled, when rows reorder the digits track
+  the new visual position (the digit on a row is always its current
+  jump-slot number, not a permanent label).
 
 ---
 
