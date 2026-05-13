@@ -2,10 +2,39 @@
 
 Implementation plan for the seven specs in `docs/specs/`. All seven are rated
 **Small** difficulty. The bottleneck is `src/ui/main_window.py` (touched by 6
-of 7), but the edits land in disjoint zones (`_install_shortcuts`,
+of 7), but the edits land in disjoint zones (`_install_global_keys`,
 `__init__`, `closeEvent`, terminal lifecycle, signal wiring). Sequencing
 matters more than parallelism for a solo dev — order below is chosen to keep
 each PR self-contained and to land the cross-referencing specs last.
+
+## Status (2026-05-13)
+
+- [x] **Keybinding infrastructure** — root-window `XGrabKey` + a single
+  `QAbstractNativeEventFilter` on the `QApplication`. Lives in
+  `src/core/key_grab.py` + `MainWindow._install_global_keys`. Replaces
+  the QAction / `_install_shortcuts` approach, which couldn't fire while
+  xterm held X focus because xterm isn't a Qt widget. Verified live via
+  XTest injection — see `docs/specs/SMOKE-TEST.md`. **This is the
+  prerequisite that the row-jump and cheatsheet specs were blocked on.**
+- [~] **alt-n-row-jump** — binding shipped on `Ctrl+Shift+1`..`Ctrl+Shift+9`
+  (not `Alt+1..9`; we moved off the Alt namespace because xterm's
+  `metaSendsEscape` consumed Alt+digit as `ESC+digit` on the PTY). The
+  `MainWindow._jump_to_row` slot is wired and reaches the right row in
+  the live test. **Not yet:** status-bar `"No repo at slot N"` message
+  for out-of-range presses; `tests/test_alt_row_jump.py`.
+- [ ] working-elapsed-time
+- [ ] window-geometry-restore
+- [ ] row-context-path-actions
+- [ ] working-count-in-title
+- [ ] empty-state-placeholder
+- [ ] keyboard-cheatsheet
+
+The individual spec files below were written before the 2026-05-13
+keybinding rework and still reference the old `_install_shortcuts` /
+`_install_zoom_grabs` symbol names plus the QAction approach. The
+design hooks remain valid; update each spec in-place when implementing
+to point at `_install_global_keys` / `_install_button_grabs` and the
+`KeyGrabFilter` dispatch table instead.
 
 ## Resolved decisions
 
@@ -64,10 +93,14 @@ Rebase each on top of Wave 1 sequentially.
 - **Format:** `ccwork` / `ccwork — 1 working` / `ccwork — N working`
 - **Tests:** new `tests/test_main_window_title.py`
 
-### 5. alt-n-row-jump
-- **Touches:** `src/ui/main_window.py` (extend `_install_shortcuts`, add `_jump_to_row(row)` slot), `src/ui/terminal_host.py` (Alt+digit grabs in `_install_zoom_grabs` / `_uninstall_zoom_grabs`, accept Alt+digit in `keyPressEvent`), `src/core/x11.py` (add `Mod1Mask = 1 << 3`, `XK_1`..`XK_9`)
-- **Empty slot:** status-bar message `"No repo at slot N"`, 1.5 s transient
-- **Tests:** new `tests/test_alt_row_jump.py`
+### 5. alt-n-row-jump  [~ partial]
+- **Status:** binding + `_jump_to_row` shipped on `Ctrl+Shift+1`..`Ctrl+Shift+9`
+  via root-window XGrabKey. Verified via XTest live test. Remaining:
+  status-bar `"No repo at slot N"` message + the `tests/test_alt_row_jump.py`
+  unit test.
+- **Touches:** `src/ui/main_window.py` (extend `_install_global_keys`, add `_jump_to_row(row)` slot), `src/core/x11.py` (add `Mod1Mask`, `XK_1`)
+- **Empty slot:** status-bar message `"No repo at slot N"`, 1.5 s transient — not yet implemented
+- **Tests:** new `tests/test_alt_row_jump.py` — not yet implemented
 
 ### 6. empty-state-placeholder
 - **Touches:** new `src/ui/empty_state.py`, `src/ui/main_window.py` (swap blank pane factory at lines ~421–424)
