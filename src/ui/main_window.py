@@ -28,10 +28,9 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
-from typing import Callable
 
 from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QFontMetrics, QPainter
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -47,7 +46,6 @@ from PySide6.QtWidgets import (
 from pathlib import Path
 
 from src import __version__
-from src.core import x11
 from src.core.hook_server import (
     EVENT_NOTIFICATION,
     EVENT_REPO_ADDED,
@@ -56,16 +54,22 @@ from src.core.hook_server import (
     IDLE_EVENTS,
     HookServer,
 )
-from src.core.key_grab import KeyGrabFilter
+from src.core.key_grab import (
+    KeyGrabFilter,
+    MainWindowSlots,
+    build_main_window_bindings,
+)
 from src.core.repo_store import Repo, RepoStore
 from src.core.settings import Settings, load_settings, save_settings
 from src.core.terminal_session import build_session
 from src.core.x11 import XDisplay
+from src.ui.bell_button import BellButton
 from src.ui.empty_state import EmptyState
 from src.ui.preferences_dialog import PreferencesDialog
 from src.ui.qt_theme import apply_theme
 from src.ui.repo_sidebar import RepoSidebar
 from src.ui.shortcuts_dialog import ShortcutsDialog
+from src.ui.terminal_context_menu import build_terminal_menu
 from src.ui.terminal_host import TerminalHost
 from src.ui.title_label import TitleLabel
 
@@ -116,7 +120,7 @@ class MainWindow(QMainWindow):
         self._refresh_alerts_button()
         self._alerts_btn.toggled.connect(self._on_alerts_toggled)
 
-        self._bell_btn = _BellButton(self)
+        self._bell_btn = BellButton(self)
         self._bell_btn.setToolTip("Unread alerts — click to clear")
         self._bell_btn.clicked.connect(lambda: self._bell_btn.set_unseen(False))
 
@@ -262,34 +266,15 @@ class MainWindow(QMainWindow):
         # untouched.
         self._key_grab_window = int(self.winId())
 
-        Ctrl = x11.ControlMask
-        Shift = x11.ShiftMask
-        zoom_in = lambda: self._on_zoom_requested(+1)
-        bindings: list[tuple[int, int, Callable[[], None]]] = [
-            (x11.XK_p,        Ctrl | Shift, self._open_preferences),
-            (x11.XK_o,        Ctrl | Shift, self._sidebar.add_repo_via_dialog),
-            (x11.XK_q,        Ctrl | Shift, self.close),
-            (x11.XK_F1,       0,            self._open_shortcuts),
-            (x11.XK_Tab,      Ctrl,         lambda: self._on_cycle_repo_requested(+1)),
-            (x11.XK_Tab,      Ctrl | Shift, lambda: self._on_cycle_repo_requested(-1)),
-            # Ctrl+= / Ctrl++: both "zoom in" because the unshifted glyph
-            # depends on layout (US: '=', some EU layouts: '+').
-            (x11.XK_equal,    Ctrl,         zoom_in),
-            (x11.XK_plus,     Ctrl,         zoom_in),
-            (x11.XK_minus,    Ctrl,         lambda: self._on_zoom_requested(-1)),
-            (x11.XK_0,        Ctrl,         lambda: self._on_zoom_requested(0)),
-        ]
-        # Ctrl+Shift+1..9 → jump to sidebar row 1..9 (zero-indexed internally).
-        # ASCII digit keysyms are contiguous, so XK_1 + n - 1 is the keysym
-        # for digit n. range(1, 10) deliberately excludes XK_0 — Ctrl+Shift+0
-        # is reserved for a possible future "last row" / "10th row" binding;
-        # mapping it now and changing later would break muscle memory.
-        for n in range(1, 10):
-            bindings.append((
-                x11.XK_1 + (n - 1),
-                Ctrl | Shift,
-                lambda row=n - 1: self._jump_to_row(row),
-            ))
+        bindings = build_main_window_bindings(MainWindowSlots(
+            open_preferences=self._open_preferences,
+            add_repo=self._sidebar.add_repo_via_dialog,
+            quit=self.close,
+            open_shortcuts=self._open_shortcuts,
+            cycle_repo=self._on_cycle_repo_requested,
+            zoom=self._on_zoom_requested,
+            jump_to_row=self._jump_to_row,
+        ))
 
         # Track (keysym, mods) for ungrab on shutdown.
         self._key_bindings = [(ks, m) for ks, m, _ in bindings]
@@ -571,33 +556,15 @@ class MainWindow(QMainWindow):
     # ── terminal context menu ──
 
     def _on_terminal_context_menu(self, repo: Repo, global_pos) -> None:
-        """Right-click-in-terminal menu: Paste, Reload, Prefs, plus a
-        disabled hint row pointing at Ctrl+Shift+C for Copy (xterm owns the
-        selection so only it can write it to the clipboard)."""
-        from PySide6.QtGui import QAction
-        from PySide6.QtWidgets import QMenu
-
-        menu = QMenu(self)
-
-        paste_act = QAction("Paste", menu)
-        paste_act.setToolTip("Send clipboard text to the terminal (Ctrl+Shift+V)")
-        paste_act.triggered.connect(lambda _=False, r=repo: self._paste_clipboard_to(r))
-        menu.addAction(paste_act)
-
-        copy_hint = QAction("Copy selection   Ctrl+Shift+C", menu)
-        copy_hint.setEnabled(False)
-        menu.addAction(copy_hint)
-
-        menu.addSeparator()
-
-        reload_act = QAction("Reload terminal", menu)
-        reload_act.triggered.connect(lambda _=False, r=repo: self._sidebar._confirm_reload(r))
-        menu.addAction(reload_act)
-
-        prefs_act = QAction("Preferences…", menu)
-        prefs_act.triggered.connect(self._open_preferences)
-        menu.addAction(prefs_act)
-
+        """Build and exec the right-click-in-terminal menu. The labels,
+        tooltip, and disabled Copy hint live in ``terminal_context_menu``;
+        this method just supplies the callbacks bound to the current repo."""
+        menu = build_terminal_menu(
+            parent=self,
+            on_paste=lambda: self._paste_clipboard_to(repo),
+            on_reload=lambda: self._sidebar._confirm_reload(repo),
+            on_preferences=self._open_preferences,
+        )
         menu.exec(global_pos)
 
     def _paste_clipboard_to(self, repo: Repo) -> None:
@@ -836,32 +803,3 @@ class MainWindow(QMainWindow):
         self._terminals.clear()
         self._uninstall_global_keys()
         super().closeEvent(event)
-
-
-class _BellButton(QToolButton):
-    """🔔 toolbutton with a small red dot in the corner when unseen alerts exist."""
-
-    DOT_COLOR = QColor(220, 80, 80)
-    DOT_D = 7
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setText("🔔")
-        self.setAutoRaise(True)
-        self._unseen = False
-
-    def set_unseen(self, on: bool) -> None:
-        if on != self._unseen:
-            self._unseen = on
-            self.update()
-
-    def paintEvent(self, ev) -> None:  # type: ignore[override]
-        super().paintEvent(ev)
-        if not self._unseen:
-            return
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, True)
-        p.setPen(Qt.NoPen)
-        p.setBrush(self.DOT_COLOR)
-        d = self.DOT_D
-        p.drawEllipse(self.width() - d - 2, 2, d, d)

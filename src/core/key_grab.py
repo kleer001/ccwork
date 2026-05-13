@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+from dataclasses import dataclass
 from typing import Callable
 
 from PySide6.QtCore import QAbstractNativeEventFilter
@@ -143,3 +144,67 @@ class KeyGrabFilter(QAbstractNativeEventFilter):
         # when xterm has focus, but for sidebar-focus presses it would
         # double-deliver the keystroke).
         return True, 0
+
+
+# ── main-window binding table ──
+
+
+@dataclass(frozen=True)
+class MainWindowSlots:
+    """Callbacks the MainWindow binding table dispatches to.
+
+    Frozen so the factory can't mutate it mid-build. Each slot maps to one
+    or more rows in the binding table; adding a new shortcut means adding
+    a field here, wiring it in `build_main_window_bindings`, and passing
+    the bound method in `MainWindow._install_global_keys`.
+    """
+
+    open_preferences: Callable[[], None]
+    add_repo:         Callable[[], None]
+    quit:             Callable[[], None]
+    open_shortcuts:   Callable[[], None]
+    cycle_repo:       Callable[[int], None]   # +1 forward, -1 back
+    zoom:             Callable[[int], None]   # +1 in, -1 out, 0 reset
+    jump_to_row:      Callable[[int], None]   # 0-indexed: row 0..8
+
+
+def build_main_window_bindings(
+    slots: MainWindowSlots,
+) -> list[tuple[int, int, Callable[[], None]]]:
+    """Return the `(keysym, mods, callback)` table for MainWindow shortcuts.
+
+    Centralizing the table here keeps MainWindow's install method to plain
+    plumbing (platform check, attach to Qt's X display, install filter,
+    grab + register loop). The lock-key fan-out (NumLock/CapsLock) is
+    handled by `KeyGrabFilter`'s state mask, so each logical shortcut
+    gets exactly one row.
+    """
+    Ctrl = x11.ControlMask
+    Shift = x11.ShiftMask
+    zoom_in = lambda: slots.zoom(+1)
+    bindings: list[tuple[int, int, Callable[[], None]]] = [
+        (x11.XK_p,        Ctrl | Shift, slots.open_preferences),
+        (x11.XK_o,        Ctrl | Shift, slots.add_repo),
+        (x11.XK_q,        Ctrl | Shift, slots.quit),
+        (x11.XK_F1,       0,            slots.open_shortcuts),
+        (x11.XK_Tab,      Ctrl,         lambda: slots.cycle_repo(+1)),
+        (x11.XK_Tab,      Ctrl | Shift, lambda: slots.cycle_repo(-1)),
+        # Ctrl+= / Ctrl++: both "zoom in" because the unshifted glyph
+        # depends on layout (US: '=', some EU layouts: '+').
+        (x11.XK_equal,    Ctrl,         zoom_in),
+        (x11.XK_plus,     Ctrl,         zoom_in),
+        (x11.XK_minus,    Ctrl,         lambda: slots.zoom(-1)),
+        (x11.XK_0,        Ctrl,         lambda: slots.zoom(0)),
+    ]
+    # Ctrl+Shift+1..9 → jump to sidebar row 1..9 (zero-indexed internally).
+    # ASCII digit keysyms are contiguous, so XK_1 + n - 1 is the keysym
+    # for digit n. range(1, 10) deliberately excludes XK_0 — Ctrl+Shift+0
+    # is reserved for a possible future "last row" / "10th row" binding;
+    # mapping it now and changing later would break muscle memory.
+    for n in range(1, 10):
+        bindings.append((
+            x11.XK_1 + (n - 1),
+            Ctrl | Shift,
+            lambda row=n - 1: slots.jump_to_row(row),
+        ))
+    return bindings
