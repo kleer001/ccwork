@@ -62,6 +62,7 @@ from src.ui.empty_state import EmptyState
 from src.ui.preferences_dialog import PreferencesDialog
 from src.ui.qt_theme import apply_theme
 from src.ui.repo_sidebar import RepoSidebar
+from src.ui.shortcuts_dialog import ShortcutsDialog
 from src.ui.terminal_host import TerminalHost
 from src.ui.title_label import TitleLabel
 
@@ -242,17 +243,22 @@ class MainWindow(QMainWindow):
         Shift = x11.ShiftMask
         zoom_in = lambda: self._on_zoom_requested(+1)
         bindings: list[tuple[int, int, Callable[[], None]]] = [
-            (x11.XK_p,     Ctrl | Shift, self._open_preferences),
-            (x11.XK_o,     Ctrl | Shift, self._sidebar._on_add_clicked),
-            (x11.XK_q,     Ctrl | Shift, self.close),
-            (x11.XK_Tab,   Ctrl,         lambda: self._on_cycle_repo_requested(+1)),
-            (x11.XK_Tab,   Ctrl | Shift, lambda: self._on_cycle_repo_requested(-1)),
+            (x11.XK_p,        Ctrl | Shift, self._open_preferences),
+            (x11.XK_o,        Ctrl | Shift, self._sidebar._on_add_clicked),
+            (x11.XK_q,        Ctrl | Shift, self.close),
+            (x11.XK_F1,       0,            self._open_shortcuts),
+            # `?` is Shift+/ on US layouts. On layouts where it requires
+            # AltGr the keysym lookup returns 0 and KeyGrabFilter.register
+            # logs a warning and skips — F1 is the documented primary.
+            (x11.XK_question, Shift,        self._open_shortcuts),
+            (x11.XK_Tab,      Ctrl,         lambda: self._on_cycle_repo_requested(+1)),
+            (x11.XK_Tab,      Ctrl | Shift, lambda: self._on_cycle_repo_requested(-1)),
             # Ctrl+= / Ctrl++: both "zoom in" because the unshifted glyph
             # depends on layout (US: '=', some EU layouts: '+').
-            (x11.XK_equal, Ctrl,         zoom_in),
-            (x11.XK_plus,  Ctrl,         zoom_in),
-            (x11.XK_minus, Ctrl,         lambda: self._on_zoom_requested(-1)),
-            (x11.XK_0,     Ctrl,         lambda: self._on_zoom_requested(0)),
+            (x11.XK_equal,    Ctrl,         zoom_in),
+            (x11.XK_plus,     Ctrl,         zoom_in),
+            (x11.XK_minus,    Ctrl,         lambda: self._on_zoom_requested(-1)),
+            (x11.XK_0,        Ctrl,         lambda: self._on_zoom_requested(0)),
         ]
         # Ctrl+Shift+1..9 → jump to sidebar row 1..9 (zero-indexed internally).
         # ASCII digit keysyms are contiguous, so XK_1 + n - 1 is the keysym
@@ -408,6 +414,12 @@ class MainWindow(QMainWindow):
         dlg = PreferencesDialog(self._settings, self)
         dlg.applied.connect(self._on_settings_changed)
         dlg.exec()
+
+    def _open_shortcuts(self) -> None:
+        """Show the modal cheatsheet. Triggered by F1 and Shift+? via the
+        root-window grab table; also reachable from any future Help button
+        wired to this slot."""
+        ShortcutsDialog(self).exec()
 
     def _on_settings_changed(self, settings: Settings) -> None:
         # Keep the reference in sync so new terminal spawns pick it up.

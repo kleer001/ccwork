@@ -26,13 +26,12 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 log = logging.getLogger(__name__)
 
 
-# Match the bindings table in MainWindow._install_global_keys. When the
-# keyboard-cheatsheet spec lands, append `"Press <b>F1</b> for keyboard
-# shortcuts"` to this list — that's the only edit required.
+# Match the bindings table in MainWindow._install_global_keys.
 HINT_LINES = (
     "Press <b>Ctrl+Shift+O</b> to add a repo",
     "Right-click any repo for options",
     "Press <b>Ctrl+Shift+P</b> for preferences",
+    "Press <b>F1</b> for keyboard shortcuts",
 )
 
 

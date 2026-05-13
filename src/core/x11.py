@@ -43,12 +43,14 @@ Button5 = 5
 XK_equal = 0x003d       # '='
 XK_plus = 0x002b        # '+'  (only reachable without Shift on some layouts)
 XK_minus = 0x002d       # '-'
+XK_question = 0x003f    # '?'  (Shift+/ on US layouts; secondary Help trigger)
 XK_0 = 0x0030           # '0'
 XK_1 = 0x0031
 XK_o = 0x006f
 XK_p = 0x0070
 XK_q = 0x0071
 XK_Tab = 0xff09         # Tab
+XK_F1 = 0xffbe          # F1   (primary keyboard-shortcuts trigger)
 
 
 _x11: Optional[ctypes.CDLL] = None

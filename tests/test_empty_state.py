@@ -53,23 +53,25 @@ def test_renders_without_logo(qapp: QApplication, tmp_path: Path) -> None:
 
 
 def test_hint_count_matches_shipped_set(qapp: QApplication) -> None:
-    """The initial cut ships three hints (Ctrl+Shift+O / right-click /
-    Ctrl+Shift+P). Adding a fourth (e.g. the F1 cheatsheet hint when that
-    spec lands) must be a deliberate edit to HINT_LINES, not a side
-    effect. This test catches accidental additions/removals."""
+    """Four hints shipped: Ctrl+Shift+O / right-click / Ctrl+Shift+P / F1.
+    The F1 entry was added with the keyboard-cheatsheet spec (Wave 3).
+    Future additions must be deliberate edits to HINT_LINES, not side
+    effects."""
     es = EmptyState(version="0.1.0")
-    assert len(es._hints) == 3
-    assert len(HINT_LINES) == 3
+    assert len(es._hints) == 4
+    assert len(HINT_LINES) == 4
 
 
 def test_hints_reference_current_shortcut_namespace(qapp: QApplication) -> None:
-    """Hints must use the Ctrl+Shift+N namespace shipped 2026-05-13.
-    Guards against a future doc-rot where the empty-state shows a
-    shortcut that doesn't exist."""
+    """Hints must use the Ctrl+Shift+N namespace shipped 2026-05-13 and
+    advertise the F1 cheatsheet trigger added in Wave 3. Guards against a
+    future doc-rot where the empty-state shows a shortcut that doesn't
+    exist."""
     es = EmptyState(version="0.1.0")
     joined = " ".join(h.text() for h in es._hints)
     assert "Ctrl+Shift+O" in joined  # add a repo
     assert "Ctrl+Shift+P" in joined  # preferences
+    assert "F1" in joined            # cheatsheet
     # Old shortcuts that were dropped must NOT appear.
     assert "Ctrl+O" not in joined.replace("Ctrl+Shift+O", "")
     assert "Ctrl+," not in joined
