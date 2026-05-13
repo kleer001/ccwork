@@ -18,9 +18,9 @@ cross-referencing specs last.
 | Item | Status | Notes |
 |---|---|---|
 | Keybinding infrastructure | shipped 2026-05-13 | Root `XGrabKey` + single `QAbstractNativeEventFilter` on the `QApplication`. Lives in `src/core/key_grab.py` + `MainWindow._install_global_keys`. Replaces the QAction / `_install_shortcuts` approach (which never fired while xterm held X focus). Verified live via XTest injection — see `docs/specs/SMOKE-TEST.md`. |
-| 1. working-elapsed-time | pending | |
-| 2. window-geometry-restore | pending | |
-| 3. row-context-path-actions | pending | |
+| 1. working-elapsed-time | shipped 2026-05-13 | `RepoListModel._turn_started` dict + `mark_turn_start` / `clear_turn_start` mutators + module-level `_format_elapsed`. Tooltip on working rows appends `Working 27s` / `1m 23s` / `1h 5m`. 7 tests in `test_repo_sidebar_working_elapsed.py`. |
+| 2. window-geometry-restore | shipped 2026-05-13 | New top-level `[window]` section with base64-encoded `QMainWindow.saveGeometry()`. Restore in `__init__`, persist in `closeEvent`. Corrupt blob → WARNING log only (per user feedback: log-only, no status-bar, no modal). 4 tests in `test_settings.py`; live-verified via XTest-injected Ctrl+Shift+Q. |
+| 3. row-context-path-actions | shipped 2026-05-13 | *Open in file manager* (xdg-open via `QProcess.startDetached`, disabled + tooltip when missing) + *Copy path* (QClipboard + new `path_copied` signal flashing a status-bar confirmation in `MainWindow._on_path_copied`). Refactored `_on_context_menu` into a `_build_context_menu` helper for testability. 7 tests in `test_repo_sidebar_path_actions.py`. |
 | 4. working-count-in-title | pending | |
 | 5. row-jump (was alt-n-row-jump) | **partial** | Binding on `Ctrl+Shift+1`..`Ctrl+Shift+9` shipped via the infrastructure above; `_jump_to_row` slot wired and verified. Remaining: status-bar `"No repo at slot N"` transient + the `tests/test_alt_row_jump.py` unit test. |
 | 6. empty-state-placeholder | pending | |

@@ -138,6 +138,88 @@ Shift+Ctrl scoping.
 
 ---
 
+## 5. working-elapsed-time
+
+**What changed:** the working-row tooltip now ends with `Working {elapsed}`
+while a Claude turn is in flight, so the spinner reads as an analog
+gauge instead of a binary alive-or-hung indicator.
+
+- [ ] In a sidebar repo's terminal, run `claude` and submit a prompt that
+  will take a while (`"count from 1 to 30 with 1s pauses"` or similar).
+- [ ] Spinner appears on the row.
+- [ ] **Hover** the row. After ~3 seconds, mouse off, mouse back on.
+  Tooltip third line reads `Working {N}s`.
+- [ ] Wait ~70 seconds. Hover again — tooltip reads `Working 1m {S}s`.
+- [ ] Press `Esc` to interrupt the turn, then submit a new prompt.
+  Hover again — the seconds count should have **reset to zero**, not
+  carried over from the interrupted turn.
+- [ ] Let the turn finish (`Stop` event). Hover — tooltip is the
+  `Claude finished a turn / {path}` two-line shape, **no `Working` line**.
+
+---
+
+## 6. window-geometry-restore
+
+**What changed:** ccwork remembers window size, position, and maximize
+state across launches. The first-launch fallback is still 1280×820.
+
+- [ ] Drag the window to a non-default position (or to a secondary
+  monitor).
+- [ ] Resize to a distinct non-default size (e.g. very tall and narrow).
+- [ ] Quit via `Ctrl+Shift+Q`.
+- [ ] Relaunch. Window comes up at the same size and position.
+- [ ] Maximize. Quit. Relaunch. Window comes up maximized.
+- [ ] Un-maximize (saved blob still records the maximize flag). Drag to
+  a third position. Quit. Relaunch. Window comes up at the new dragged
+  position, not maximized.
+
+**Corruption fallback:** *(corrupt blob path; log-only by design)*
+
+- [ ] Quit ccwork. Edit `~/.config/ccwork/settings.toml` and set
+  `geometry = "not-valid-base64!!!"` under `[window]`.
+- [ ] Relaunch with `CCWORK_LOG=INFO ./bin/ccwork`.
+- [ ] Window opens at the 1280×820 default. Console logs
+  `corrupt window.geometry blob (...) — using default` at WARNING.
+- [ ] **No status-bar message, no modal dialog** — this is intentional
+  per the user's "not THAT loud" feedback; the log line is the only
+  surface.
+- [ ] Quit. The corrupt blob is overwritten with a fresh valid one.
+
+---
+
+## 7. row-context-path-actions
+
+**What changed:** the sidebar row right-click menu has two new items —
+*Open in file manager* and *Copy path* — between *Clone this repo* and
+the badge group.
+
+- [ ] Right-click any sidebar repo. Menu order top-to-bottom:
+  **Reload terminal**, **Clone this repo**, **Open in file manager**,
+  **Copy path**, ────, **Set badge…**, **Clear badge**, ────,
+  **Remove from sidebar**. **No separator** between *Clone this repo*
+  and *Open in file manager* (they read as one path-action cluster).
+
+**Copy path:**
+
+- [ ] Click *Copy path*.
+- [ ] Status bar shows `Copied: {path}` (middle-elided if long) for
+  ~2 seconds.
+- [ ] Paste somewhere (text editor, address bar). The full absolute
+  path is on the clipboard, untouched.
+- [ ] Add (or rename) a repo whose path contains a space. *Copy path*
+  still works; the space survives end-to-end.
+
+**Open in file manager:**
+
+- [ ] Click *Open in file manager*.
+- [ ] Your desktop's default file manager opens at the repo directory.
+- [ ] (Optional) Temporarily mask xdg-open
+  (`sudo mv /usr/bin/xdg-open /usr/bin/xdg-open.bak`). Right-click a
+  repo. *Open in file manager* is **disabled** and its tooltip mentions
+  `xdg-utils`. Restore xdg-open after testing.
+
+---
+
 ## Synthetic verification (optional)
 
 For CI-style regression checks without a human pressing keys, the script
