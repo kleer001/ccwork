@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import shutil
@@ -21,7 +22,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QAction, QColor, QFont, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -49,6 +50,9 @@ from src.core.hook_server import (
     EVENT_USER_PROMPT_SUBMIT,
 )
 from src.core.repo_store import Repo, RepoStore
+
+
+log = logging.getLogger(__name__)
 
 
 # Hook events that drive per-row Claude-state transitions in
@@ -852,6 +856,11 @@ class RepoSidebar(QWidget):
     repo_added = Signal(Repo)
     repo_removed = Signal(Repo)  # emits the removed Repo (id needed to tear down)
     reload_requested = Signal(Repo)  # user asked to respawn the terminal
+    # Emitted after the user picks "Copy path" — carries the path that just
+    # landed on the clipboard so MainWindow can flash a status-bar
+    # confirmation. The sidebar doesn't own a status bar; this keeps it
+    # display-agnostic.
+    path_copied = Signal(str)
 
     def __init__(self, store: RepoStore, parent=None, settings=None) -> None:
         super().__init__(parent)
@@ -1275,8 +1284,15 @@ class RepoSidebar(QWidget):
         repo = self._model.repo_at(idx.row())
         if repo is None:
             return
+        menu = self._build_context_menu(repo, idx.row())
+        menu.exec(self._view.viewport().mapToGlobal(pos))
 
+    def _build_context_menu(self, repo: Repo, row: int) -> QMenu:
+        """Construct the row right-click menu. Split out from
+        ``_on_context_menu`` so tests can inspect actions (enabled state,
+        tooltips, ordering) without simulating an actual right-click."""
         menu = QMenu(self)
+
         reload_act = QAction("Reload terminal", menu)
         reload_act.setToolTip("Respawn xterm to pick up new settings. Loses in-flight shell state.")
         reload_act.triggered.connect(lambda _=False, r=repo: self._confirm_reload(r))
@@ -1286,6 +1302,29 @@ class RepoSidebar(QWidget):
         clone_act.setToolTip("Add a second sidebar row pointing at the same directory (parallel session).")
         clone_act.triggered.connect(lambda _=False, r=repo: self._add_path(r.path))
         menu.addAction(clone_act)
+
+        # Path-action group: no separator before, to read as one "things you
+        # can do with this path" cluster alongside Clone. The existing
+        # separator below fences off the cosmetic badge items.
+        open_fm_act = QAction("Open in file manager", menu)
+        if shutil.which("xdg-open") is None:
+            open_fm_act.setEnabled(False)
+            open_fm_act.setToolTip(
+                "xdg-open not found. Install the xdg-utils package."
+            )
+        else:
+            open_fm_act.setToolTip(
+                "Launches your desktop's default file manager at the repo directory."
+            )
+            open_fm_act.triggered.connect(
+                lambda _=False, r=repo: self._open_in_file_manager(r)
+            )
+        menu.addAction(open_fm_act)
+
+        copy_path_act = QAction("Copy path", menu)
+        copy_path_act.setToolTip("Copy the absolute repo path to the clipboard.")
+        copy_path_act.triggered.connect(lambda _=False, r=repo: self._copy_path(r))
+        menu.addAction(copy_path_act)
 
         menu.addSeparator()
         set_badge_act = QAction("Set badge…", menu)
@@ -1300,10 +1339,23 @@ class RepoSidebar(QWidget):
 
         menu.addSeparator()
         remove_act = QAction("Remove from sidebar", menu)
-        remove_act.triggered.connect(lambda _=False, r=repo, row=idx.row(): self._confirm_remove(r, row))
+        remove_act.triggered.connect(lambda _=False, r=repo, row=row: self._confirm_remove(r, row))
         menu.addAction(remove_act)
 
-        menu.exec(self._view.viewport().mapToGlobal(pos))
+        return menu
+
+    def _open_in_file_manager(self, repo: Repo) -> None:
+        """Spawn xdg-open at repo.path. The menu's enabled-state probe at
+        build time guarantees xdg-open is on PATH when this is reachable."""
+        ok = QProcess.startDetached("xdg-open", [repo.path])
+        if not ok:
+            log.warning("xdg-open failed to launch for %s", repo.path)
+
+    def _copy_path(self, repo: Repo) -> None:
+        """Put `repo.path` on the system clipboard and notify MainWindow
+        so it can flash a status-bar confirmation."""
+        QGuiApplication.clipboard().setText(repo.path)
+        self.path_copied.emit(repo.path)
 
     def _prompt_badge(self, repo: Repo) -> None:
         dlg = QDialog(self)

@@ -28,7 +28,7 @@ import logging
 from typing import Callable
 
 from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QPainter
+from PySide6.QtGui import QAction, QColor, QFontMetrics, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -163,6 +163,7 @@ class MainWindow(QMainWindow):
         self._sidebar.repo_added.connect(self._on_repo_added)
         self._sidebar.reload_requested.connect(self._reload_terminal)
         self._sidebar.repo_removed.connect(self._on_repo_removed)
+        self._sidebar.path_copied.connect(self._on_path_copied)
         self._hook_server.event_received.connect(self._on_hook_event)
 
         # Light the "last focused" violet dot on the repo the user was on
@@ -624,6 +625,19 @@ class MainWindow(QMainWindow):
 
     def _on_repo_added(self, repo: Repo) -> None:
         self._sidebar.refresh_branches()
+
+    def _on_path_copied(self, path: str) -> None:
+        """Flash a status-bar confirmation after `RepoSidebar._copy_path`.
+
+        Middle-elides the path so a very long absolute path doesn't push the
+        status bar wider than the window or smear off-screen. `- 80 px`
+        reserves room for the `"Copied: "` prefix plus padding.
+        """
+        bar = self.statusBar()
+        fm = QFontMetrics(bar.font())
+        width = max(100, bar.width() - 80)
+        elided = fm.elidedText(path, Qt.ElideMiddle, width)
+        bar.showMessage(f"Copied: {elided}", 2000)
 
     def _on_terminal_failed(self, repo: Repo, msg: str) -> None:
         log.warning("terminal for %s failed: %s", repo.path, msg)
