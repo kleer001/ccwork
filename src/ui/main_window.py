@@ -14,16 +14,19 @@ The 🔔 is a visual-only indicator — a red dot appears when Stop/Notification
 events arrive; clicking clears the dot. There's no popover list (desktop
 notify-send handles the text). The 🔊 / 🔇 toolbutton mirrors the
 "Show desktop notifications" Preferences checkbox — one click mute,
-shared state. Preferences/Add-Repo/Quit reachable via Ctrl+,/Ctrl+O/Ctrl+Q
-— registered as window-level QActions so the menu bar can stay gone.
+shared state. Keyboard shortcuts (Ctrl+Shift+P/O/Q for prefs/add/quit,
+Ctrl+Tab to cycle, Ctrl+Shift+1..9 for row jumps, Ctrl+= / Ctrl+- /
+Ctrl+0 for zoom) are wired through a root-window XGrabKey rather than
+Qt's QAction shortcut system — see ``_install_global_keys`` for why.
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
 from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter
+from PySide6.QtGui import QAction, QColor, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -36,6 +39,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.core import x11
 from src.core.hook_server import (
     EVENT_NOTIFICATION,
     EVENT_REPO_ADDED,
@@ -44,9 +48,11 @@ from src.core.hook_server import (
     IDLE_EVENTS,
     HookServer,
 )
+from src.core.key_grab import KeyGrabFilter
 from src.core.repo_store import Repo, RepoStore
 from src.core.settings import Settings, load_settings, save_settings
 from src.core.terminal_session import build_session
+from src.core.x11 import XDisplay
 from src.ui.preferences_dialog import PreferencesDialog
 from src.ui.qt_theme import apply_theme
 from src.ui.repo_sidebar import RepoSidebar
@@ -76,6 +82,11 @@ class MainWindow(QMainWindow):
         # the same repo each get their own xterm. Keyed by Repo.id so the two
         # rows for one path can't collide on a path-string key.
         self._terminals: dict[str, TerminalHost] = {}
+        # Lazy — populated by _install_global_keys when running under xcb.
+        self._key_xdisplay: XDisplay | None = None
+        self._key_filter: KeyGrabFilter | None = None
+        self._key_root: int = 0
+        self._key_bindings: list[tuple[int, int]] = []
 
         # ── top strip: centered repo · branch + right-side icon cluster ──
         self._title = TitleLabel(self)
@@ -93,7 +104,7 @@ class MainWindow(QMainWindow):
 
         self._gear_btn = QToolButton(self)
         self._gear_btn.setText("⚙")        # ⚙
-        self._gear_btn.setToolTip("Preferences (Ctrl+,)")
+        self._gear_btn.setToolTip("Preferences (Ctrl+Shift+P)")
         self._gear_btn.setAutoRaise(True)
         self._gear_btn.clicked.connect(self._open_preferences)
 
@@ -137,8 +148,11 @@ class MainWindow(QMainWindow):
         v.addWidget(splitter, 1)
         self.setCentralWidget(central)
 
-        # ── shortcuts (no menu bar — actions are window-level) ──
-        self._install_shortcuts()
+        # ── shortcuts: root-window XGrabKey + QAbstractNativeEventFilter ──
+        # Same recipe as Skycoder42/QHotkey and CopyQ's QxtGlobalShortcut:
+        # grab on the X root so the press lands here regardless of which
+        # widget (or alien XEmbed child) holds focus.
+        self._install_global_keys()
 
         # ── wiring ──
         self._sidebar.repo_selected.connect(self._on_repo_selected)
@@ -165,23 +179,99 @@ class MainWindow(QMainWindow):
 
     # ── shortcuts ──
 
-    def _install_shortcuts(self) -> None:
-        """Window-level QActions for Preferences / Add Repo / Quit.
+    def _install_global_keys(self) -> None:
+        """Install one passive XGrabKey per shortcut on the X root window,
+        paired with a single ``QAbstractNativeEventFilter`` on the
+        ``QApplication``. Skipped under any non-xcb Qt platform (offscreen
+        tests, Wayland-without-XWayland), where there is no X display to
+        grab on.
 
-        These used to live in a File menu. The top bar is now icon-only, so
-        the actions are bound directly to the window — shortcuts still work,
-        just with no menu surface.
+        Root grabs fire whether xterm or a Qt widget holds focus, so
+        ``Ctrl+Shift+P`` (etc.) works uniformly from any focus state. The
+        QAction/ApplicationShortcut path won't fire when xterm holds X
+        input focus because xterm isn't a Qt widget — that's the whole
+        reason we bypass Qt's shortcut system here.
         """
-        for text, seq, slot in (
-            ("Preferences", QKeySequence("Ctrl+,"), self._open_preferences),
-            ("Add Repo",    QKeySequence("Ctrl+O"), self._sidebar._on_add_clicked),
-            ("Quit",        QKeySequence.Quit,     self.close),
-        ):
-            act = QAction(text, self)
-            act.setShortcut(seq)
-            act.setShortcutContext(Qt.ApplicationShortcut)
-            act.triggered.connect(slot)
-            self.addAction(act)
+        app = QApplication.instance()
+        plat = app.platformName() if app is not None else None
+        if plat != "xcb":
+            log.info("global keys: skipped (platform=%r)", plat)
+            return
+        # We must grab on Qt's *own* X connection — XGrabKey delivers events
+        # to the grabber's connection, so a grab installed on a separately
+        # XOpenDisplay'd handle is invisible to Qt's QAbstractNativeEventFilter.
+        # PySide6 ≥ 6.6 (our pinned minimum) exposes the underlying Display*
+        # via QX11Application; on xcb that's guaranteed non-null, so we let
+        # any breakage here crash loudly rather than silently disable keys.
+        iface = app.nativeInterface()
+        self._key_xdisplay = XDisplay.attach(int(iface.display()))
+        self._key_filter = KeyGrabFilter(self._key_xdisplay)
+        app.installNativeEventFilter(self._key_filter)
+        self._key_root = self._key_xdisplay.default_root_window()
+
+        Ctrl = x11.ControlMask
+        Shift = x11.ShiftMask
+        zoom_in = lambda: self._on_zoom_requested(+1)
+        bindings: list[tuple[int, int, Callable[[], None]]] = [
+            (x11.XK_p,     Ctrl | Shift, self._open_preferences),
+            (x11.XK_o,     Ctrl | Shift, self._sidebar._on_add_clicked),
+            (x11.XK_q,     Ctrl | Shift, self.close),
+            (x11.XK_Tab,   Ctrl,         lambda: self._on_cycle_repo_requested(+1)),
+            (x11.XK_Tab,   Ctrl | Shift, lambda: self._on_cycle_repo_requested(-1)),
+            # Ctrl+= / Ctrl++: both "zoom in" because the unshifted glyph
+            # depends on layout (US: '=', some EU layouts: '+').
+            (x11.XK_equal, Ctrl,         zoom_in),
+            (x11.XK_plus,  Ctrl,         zoom_in),
+            (x11.XK_minus, Ctrl,         lambda: self._on_zoom_requested(-1)),
+            (x11.XK_0,     Ctrl,         lambda: self._on_zoom_requested(0)),
+        ]
+        # Ctrl+Shift+1..9 → jump to sidebar row 1..9 (zero-indexed internally).
+        # ASCII digit keysyms are contiguous, so XK_1 + n - 1 is the keysym
+        # for digit n.
+        for n in range(1, 10):
+            bindings.append((
+                x11.XK_1 + (n - 1),
+                Ctrl | Shift,
+                lambda row=n - 1: self._jump_to_row(row),
+            ))
+
+        # Track (keysym, mods) for ungrab on shutdown.
+        self._key_bindings = [(ks, m) for ks, m, _ in bindings]
+        for keysym, mods, callback in bindings:
+            self._key_xdisplay.grab_key(self._key_root, keysym, mods)
+            self._key_filter.register(keysym, mods, callback)
+        self._key_xdisplay.flush()
+        log.info("global keys: %d shortcuts on root=0x%x",
+                 len(bindings), self._key_root)
+
+    def _uninstall_global_keys(self) -> None:
+        """Release the root grabs and detach the native event filter. Safe
+        to call multiple times and on a never-installed instance."""
+        if self._key_xdisplay is None:
+            return
+        try:
+            for keysym, mods in self._key_bindings:
+                self._key_xdisplay.ungrab_key(self._key_root, keysym, mods)
+            self._key_xdisplay.flush()
+        except Exception:
+            log.exception("global keys: ungrab failed")
+        if self._key_filter is not None:
+            app = QApplication.instance()
+            if app is not None:
+                app.removeNativeEventFilter(self._key_filter)
+            self._key_filter = None
+        self._key_xdisplay.close()
+        self._key_xdisplay = None
+        self._key_bindings = []
+
+    def _jump_to_row(self, row: int) -> None:
+        """Select sidebar row by zero-based index. Out-of-range is a no-op
+        (so missing rows just don't fire — same UX as the f95566f attempt)."""
+        model = self._sidebar.model
+        if 0 <= row < model.rowCount():
+            repo = model.repo_at(row)
+            if repo is not None:
+                self._sidebar.select_id(repo.id)
 
     # ── sidebar layout (side + width) ──
 
@@ -438,7 +528,6 @@ class MainWindow(QMainWindow):
         host.failed.connect(lambda msg, r=repo: self._on_terminal_failed(r, msg))
         host.finished.connect(lambda code, r=repo: self._on_terminal_finished(r, code))
         host.zoom_requested.connect(self._on_zoom_requested)
-        host.cycle_repo_requested.connect(self._on_cycle_repo_requested)
         host.context_menu_requested.connect(
             lambda pos, r=repo: self._on_terminal_context_menu(r, pos)
         )
@@ -611,6 +700,7 @@ class MainWindow(QMainWindow):
         for host in list(self._terminals.values()):
             host.stop()
         self._terminals.clear()
+        self._uninstall_global_keys()
         super().closeEvent(event)
 
 

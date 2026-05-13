@@ -23,10 +23,12 @@ KeySym = c_ulong
 # X11 event masks / modifiers we need. Values are fixed by the X protocol.
 KeyPressMask = 1 << 0
 ButtonPressMask = 1 << 2
-ControlMask = 1 << 2
 ShiftMask = 1 << 0
 LockMask = 1 << 1       # CapsLock
+ControlMask = 1 << 2
+Mod1Mask = 1 << 3       # Alt on most layouts
 Mod2Mask = 1 << 4       # NumLock on most layouts
+Mod4Mask = 1 << 6       # Super / Meta on most layouts
 GrabModeAsync = 1
 RevertToParent = 2
 CurrentTime = 0
@@ -35,12 +37,18 @@ CurrentTime = 0
 Button4 = 4
 Button5 = 5
 
-# Keysyms (from /usr/include/X11/keysymdef.h) for our zoom combos.
-XK_equal = 0x003d   # '='
-XK_plus = 0x002b    # '+' (only reachable without Shift on some layouts)
-XK_minus = 0x002d   # '-'
-XK_0 = 0x0030       # '0' (reset)
-XK_Tab = 0xff09     # Tab (for Ctrl+Tab repo cycling)
+# Keysyms (from /usr/include/X11/keysymdef.h). ASCII keysyms are just the
+# ASCII code, so XK_p == ord('p'); we name the ones we actually grab.
+# XK_1 starts the digit run — XK_1 + n - 1 gives the nth digit's keysym.
+XK_equal = 0x003d       # '='
+XK_plus = 0x002b        # '+'  (only reachable without Shift on some layouts)
+XK_minus = 0x002d       # '-'
+XK_0 = 0x0030           # '0'
+XK_1 = 0x0031
+XK_o = 0x006f
+XK_p = 0x0070
+XK_q = 0x0071
+XK_Tab = 0xff09         # Tab
 
 
 _x11: Optional[ctypes.CDLL] = None
@@ -89,6 +97,8 @@ def _lib() -> ctypes.CDLL:
     lib.XUngrabButton.restype = c_int
     lib.XSetInputFocus.argtypes = [Display, Window, c_int, c_ulong]
     lib.XSetInputFocus.restype = c_int
+    lib.XDefaultRootWindow.argtypes = [Display]
+    lib.XDefaultRootWindow.restype = Window
 
     _x11 = lib
     return lib
@@ -102,18 +112,46 @@ _LOCK_VARIANTS = (0, LockMask, Mod2Mask, LockMask | Mod2Mask)
 
 
 class XDisplay:
-    """RAII wrapper for a libX11 Display handle."""
+    """RAII wrapper for a libX11 Display handle.
+
+    Default construction opens a fresh X connection. Use ``attach()`` to
+    wrap a pre-existing display pointer (e.g. Qt's own xcb connection's
+    Display*) — the wrapper then does **not** close it on cleanup, which
+    is mandatory when the pointer is owned by another subsystem.
+
+    Why this matters for grabs: ``XGrabKey`` delivers matched events to
+    the **grabber's connection**, not to every client that happens to
+    listen on the grab window. A grab installed on a separate X
+    connection is invisible to Qt's event loop — Qt's
+    ``QAbstractNativeEventFilter`` only ever sees events on Qt's own
+    connection. So passive grabs that need to fire Qt callbacks must be
+    installed on Qt's display, accessed via
+    ``QNativeInterface::QX11Application::display()``.
+    """
 
     def __init__(self, name: bytes | None = None) -> None:
         self._lib = _lib()
         self._dpy = self._lib.XOpenDisplay(name)
+        self._owned = True
         if not self._dpy:
             raise RuntimeError("XOpenDisplay returned NULL — is $DISPLAY set?")
 
+    @classmethod
+    def attach(cls, handle: int) -> "XDisplay":
+        """Wrap a pre-existing ``Display*`` (as raw int). The caller retains
+        ownership; ``close()`` is a no-op on attached instances."""
+        if not handle:
+            raise ValueError("attach() requires a non-null Display handle")
+        obj = cls.__new__(cls)
+        obj._lib = _lib()
+        obj._dpy = c_void_p(handle)
+        obj._owned = False
+        return obj
+
     def close(self) -> None:
-        if self._dpy:
+        if self._dpy and self._owned:
             self._lib.XCloseDisplay(self._dpy)
-            self._dpy = None
+        self._dpy = None
 
     def __del__(self) -> None:  # pragma: no cover
         # Interpreter shutdown may null out self._lib / self._dpy before __del__
@@ -227,3 +265,9 @@ class XDisplay:
             self._dpy, Window(win), c_int(RevertToParent), c_ulong(CurrentTime)
         )
         self._lib.XFlush(self._dpy)
+
+    def default_root_window(self) -> int:
+        """The screen-default root window. Used as the grab_window for
+        application-global passive grabs that must fire regardless of which
+        window currently has focus."""
+        return int(self._lib.XDefaultRootWindow(self._dpy))

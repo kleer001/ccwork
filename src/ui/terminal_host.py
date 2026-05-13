@@ -20,7 +20,7 @@ import signal
 from typing import Sequence
 
 from PySide6.QtCore import QProcess, QTimer, Signal, Qt
-from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent
+from PySide6.QtGui import QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QWidget
 
 from src.core.settings import XtermSettings
@@ -52,10 +52,10 @@ class TerminalHost(QWidget):
     embedded = Signal()
     finished = Signal(int)
     failed = Signal(str)
-    # +1 = zoom in, -1 = zoom out, 0 = reset to saved pref.
+    # +1 = zoom in, -1 = zoom out. Emitted by the Ctrl+wheel handler — the
+    # keyboard zoom (Ctrl+=/-/+/0) is dispatched by MainWindow's KeyGrabFilter,
+    # not this widget, so there is no 0-reset case to forward here.
     zoom_requested = Signal(int)
-    # +1 = next repo, -1 = previous repo (Ctrl+Tab / Ctrl+Shift+Tab).
-    cycle_repo_requested = Signal(int)
     # User right-clicked inside the terminal — pass the global position so
     # MainWindow can pop a context menu.
     context_menu_requested = Signal(object)  # QPoint
@@ -191,7 +191,7 @@ class TerminalHost(QWidget):
             # First child: the xterm that reparented into us.
             self._xterm_win = children[0]
             self._fit_child_to_self()
-            self._install_zoom_grabs()
+            self._install_button_grabs()
             self.embedded.emit()
             return
 
@@ -256,79 +256,38 @@ class TerminalHost(QWidget):
             return False
         return xterm_osc.write_to_pty(pty, text)
 
-    # ── input shortcuts (Ctrl+zoom, Ctrl+Tab repo cycle, right-click menu) ──
+    # ── input shortcuts (Ctrl+wheel zoom, right-click menu) ──
 
-    # Keysyms we grab under plain Ctrl. Ctrl+= is the canonical "zoom in"
-    # because it doesn't require Shift on US layouts; Ctrl++ is also grabbed
-    # so Shift+Ctrl+= keeps working for plus-key muscle memory.
-    _ZOOM_KEYS = (
-        (x11.XK_equal, +1),
-        (x11.XK_plus,  +1),
-        (x11.XK_minus, -1),
-        (x11.XK_0,      0),  # reset
-    )
-    # Right mouse button we grab for the context menu. Button3 = plain
-    # right-click; xterm's own native Ctrl+Button3 menu is left alone.
+    # All keyboard shortcuts (zoom, repo-cycle, prefs/quit, row jumps, F1)
+    # are grabbed on the X root window by MainWindow — root grabs fire
+    # regardless of which widget has focus, so they survive XEmbed focus
+    # transfers. This widget only owns the pointer-button grabs, which
+    # are scoped to its own X window (xterm holds the pointer when the
+    # cursor is over it, and pointer grabs route by window containment).
     _RMB = 3
 
-    def _install_zoom_grabs(self) -> None:
-        """Ask the X server to route our shortcut combos to us, not the
-        embedded xterm. Safe if xdisplay isn't open — silently skips."""
+    def _install_button_grabs(self) -> None:
+        """Route Ctrl+scroll and plain right-click through Qt instead of
+        letting xterm consume them. Keyboard shortcuts are handled by
+        MainWindow's root-window grab."""
         if self._xdisplay is None:
             return
         wid = int(self.winId())
-        for keysym, _ in self._ZOOM_KEYS:
-            self._xdisplay.grab_key(wid, keysym, x11.ControlMask)
         self._xdisplay.grab_button(wid, x11.Button4, x11.ControlMask)
         self._xdisplay.grab_button(wid, x11.Button5, x11.ControlMask)
-        # Ctrl+Tab and Ctrl+Shift+Tab for repo cycling.
-        self._xdisplay.grab_key(wid, x11.XK_Tab, x11.ControlMask)
-        self._xdisplay.grab_key(wid, x11.XK_Tab, x11.ControlMask | x11.ShiftMask)
-        # Plain right-click for the context menu.
         self._xdisplay.grab_button(wid, self._RMB, 0)
         self._xdisplay.flush()
 
-    def _uninstall_zoom_grabs(self) -> None:
+    def _uninstall_button_grabs(self) -> None:
         if self._xdisplay is None:
             return
         wid = int(self.winId())
-        for keysym, _ in self._ZOOM_KEYS:
-            self._xdisplay.ungrab_key(wid, keysym, x11.ControlMask)
         self._xdisplay.ungrab_button(wid, x11.Button4, x11.ControlMask)
         self._xdisplay.ungrab_button(wid, x11.Button5, x11.ControlMask)
-        self._xdisplay.ungrab_key(wid, x11.XK_Tab, x11.ControlMask)
-        self._xdisplay.ungrab_key(wid, x11.XK_Tab, x11.ControlMask | x11.ShiftMask)
         self._xdisplay.ungrab_button(wid, self._RMB, 0)
         self._xdisplay.flush()
 
     # ── event handlers ──
-
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
-        # Only our grabbed combos reach Qt while xterm has focus; anything
-        # else slips through to super().
-        mods = event.modifiers()
-        if mods & Qt.ControlModifier:
-            key = event.key()
-            if key in (Qt.Key_Equal, Qt.Key_Plus):
-                self.zoom_requested.emit(+1)
-                event.accept()
-                return
-            if key == Qt.Key_Minus:
-                self.zoom_requested.emit(-1)
-                event.accept()
-                return
-            if key == Qt.Key_0:
-                self.zoom_requested.emit(0)
-                event.accept()
-                return
-            if key in (Qt.Key_Tab, Qt.Key_Backtab):
-                # Qt turns Ctrl+Shift+Tab into Key_Backtab (which drops the
-                # Shift modifier). Either form means "cycle backward".
-                delta = -1 if (key == Qt.Key_Backtab or mods & Qt.ShiftModifier) else +1
-                self.cycle_repo_requested.emit(delta)
-                event.accept()
-                return
-        super().keyPressEvent(event)
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # type: ignore[override]
         if event.modifiers() & Qt.ControlModifier:
