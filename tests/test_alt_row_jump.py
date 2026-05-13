@@ -20,27 +20,16 @@ even though the binding namespace moved to Ctrl+Shift+N during the
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
 from src.core.repo_store import Repo, RepoStore
 from src.core.settings import Settings
 
-
-class _StubHookServer(QObject):
-    event_received = Signal(dict)
-
-
-@pytest.fixture(scope="session")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
+from tests.conftest import StubHookServer
 
 
 @pytest.fixture
@@ -66,7 +55,7 @@ def main_window_with_3_repos(qapp: QApplication, tmp_path: Path,
     ]
     store.save()
     from src.ui.main_window import MainWindow
-    win = MainWindow(store=store, hook_server=_StubHookServer(), settings=Settings())
+    win = MainWindow(store=store, hook_server=StubHookServer(), settings=Settings())
 
     # Replace select_id with a recorder so the test can verify what _jump_to_row
     # dispatched without triggering the terminal-spawn cascade.
@@ -123,7 +112,7 @@ def test_jump_on_empty_sidebar_no_crash(qapp: QApplication, tmp_path: Path,
     store.repos = []
     store.save()
     from src.ui.main_window import MainWindow
-    win = MainWindow(store=store, hook_server=_StubHookServer(), settings=Settings())
+    win = MainWindow(store=store, hook_server=StubHookServer(), settings=Settings())
     calls: list[str] = []
     win._sidebar.select_id = calls.append  # type: ignore[method-assign]
     try:

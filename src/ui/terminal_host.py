@@ -259,32 +259,38 @@ class TerminalHost(QWidget):
     # ── input shortcuts (Ctrl+wheel zoom, right-click menu) ──
 
     # All keyboard shortcuts (zoom, repo-cycle, prefs/quit, row jumps, F1)
-    # are grabbed on the X root window by MainWindow — root grabs fire
-    # regardless of which widget has focus, so they survive XEmbed focus
-    # transfers. This widget only owns the pointer-button grabs, which
-    # are scoped to its own X window (xterm holds the pointer when the
-    # cursor is over it, and pointer grabs route by window containment).
+    # are grabbed on MainWindow's X window by `MainWindow._install_global_keys`
+    # — those grabs activate whenever any descendant (including the XEmbed'd
+    # xterm) is in the focus chain. This widget only owns the pointer-button
+    # grabs, which are scoped to its own X window (xterm holds the pointer
+    # when the cursor is over it, and pointer grabs route by window
+    # containment).
     _RMB = 3
+    # Single source of truth: install and uninstall iterate this list so
+    # they can't drift out of sync. (button, modifier-mask).
+    _BUTTON_GRABS: tuple[tuple[int, int], ...] = (
+        (x11.Button4, x11.ControlMask),  # Ctrl+wheel up   — zoom in
+        (x11.Button5, x11.ControlMask),  # Ctrl+wheel down — zoom out
+        (_RMB,        0),                # plain right-click — context menu
+    )
 
     def _install_button_grabs(self) -> None:
         """Route Ctrl+scroll and plain right-click through Qt instead of
         letting xterm consume them. Keyboard shortcuts are handled by
-        MainWindow's root-window grab."""
+        ``MainWindow._install_global_keys``."""
         if self._xdisplay is None:
             return
         wid = int(self.winId())
-        self._xdisplay.grab_button(wid, x11.Button4, x11.ControlMask)
-        self._xdisplay.grab_button(wid, x11.Button5, x11.ControlMask)
-        self._xdisplay.grab_button(wid, self._RMB, 0)
+        for button, mods in self._BUTTON_GRABS:
+            self._xdisplay.grab_button(wid, button, mods)
         self._xdisplay.flush()
 
     def _uninstall_button_grabs(self) -> None:
         if self._xdisplay is None:
             return
         wid = int(self.winId())
-        self._xdisplay.ungrab_button(wid, x11.Button4, x11.ControlMask)
-        self._xdisplay.ungrab_button(wid, x11.Button5, x11.ControlMask)
-        self._xdisplay.ungrab_button(wid, self._RMB, 0)
+        for button, mods in self._BUTTON_GRABS:
+            self._xdisplay.ungrab_button(wid, button, mods)
         self._xdisplay.flush()
 
     # ── event handlers ──

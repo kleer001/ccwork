@@ -7,14 +7,10 @@ duplicate rows on the same path count once.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
 from src.core.hook_server import (
@@ -25,14 +21,7 @@ from src.core.hook_server import (
 from src.core.repo_store import Repo, RepoStore
 from src.core.settings import Settings
 
-
-class _StubHookServer(QObject):
-    event_received = Signal(dict)
-
-
-@pytest.fixture(scope="session")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
+from tests.conftest import StubHookServer
 
 
 @pytest.fixture
@@ -51,7 +40,7 @@ def main_window(qapp: QApplication, store: RepoStore, tmp_path: Path,
     # Sandbox settings.toml so saves don't touch the user's real config.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     from src.ui.main_window import MainWindow
-    win = MainWindow(store=store, hook_server=_StubHookServer(), settings=Settings())
+    win = MainWindow(store=store, hook_server=StubHookServer(), settings=Settings())
     yield win
     win.close()
 
@@ -102,7 +91,7 @@ def test_title_counts_duplicate_rows_once(
     store = RepoStore(config_path=tmp_path / "repos.json")
     store.repos = [Repo(path="/shared", id="r1"), Repo(path="/shared", id="r2")]
     from src.ui.main_window import MainWindow
-    win = MainWindow(store=store, hook_server=_StubHookServer(), settings=Settings())
+    win = MainWindow(store=store, hook_server=StubHookServer(), settings=Settings())
     try:
         win._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/shared")
         assert win.windowTitle() == "ccwork — 1 working"

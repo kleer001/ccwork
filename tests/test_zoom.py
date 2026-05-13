@@ -7,27 +7,14 @@ TerminalHost need a real X server, so they're excluded.
 
 from __future__ import annotations
 
-import os
-import tempfile
-
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
 from src.core.repo_store import RepoStore
 from src.core.settings import Settings, XtermSettings, save_settings
 
-
-class _StubHookServer(QObject):
-    event_received = Signal(dict)
-
-
-@pytest.fixture(scope="session")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
+from tests.conftest import StubHookServer
 
 
 @pytest.fixture
@@ -40,7 +27,7 @@ def main_window(qapp: QApplication, tmp_path, monkeypatch: pytest.MonkeyPatch):
     store = RepoStore()
     store.load()
     from src.ui.main_window import MainWindow  # import after env override
-    win = MainWindow(store=store, hook_server=_StubHookServer(), settings=Settings(xterm=XtermSettings(font_size=10)))
+    win = MainWindow(store=store, hook_server=StubHookServer(), settings=Settings(xterm=XtermSettings(font_size=10)))
     yield win
     win.close()
 

@@ -267,7 +267,7 @@ class MainWindow(QMainWindow):
         zoom_in = lambda: self._on_zoom_requested(+1)
         bindings: list[tuple[int, int, Callable[[], None]]] = [
             (x11.XK_p,        Ctrl | Shift, self._open_preferences),
-            (x11.XK_o,        Ctrl | Shift, self._sidebar._on_add_clicked),
+            (x11.XK_o,        Ctrl | Shift, self._sidebar.add_repo_via_dialog),
             (x11.XK_q,        Ctrl | Shift, self.close),
             (x11.XK_F1,       0,            self._open_shortcuts),
             (x11.XK_Tab,      Ctrl,         lambda: self._on_cycle_repo_requested(+1)),
@@ -381,11 +381,18 @@ class MainWindow(QMainWindow):
         self._settings.ui.sidebar_width = int(new_width)
         self._sidebar_save_timer.start()  # restart resets the debounce window
 
-    def _persist_settings_now(self) -> None:
+    def _save_settings_safely(self, context: str = "settings") -> None:
+        """Write settings to disk; log + swallow OSError. The three persist
+        sites (sidebar-width drag, window geometry on close, last-focused
+        repo on click) all want fail-soft behavior — a write error must
+        not block the user action that triggered the save."""
         try:
             save_settings(self._settings)
         except OSError as e:
-            log.warning("could not persist settings: %s", e)
+            log.warning("could not persist %s: %s", context, e)
+
+    def _persist_settings_now(self) -> None:
+        self._save_settings_safely("settings")
 
     def _restore_window_geometry(self) -> None:
         """Decode the persisted geometry blob and hand it to Qt. On any
@@ -406,13 +413,11 @@ class MainWindow(QMainWindow):
 
     def _persist_window_state(self) -> None:
         """Stamp the current geometry into Settings and write to disk.
-        Errors are logged and swallowed so a save failure can't block quit."""
-        try:
-            blob = bytes(self.saveGeometry())
-            self._settings.window.geometry = base64.b64encode(blob).decode("ascii")
-            save_settings(self._settings)
-        except OSError as e:
-            log.warning("could not persist window geometry: %s", e)
+        A save failure here must not block quit — `_save_settings_safely`
+        swallows the OSError."""
+        blob = bytes(self.saveGeometry())
+        self._settings.window.geometry = base64.b64encode(blob).decode("ascii")
+        self._save_settings_safely("window geometry")
 
     def _refresh_alerts_button(self) -> None:
         on = bool(self._settings.ui.desktop_notifications)
@@ -658,10 +663,7 @@ class MainWindow(QMainWindow):
         # any meaningful "which one was active" sense).
         if self._settings.last_focused_repo != repo.path:
             self._settings.last_focused_repo = repo.path
-            try:
-                save_settings(self._settings)
-            except OSError as e:
-                log.warning("could not persist last_focused_repo: %s", e)
+            self._save_settings_safely("last_focused_repo")
 
     def _select_repo(self, repo: Repo) -> None:
         """Convenience for keyboard-cycle: pick a specific repo by id."""

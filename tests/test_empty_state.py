@@ -9,28 +9,17 @@ SVG isn't where we expect it.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
 from src.core.repo_store import RepoStore
 from src.core.settings import Settings
 from src.ui.empty_state import EmptyState, HINT_LINES
 
-
-class _StubHookServer(QObject):
-    event_received = Signal(dict)
-
-
-@pytest.fixture(scope="session")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
+from tests.conftest import StubHookServer
 
 
 def test_heading_text_is_ccwork(qapp: QApplication) -> None:
@@ -87,7 +76,7 @@ def test_shown_at_startup_when_no_repos(
     store.repos = []
     store.save()
     from src.ui.main_window import MainWindow
-    win = MainWindow(store=store, hook_server=_StubHookServer(), settings=Settings())
+    win = MainWindow(store=store, hook_server=StubHookServer(), settings=Settings())
     try:
         assert win._stack.currentWidget() is win._empty_placeholder
         assert isinstance(win._empty_placeholder, EmptyState)

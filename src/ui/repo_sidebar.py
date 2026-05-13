@@ -981,7 +981,7 @@ class RepoSidebar(QWidget):
         self._view.viewport().installEventFilter(self)
 
         self._add_btn = QPushButton("+ Add Repo", self)
-        self._add_btn.clicked.connect(self._on_add_clicked)
+        self._add_btn.clicked.connect(self.add_repo_via_dialog)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -1292,7 +1292,14 @@ class RepoSidebar(QWidget):
             self._model.clear_status(repo.path)
             self.repo_selected.emit(repo)
 
-    def _on_add_clicked(self) -> None:
+    def add_repo_via_dialog(self) -> None:
+        """Prompt the user for a directory and add it as a sidebar row.
+
+        Public API — bound to the `+ Add Repo` button click and to the
+        ``Ctrl+Shift+O`` global shortcut. The leading-underscore
+        ``_on_add_clicked`` name was an accident of history (the
+        button's signal handler convention bled into the binding API).
+        """
         path = QFileDialog.getExistingDirectory(self, "Add repo directory", os.path.expanduser("~"))
         if not path:
             return
