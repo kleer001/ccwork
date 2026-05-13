@@ -193,6 +193,12 @@ def _find_emoji_picker() -> str | None:
 class RepoListModel(QAbstractListModel):
     """Model backed by a RepoStore plus per-repo branch + unread counters."""
 
+    # Emitted on the True↔False edge of any repo's working flag — coarser
+    # than dataChanged(ROLE_WORKING), which fires per-row including
+    # duplicate broadcasts. The window-title counter listens here so it
+    # doesn't have to re-scan _working on every row repaint.
+    working_changed = Signal()
+
     def __init__(self, store: RepoStore, parent=None) -> None:
         super().__init__(parent)
         self._store = store
@@ -383,6 +389,10 @@ class RepoListModel(QAbstractListModel):
         else:
             self._working.discard(key)
         self._emit_changed_for_path(path, [ROLE_WORKING])
+        # Fire the title-counter signal only on the actual edge — the
+        # `if working == was: return` guard above ensures we never emit on a
+        # redundant set_working(path, True) when the path is already working.
+        self.working_changed.emit()
 
     def any_working(self) -> bool:
         return bool(self._working)

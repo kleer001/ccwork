@@ -164,6 +164,7 @@ class MainWindow(QMainWindow):
         self._sidebar.reload_requested.connect(self._reload_terminal)
         self._sidebar.repo_removed.connect(self._on_repo_removed)
         self._sidebar.path_copied.connect(self._on_path_copied)
+        self._sidebar.model.working_changed.connect(self._refresh_title)
         self._hook_server.event_received.connect(self._on_hook_event)
 
         # Light the "last focused" violet dot on the repo the user was on
@@ -187,6 +188,13 @@ class MainWindow(QMainWindow):
         # setCentralWidget). The earlier self.resize(1280, 820) is the
         # fallback for first-run / corrupt-blob / Qt-version-skew cases.
         self._restore_window_geometry()
+
+        # Make the empty-suffix invariant explicit on first paint — the
+        # initial setWindowTitle("ccwork") above is correct at count=0, but
+        # calling _refresh_title here documents that the title is always
+        # signal-driven and there's no manual setWindowTitle path that the
+        # counter logic could miss.
+        self._refresh_title()
 
     # ── shortcuts ──
 
@@ -638,6 +646,21 @@ class MainWindow(QMainWindow):
         width = max(100, bar.width() - 80)
         elided = fm.elidedText(path, Qt.ElideMiddle, width)
         bar.showMessage(f"Copied: {elided}", 2000)
+
+    def _refresh_title(self) -> None:
+        """Recompute the window title from the model's working-count.
+
+        Count is path-keyed (matches `_working`'s normalized-path
+        membership), so duplicate rows on the same path count once —
+        "1 working" rather than "2 working" for one Claude session.
+        Format: `ccwork` / `ccwork — 1 working` / `ccwork — N working`.
+        Em dash so a future suffix (e.g. `, 1 needs attention`) composes.
+        """
+        n = len(self._sidebar.model.working_paths())
+        if n == 0:
+            self.setWindowTitle("ccwork")
+        else:
+            self.setWindowTitle(f"ccwork — {n} working")
 
     def _on_terminal_failed(self, repo: Repo, msg: str) -> None:
         log.warning("terminal for %s failed: %s", repo.path, msg)
