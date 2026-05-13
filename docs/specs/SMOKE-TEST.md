@@ -220,6 +220,82 @@ the badge group.
 
 ---
 
+## 8. working-count-in-title
+
+**What changed:** the window title gains a `— N working` suffix while
+any repo has a Claude turn in flight. Visible from alt-tab switchers,
+taskbars, and tiling-WM bars even without ccwork being focused.
+
+- [ ] Title bar reads `ccwork` while idle.
+- [ ] Start a Claude turn in repo A. Title: `ccwork — 1 working`.
+- [ ] Start another turn in repo B (don't wait for A to finish). Title:
+  `ccwork — 2 working`.
+- [ ] Wait for one to finish (or `Esc` to abort + new prompt to reset
+  the elapsed timer). Title drops by one.
+- [ ] After both finish, title is back to `ccwork`.
+- [ ] Alt-tab to another window. The taskbar / window switcher shows
+  the ` — N working` count without ccwork being focused.
+- [ ] (Optional, with a duplicate row) `Ctrl+Shift+O` the same repo
+  twice so you have two rows on the same path. Start a turn — title
+  says `1 working`, not `2`. (Path-keyed count.)
+
+---
+
+## 9. row-jump empty-slot feedback
+
+**What changed:** pressing `Ctrl+Shift+N` for a slot that doesn't have
+a repo now flashes a transient status-bar message instead of silently
+no-op'ing.
+
+- [ ] With fewer than 9 rows in the sidebar, press `Ctrl+Shift+9`.
+  Bottom-of-window status bar reads `No repo at slot 9` for ~1.5 s.
+  No jump, no error.
+- [ ] Try `Ctrl+Shift+1` on an empty sidebar (no repos added yet).
+  Status bar reads `No repo at slot 1`.
+- [ ] In-range slots still jump silently (no extra status message for
+  the success path).
+
+---
+
+## 10. empty-state-placeholder
+
+**What changed:** the right pane shown when no terminal is current is
+no longer a flat gray rectangle — it's a centered ccwork logo +
+heading + version subhead + three keyboard hints.
+
+**Cold-start path:**
+
+- [ ] Quit ccwork. Move `~/.config/ccwork/repos.json` aside
+  (`mv ~/.config/ccwork/repos.json{,.bak}`). Relaunch.
+- [ ] The right pane shows: logo / `ccwork` heading / `v{version} —
+  embedded xterm sessions for Claude Code` subhead / three hint lines:
+  - `Press Ctrl+Shift+O to add a repo`
+  - `Right-click any repo for options`
+  - `Press Ctrl+Shift+P for preferences`
+- [ ] Logo image is visible (the `logo/v2-icon.svg` glyph).
+- [ ] Resize the window very narrow. Layout doesn't blow up — text
+  word-wraps, content stays centered.
+- [ ] Restore `repos.json`: `mv ~/.config/ccwork/repos.json{.bak,}`.
+  Quit & relaunch.
+
+**Terminal-exited path:**
+
+- [ ] Open a repo's terminal. In the xterm, type `exit` and press
+  Enter to kill the shell.
+- [ ] The xterm closes. The right pane drops back to the same
+  placeholder widget (logo + heading + hints).
+
+**Logo-missing fallback:**
+
+- [ ] Quit. Temporarily rename `logo/v2-icon.svg` (`mv logo/v2-icon.svg
+  logo/v2-icon.svg.bak`). Relaunch with no repos.
+- [ ] Placeholder still renders heading + version + 3 hints. Logo
+  label is silently hidden (no broken-image glyph).
+- [ ] Restore the SVG (`mv logo/v2-icon.svg.bak logo/v2-icon.svg`) and
+  relaunch.
+
+---
+
 ## Synthetic verification (optional)
 
 For CI-style regression checks without a human pressing keys, the script

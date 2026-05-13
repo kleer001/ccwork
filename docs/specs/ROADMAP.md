@@ -21,9 +21,9 @@ cross-referencing specs last.
 | 1. working-elapsed-time | shipped 2026-05-13 | `RepoListModel._turn_started` dict + `mark_turn_start` / `clear_turn_start` mutators + module-level `_format_elapsed`. Tooltip on working rows appends `Working 27s` / `1m 23s` / `1h 5m`. 7 tests in `test_repo_sidebar_working_elapsed.py`. |
 | 2. window-geometry-restore | shipped 2026-05-13 | New top-level `[window]` section with base64-encoded `QMainWindow.saveGeometry()`. Restore in `__init__`, persist in `closeEvent`. Corrupt blob → WARNING log only (per user feedback: log-only, no status-bar, no modal). 4 tests in `test_settings.py`; live-verified via XTest-injected Ctrl+Shift+Q. |
 | 3. row-context-path-actions | shipped 2026-05-13 | *Open in file manager* (xdg-open via `QProcess.startDetached`, disabled + tooltip when missing) + *Copy path* (QClipboard + new `path_copied` signal flashing a status-bar confirmation in `MainWindow._on_path_copied`). Refactored `_on_context_menu` into a `_build_context_menu` helper for testability. 7 tests in `test_repo_sidebar_path_actions.py`. |
-| 4. working-count-in-title | pending | |
-| 5. row-jump (was alt-n-row-jump) | **partial** | Binding on `Ctrl+Shift+1`..`Ctrl+Shift+9` shipped via the infrastructure above; `_jump_to_row` slot wired and verified. Remaining: status-bar `"No repo at slot N"` transient + the `tests/test_alt_row_jump.py` unit test. |
-| 6. empty-state-placeholder | pending | |
+| 4. working-count-in-title | shipped 2026-05-13 | `RepoListModel.working_changed` signal emitted on True↔False edge inside `set_working`. `MainWindow._refresh_title` reads `working_paths()` size and rewrites the title — `ccwork` / `ccwork — 1 working` / `ccwork — N working`. Path-keyed so duplicate rows count once. 8 tests in `test_main_window_title.py`. |
+| 5. row-jump (was alt-n-row-jump) | shipped 2026-05-13 | Closed out: `_jump_to_row` now emits `statusBar().showMessage("No repo at slot N", 1500)` on out-of-range. 7 tests in `test_alt_row_jump.py` (filename preserved for spec traceability; namespace is Ctrl+Shift+N). |
+| 6. empty-state-placeholder | shipped 2026-05-13 | New `src/ui/empty_state.py` with `EmptyState(QWidget)`: centered logo (silent hide on SVG load failure) + heading + version subhead + three hint labels referencing the post-rework shortcut names. 6 tests in `test_empty_state.py`. |
 | 7. keyboard-cheatsheet | pending | |
 
 ### Note on stale spec files
