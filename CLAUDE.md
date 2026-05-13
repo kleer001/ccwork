@@ -22,7 +22,24 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_settings.py::tes
 
 # Increase log verbosity for the running app
 CCWORK_LOG=DEBUG ./bin/ccwork
+
+# Live integration scripts (X11 required — these aren't pytest tests)
+.venv/bin/python tests/live/check_focus_scoping.py   # load-bearing
+.venv/bin/python tests/live/check_keys_dispatch.py
+.venv/bin/python tests/live/check_f1_cheatsheet.py
+.venv/bin/python tests/live/check_window_geometry.py
+.venv/bin/python tests/live/probe_xgrabkey.py        # diagnostic only
 ```
+
+`tests/live/` holds end-to-end verification scripts that launch a real
+ccwork in a sandboxed `XDG_CONFIG_HOME`, focus it via `wmctrl -ia
+<wid>` (matched by `WM_CLASS=main.py.ccwork`), inject keystrokes via
+`libXtst`, and assert on log output and `wmctrl -l`. They are NOT
+pytest tests — names are deliberately off the `*_test.py` glob so
+pytest discovery skips them. Run individually. The README in that dir
+documents each one's purpose; `check_focus_scoping.py` is the
+load-bearing guard against the "shortcuts leak globally" regression
+the user caught after the keybinding rework.
 
 There is no separate lint/format step configured. Dependencies are pinned in
 `requirements.txt` (`PySide6>=6.6`, `pytest`, `pytest-cov`).
