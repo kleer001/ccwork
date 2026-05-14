@@ -100,6 +100,13 @@ class XtermSettings:
     def to_xterm_args(self) -> list[str]:
         """Translate this settings block into xterm CLI flags."""
         args: list[str] = [
+            # Opt out of X11 session management. Otherwise the SM records each
+            # xterm's argv (including `-into <wid>`) at logout and re-runs it
+            # at next login — the stale wid no longer exists, so xterm falls
+            # back to a toplevel window and "floating" xterms appear on
+            # startup. ccwork owns xterm lifecycle via QProcess, so the SM
+            # has no business tracking these.
+            "+sm",
             "-fa", self.font_family,
             "-fs", str(self.font_size),
             "-sl", str(max(0, int(self.scrollback))),
