@@ -77,6 +77,7 @@ ROLE_STATUS       = Qt.UserRole + 3
 ROLE_WORKING      = Qt.UserRole + 4   # bool — Claude mid-turn in this repo
 ROLE_HAS_TERMINAL = Qt.UserRole + 5   # bool — a TerminalHost exists for this repo this session
 ROLE_LAST_FOCUSED = Qt.UserRole + 6   # bool — user's previous selection (bookmark)
+ROLE_PATH_MISSING = Qt.UserRole + 7   # bool — repo.path doesn't exist on disk (renamed/deleted)
 
 
 @dataclass(frozen=True)
@@ -203,6 +204,12 @@ class RepoListModel(QAbstractListModel):
         super().__init__(parent)
         self._store = store
         self._branches: dict[str, str | None] = {}
+        # Parallel to _branches: True when repo.path is gone from disk
+        # (rename / delete / unmounted FS). Distinguishes "(path missing)"
+        # from "(detached)" in the branch sub-line — a detached HEAD also
+        # makes current_branch() return None, so we can't tell them apart
+        # from the branch cache alone. Populated by refresh_branches().
+        self._path_missing: dict[str, bool] = {}
         # Claude alerts only. Values: "", STATUS_DONE, STATUS_ATTENTION.
         # User-navigation state lives in _last_focused below, with its own role.
         self._status: dict[str, str] = {}
@@ -245,6 +252,8 @@ class RepoListModel(QAbstractListModel):
             return repo
         if role == ROLE_BRANCH:
             return self._branches.get(repo.path)
+        if role == ROLE_PATH_MISSING:
+            return self._path_missing.get(repo.path, False)
         if role == ROLE_STATUS:
             return self._status.get(repo.path, "")
         if role == ROLE_WORKING:
@@ -298,17 +307,29 @@ class RepoListModel(QAbstractListModel):
             self.dataChanged.emit(idx, idx, roles)
 
     def refresh_branches(self) -> None:
-        """Recompute branch subtitle for every repo. Call on focus/refresh."""
-        changed = False
+        """Recompute branch subtitle + path-existence for every repo.
+
+        Both axes share the same refresh cadence: a missing path implies
+        current_branch() will fail, so we only pay one extra `isdir` syscall
+        per repo on top of the git invocation that's already happening.
+        Call on focus/refresh.
+        """
+        changed_roles: list[int] = []
         for r in self._store.repos:
+            missing = not os.path.isdir(r.path)
+            if self._path_missing.get(r.path, False) != missing:
+                self._path_missing[r.path] = missing
+                if ROLE_PATH_MISSING not in changed_roles:
+                    changed_roles.append(ROLE_PATH_MISSING)
             new = repo_store.current_branch(r.path)
             if self._branches.get(r.path) != new:
                 self._branches[r.path] = new
-                changed = True
-        if changed and self._store.repos:
+                if ROLE_BRANCH not in changed_roles:
+                    changed_roles.append(ROLE_BRANCH)
+        if changed_roles and self._store.repos:
             top = self.index(0)
             bot = self.index(len(self._store.repos) - 1)
-            self.dataChanged.emit(top, bot, [ROLE_BRANCH])
+            self.dataChanged.emit(top, bot, changed_roles)
 
     def set_status(self, path: str, status: str) -> None:
         """Set the Claude-alert status for `path` ("done", "attention", or
@@ -447,6 +468,34 @@ class RepoListModel(QAbstractListModel):
         if row >= 0:
             idx = self.index(row)
             self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
+
+    def rebind_repo(self, repo_id: str, new_path: str) -> None:
+        """Repoint one row at `new_path`. The display name updates implicitly
+        because `Repo.display_name` is derived from `path` basename + emoji +
+        instance (see src/core/repo_store.py:Repo). Invalidates the branch
+        and path-missing caches for both old and new paths and emits a
+        single dataChanged covering name, branch, and missing-state.
+        """
+        repo = self._store.find_by_id(repo_id)
+        if repo is None:
+            return
+        new_path = os.path.realpath(new_path)
+        if os.path.realpath(repo.path) == new_path:
+            return
+        old_path = repo.path
+        repo.path = new_path
+        self._store.save()
+        self._branches.pop(old_path, None)
+        self._path_missing.pop(old_path, None)
+        self._branches[new_path] = repo_store.current_branch(new_path)
+        self._path_missing[new_path] = not os.path.isdir(new_path)
+        row = self.index_of_id(repo_id)
+        if row >= 0:
+            idx = self.index(row)
+            self.dataChanged.emit(
+                idx, idx,
+                [Qt.DisplayRole, Qt.ToolTipRole, ROLE_BRANCH, ROLE_PATH_MISSING],
+            )
 
     def set_terminal_active(self, repo_id: str, active: bool) -> None:
         """Mark `repo_id` as having a live TerminalHost (or not).
@@ -760,6 +809,7 @@ class RepoDelegate(QStyledItemDelegate):
         working: bool = bool(index.data(ROLE_WORKING))
         has_terminal: bool = bool(index.data(ROLE_HAS_TERMINAL))
         last_focused: bool = bool(index.data(ROLE_LAST_FOCUSED))
+        path_missing: bool = bool(index.data(ROLE_PATH_MISSING))
 
         # Last-focused bookmark: thin left-edge stripe instead of a right-edge
         # dot, so the badge column stays reserved for genuine Claude alerts.
@@ -823,7 +873,18 @@ class RepoDelegate(QStyledItemDelegate):
         sub_font.setPointSizeF(option.font.pointSizeF() * 0.9)
         painter.setFont(sub_font)
         painter.setPen(QPen(text_color.lighter(130) if text_color.lightness() < 128 else text_color.darker(140)))
-        sub_text_raw = branch if branch else "(detached)" if repo else ""
+        # Three-way pick: a missing path masks the detached/branch question
+        # because git can't tell us anything about a dir that isn't there.
+        # current_branch() returns None for both detached HEAD and missing
+        # path, so we lean on the separate path_missing axis to disambiguate.
+        if not repo:
+            sub_text_raw = ""
+        elif path_missing:
+            sub_text_raw = "(path missing)"
+        elif branch:
+            sub_text_raw = branch
+        else:
+            sub_text_raw = "(detached)"
         sub_rect = QRect(rect.left(), rect.top() + rect.height() // 2, text_w, rect.height() // 2)
         sub_text = painter.fontMetrics().elidedText(sub_text_raw, Qt.ElideRight, text_w)
         painter.drawText(sub_rect, Qt.AlignLeft | Qt.AlignVCenter, sub_text)
@@ -1366,6 +1427,14 @@ class RepoSidebar(QWidget):
         copy_path_act.triggered.connect(lambda _=False, r=repo: self._copy_path(r))
         menu.addAction(copy_path_act)
 
+        rebind_act = QAction("Rebind to…", menu)
+        rebind_act.setToolTip(
+            "Repoint this row at a different directory (e.g. after renaming "
+            "the repo on disk). Must be a git working-tree root."
+        )
+        rebind_act.triggered.connect(lambda _=False, r=repo: self._on_rebind(r))
+        menu.addAction(rebind_act)
+
         menu.addSeparator()
         set_badge_act = QAction("Set badge…", menu)
         set_badge_act.setToolTip("Prefix the row with a glyph (emoji or any single character).")
@@ -1396,6 +1465,29 @@ class RepoSidebar(QWidget):
         so it can flash a status-bar confirmation."""
         QGuiApplication.clipboard().setText(repo.path)
         self.path_copied.emit(repo.path)
+
+    def _on_rebind(self, repo: Repo) -> None:
+        """Folder picker → validation → mutator. Validation is git-root only
+        (via repo_store.is_git_root) because the rest of ccwork assumes
+        every row is a git working tree."""
+        start_dir = (
+            repo.path if os.path.isdir(repo.path)
+            else os.path.dirname(repo.path) or os.path.expanduser("~")
+        )
+        picked = QFileDialog.getExistingDirectory(
+            self, "Rebind repo to…", start_dir,
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks,
+        )
+        if not picked:
+            return
+        if not repo_store.is_git_root(picked):
+            QMessageBox.warning(
+                self, "Not a git root",
+                f"{picked}\n\nis not the top level of a git working tree. "
+                "Pick the directory that contains the .git folder.",
+            )
+            return
+        self._model.rebind_repo(repo.id, picked)
 
     def _prompt_badge(self, repo: Repo) -> None:
         dlg = QDialog(self)

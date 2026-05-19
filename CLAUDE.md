@@ -166,6 +166,14 @@ but no widgets):
   25-glyph quick-pick list; `_find_emoji_picker()` probes
   `EMOJI_PICKER_CANDIDATES` for an external one-shot picker. The
   persisted JSON key stays `emoji` for back-compat.
+  If the directory referenced by `repo.path` is renamed or deleted on
+  disk, the branch sub-line paints as `(path missing)` (distinct from
+  `(detached)`, which is reserved for a genuine detached HEAD) — driven
+  by `ROLE_PATH_MISSING` populated in `RepoListModel.refresh_branches`.
+  Right-click → *Rebind to…* repoints the row at a chosen directory
+  (validated with `is_git_root`); `display_name` is a derived property
+  over `path` basename + emoji + instance, so renaming the directory
+  and rebinding flows through without a separate "rename row" action.
 - `terminal_session.py` — builds the argv passed to `TerminalHost`. Sets
   `CCWORK_GUI=1` in the child env (the gate the hook sink checks). Launches
   bash with `--rcfile bin/ccwork-bashrc` so ccwork's `bin/` wins on `PATH`
