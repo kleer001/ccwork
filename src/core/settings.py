@@ -124,11 +124,18 @@ class XtermSettings:
         # Bind mouse wheel to scrollback, and Ctrl+Shift+C / Ctrl+Shift+V
         # to clipboard copy/paste so Ctrl+C in the shell keeps sending
         # SIGINT. Not all xterm builds bake these in, so be explicit.
+        # Also override <Btn1Up> so a drag-select writes to PRIMARY *and*
+        # CLIPBOARD: middle-click paste keeps working (PRIMARY) while
+        # Ctrl+V in another app pastes what was highlighted (CLIPBOARD).
+        # The xterm default is select-end(SELECT, CUT_BUFFER0), which only
+        # populates PRIMARY — so highlight-then-Ctrl+V silently pastes
+        # whatever was on the clipboard last.
         args += [
             "-xrm",
             "XTerm*VT100.translations: #override"
             " <Btn4Down>: scroll-back(3,line) \\n"
             " <Btn5Down>: scroll-forw(3,line) \\n"
+            " <Btn1Up>: select-end(PRIMARY, CLIPBOARD, CUT_BUFFER0) \\n"
             " Ctrl Shift <Key>C: copy-selection(CLIPBOARD) \\n"
             " Ctrl Shift <Key>V: insert-selection(CLIPBOARD)",
         ]
@@ -215,6 +222,12 @@ class UISettings:
     # Composes with auto_arrange_repos: grouping is the primary key, activity
     # recency the secondary sort within each group.
     group_active_repos: bool = True
+    # When True, intercept plain Ctrl+C in the terminal and prompt before
+    # forwarding it as SIGINT. Aimed at users coming from non-terminal apps
+    # where Ctrl+C means "copy" — in a shell it kills the foreground process
+    # (typically Claude). Toggled live from the dialog's "Show this warning
+    # next time" checkbox and from the Preferences UI.
+    warn_on_ctrl_c: bool = True
     layout: LayoutSettings = field(default_factory=LayoutSettings)
     animation: AnimationSettings = field(default_factory=AnimationSettings)
 
@@ -311,6 +324,7 @@ def _coerce_ui(raw: dict | None) -> UISettings:
         status_badge_style=badge_style,
         auto_arrange_repos=bool(raw.get("auto_arrange_repos", d.auto_arrange_repos)),
         group_active_repos=bool(raw.get("group_active_repos", d.group_active_repos)),
+        warn_on_ctrl_c=bool(raw.get("warn_on_ctrl_c", d.warn_on_ctrl_c)),
         layout=_coerce_layout(raw.get("layout") if isinstance(raw.get("layout"), dict) else None),
         animation=_coerce_animation(raw.get("animation") if isinstance(raw.get("animation"), dict) else None),
     )
@@ -426,6 +440,7 @@ def _ui_to_toml(ui: UISettings) -> dict[str, Any]:
         "status_badge_style": ui.status_badge_style,
         "auto_arrange_repos": ui.auto_arrange_repos,
         "group_active_repos": ui.group_active_repos,
+        "warn_on_ctrl_c": ui.warn_on_ctrl_c,
         "layout": asdict(ui.layout),
         "animation": asdict(ui.animation),
     }

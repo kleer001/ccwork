@@ -45,6 +45,7 @@ XK_plus = 0x002b        # '+'  (only reachable without Shift on some layouts)
 XK_minus = 0x002d       # '-'
 XK_0 = 0x0030           # '0'
 XK_1 = 0x0031
+XK_c = 0x0063
 XK_o = 0x006f
 XK_p = 0x0070
 XK_q = 0x0071

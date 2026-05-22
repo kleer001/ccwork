@@ -68,6 +68,7 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
         ("Zoom (mouse)",        "Ctrl+scroll"),
         ("Copy selection",      "Ctrl+Shift+C  (xterm)"),
         ("Paste",               "Ctrl+Shift+V"),
+        ("Interrupt process",   "Ctrl+C  (confirm dialog)"),
         ("Context menu",        "Right-click"),
     ]),
 ]

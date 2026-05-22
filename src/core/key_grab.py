@@ -109,6 +109,14 @@ class KeyGrabFilter(QAbstractNativeEventFilter):
                  keycode, mods & _STATE_MASK, keysym)
         return True
 
+    def unregister(self, keysym: int, mods: int) -> bool:
+        """Drop the handler for (keysym, mods). Returns True if one was
+        present. The caller is responsible for the matching XUngrabKey."""
+        keycode = self._xdisplay.keysym_to_keycode(keysym)
+        if keycode == 0:
+            return False
+        return self._handlers.pop((keycode, mods & _STATE_MASK), None) is not None
+
     # ── dispatch ──
 
     def nativeEventFilter(self, eventType, message):  # type: ignore[override]

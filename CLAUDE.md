@@ -75,6 +75,13 @@ for the keyboard cheatsheet. **Why not Qt's `QAction` shortcut path:**
 the XEmbed'd xterm isn't a Qt widget, so when it holds X input focus
 Qt's normal shortcut chain never sees the press. The XGrabKey path
 intercepts presses at the X-server level before xterm can consume them.
+Plain `Ctrl+C` is **conditionally** grabbed via the same mechanism while
+`ui.warn_on_ctrl_c` is True: the handler shows
+`ctrl_c_warning.show_ctrl_c_warning` and only on confirm writes `0x03`
+into the current `TerminalHost`'s PTY (so SIGINT still reaches the
+foreground process group). The grab is installed/removed at runtime as
+the user toggles the pref, so when off Ctrl+C reaches xterm with zero
+indirection.
 The top bar holds, right-to-left: the gear (Preferences), the 🔔 unread
 indicator, and a 🔊/🔇 toolbutton mirroring the "Show desktop
 notifications" preference (single source of truth:

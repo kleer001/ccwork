@@ -41,6 +41,17 @@ def test_to_xterm_args_includes_wheel_bindings() -> None:
     assert "scroll-forw" in args[xrm_idx + 1]
 
 
+def test_to_xterm_args_selection_writes_primary_and_clipboard() -> None:
+    """Drag-select must populate both PRIMARY (for middle-click paste) and
+    CLIPBOARD (so Ctrl+V in another app pastes what was highlighted).
+    xterm's default `select-end(SELECT, CUT_BUFFER0)` only fills PRIMARY."""
+    args = S.XtermSettings().to_xterm_args()
+    xrm_values = [args[i + 1] for i, v in enumerate(args[:-1]) if v == "-xrm"]
+    vt100 = next((v for v in xrm_values if v.startswith("XTerm*VT100.translations")), "")
+    assert "<Btn1Up>" in vt100
+    assert "select-end(PRIMARY, CLIPBOARD" in vt100
+
+
 def test_to_xterm_args_extras_appended_last() -> None:
     extras = ["-xrm", "XTerm*cursorBlink: true"]
     args = S.XtermSettings(extra_args=extras).to_xterm_args()
@@ -144,6 +155,7 @@ def test_ui_settings_defaults() -> None:
     assert u.desktop_notifications is True
     assert u.auto_arrange_repos is False
     assert u.group_active_repos is True
+    assert u.warn_on_ctrl_c is True
 
 
 def test_ui_settings_round_trip(tmp_path: Path) -> None:
@@ -153,6 +165,7 @@ def test_ui_settings_round_trip(tmp_path: Path) -> None:
         restore_last_repo=False, desktop_notifications=False,
         auto_arrange_repos=True,
         group_active_repos=False,
+        warn_on_ctrl_c=False,
     ))
     S.save_settings(orig, p)
     loaded = S.load_settings(p)
@@ -162,6 +175,7 @@ def test_ui_settings_round_trip(tmp_path: Path) -> None:
     assert loaded.ui.desktop_notifications is False
     assert loaded.ui.auto_arrange_repos is True
     assert loaded.ui.group_active_repos is False
+    assert loaded.ui.warn_on_ctrl_c is False
 
 
 def test_ui_settings_invalid_side_falls_back_to_default(tmp_path: Path) -> None:
