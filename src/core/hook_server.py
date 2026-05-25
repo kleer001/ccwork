@@ -31,6 +31,23 @@ EVENT_USER_PROMPT_SUBMIT = "UserPromptSubmit"
 EVENT_STOP = "Stop"
 EVENT_NOTIFICATION = "Notification"
 EVENT_REPO_ADDED = "RepoAdded"
+# PreToolUse fires before every tool invocation; we only register a hook with
+# matcher "Task" so the payload always carries a subagent dispatch. The model
+# further filters to run_in_background=True, since foreground Task calls
+# resolve inside the same turn and are already covered by the working spinner.
+EVENT_PRE_TOOL_USE = "PreToolUse"
+# Fires when any subagent (foreground or background) finishes. We use it to
+# decrement the background-agent counter set up by PreToolUse.
+EVENT_SUBAGENT_STOP = "SubagentStop"
+# Fires when a Claude session starts (user invoked `claude` in the terminal).
+# Drives the "is there a live Claude session in this terminal?" axis, which
+# in turn picks between the dense-braille "in claude" indicator and the
+# text-cursor "bare terminal" indicator.
+EVENT_SESSION_START = "SessionStart"
+# Fires when a Claude session ends (/exit, Ctrl+D, etc.). Clears the
+# session-active flag and any leftover per-session state (alerts, working,
+# detached agents) — the session is over, those signals are stale.
+EVENT_SESSION_END = "SessionEnd"
 
 # Hooks that signal Claude has stopped producing output (idle).
 IDLE_EVENTS = (EVENT_STOP, EVENT_NOTIFICATION)

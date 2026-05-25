@@ -209,3 +209,6 @@ __marimo__/
 # ccwork — launcher is generated per-machine by install.sh with the
 # absolute repo path baked in; never commit it.
 bin/ccwork
+
+# Claude Code session breadcrumbs
+BREADCRUMB.md

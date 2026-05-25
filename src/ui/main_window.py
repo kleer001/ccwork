@@ -818,7 +818,7 @@ class MainWindow(QMainWindow):
         if not matching:
             return
 
-        self._sidebar.apply_hook_event(event, str(cwd))
+        self._sidebar.apply_hook_event(event, str(cwd), payload)
 
         if event in IDLE_EVENTS:
             # Bell dot: glanceable "something happened" signal even when

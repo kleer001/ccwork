@@ -93,7 +93,17 @@ notifications" preference (single source of truth:
 - `qt_theme.py` derives a `QPalette` from `XtermSettings.bg`/`.fg` so the
   GUI chrome matches the embedded terminal. It forces `setStyle("Fusion")` —
   native styles (Breeze, Adwaita) ignore palette overrides on Window/Base.
-- `repo_sidebar.py` owns its own `QAbstractListModel`. The delegate reserves
+- The sidebar spans four modules: **`repo_model.py`** (`RepoListModel`, a
+  `QAbstractListModel`; owns the `ROLE_*` roles and the Claude-event →
+  state table), **`repo_delegate.py`** (`RepoDelegate`, the row painter),
+  **`badge_theme.py`** (every glyph / color / label / spinner constant —
+  the single theming source both the model and delegate read), and
+  **`repo_sidebar.py`** (the `RepoSidebar` widget: list view, animation
+  timers, context menu, badge picker). `repo_sidebar.py` re-exports the
+  model / delegate / `ROLE_*` / `STATUS_*` names, so
+  `from src.ui.repo_sidebar import …` keeps resolving for callers and tests.
+
+  The delegate reserves
   a right-edge column for a status badge (colored dot or glyph) that
   auto-hides only when fewer than ~4 chars of row text would remain — this
   is what lets the splitter drag down to ~6 chars wide without garbling.
@@ -225,29 +235,69 @@ Claude Code hook ─▶ ccwork-hook-sink ─▶ unix socket ─▶ HookServer
 `MainWindow._on_hook_event` is a thin dispatcher: it special-cases
 `RepoAdded` (auto-add a row) and toggles the bell dot for idle events;
 everything else routes through `RepoSidebar.apply_hook_event(event,
-path)` → `RepoListModel.apply_hook_event`, which owns the entire
-event → state mutation table. The model knows three Claude events:
+path, payload)` → `RepoListModel.apply_hook_event`, which owns the entire
+event → state mutation table. The model knows seven Claude events:
 
   • `UserPromptSubmit` — clear any prior alert, mark working,
     `touch_activity()` the path. Self-healing for Esc-interrupted /
     crashed turns is automatic: `set_working(True)` no-ops when already
     True and `touch_activity` refreshes the recency stamp unconditionally.
-  • `Stop` — clear working, set `STATUS_DONE`.
+  • `Stop` — clear working, set `STATUS_DONE`. Does **not** clear
+    `_bg_agents`: detached subagents outlive the main turn and the ◌
+    indicator is meant to surface exactly that.
   • `Notification` — set `STATUS_ATTENTION`. Does **not** touch working:
     `permission_prompt` fires mid-turn and the turn is still live, so
     the spinner keeps running underneath the attention dot.
+  • `PreToolUse` — registered with matcher `Task`. Increments
+    `_bg_agents[path]` iff `payload.tool_input.run_in_background` is
+    True (`_is_background_task_dispatch`). Foreground `Task` calls
+    block the turn, so the working spinner already covers them.
+  • `SubagentStop` — decrements `_bg_agents[path]`, clamped at 0.
+    Fires for both foreground and background subagents; the clamp
+    absorbs the foreground decrements we never incremented for.
+  • `SessionStart` — flips `_session_active[path] = True`. The ambient
+    badge in the right-edge column switches from ▌ (bare terminal) to
+    ⠿ (Claude is here) when no higher-priority alert is showing.
+  • `SessionEnd` — flips `_session_active[path] = False` AND
+    cascade-clears `_status`, `_working`, `_bg_agents`, `_turn_started`
+    for this path. The session is over, so those signals are stale and
+    would otherwise mask the new ▌ ambient indicator. Done inline in
+    `_set_session_active(active=False)` rather than via the public
+    mutators so the whole transition lands in a single dataChanged
+    emission.
 
 `MainWindow` no longer keeps a parallel id-keyed `_working` set; the
 quit-confirm derives its list on demand via `model.is_working(path)`
 intersected with running terminals.
 
-The right-edge column shows attention-OR-spinner-OR-status:
-`STATUS_ATTENTION` wins over the spinner so a `permission_prompt` is
-glanceable even when desktop notifications are off (the bell aggregates
-across repos, so it can't identify *which* repo is waiting). The spinner
-timer keeps ticking while attention is shown, so once the user approves
-and the next event clears the status, the spinner reappears for the rest
-of the turn. The left-edge **last-focused stripe** is on a separate
+The right-edge column paints one badge per row, picked by priority
+(highest first):
+
+  1. `STATUS_ATTENTION` (red dot) — wins over the spinner so a
+     `permission_prompt` is glanceable even when desktop notifications
+     are off (the bell aggregates across repos, so it can't identify
+     *which* repo is waiting).
+  2. Working spinner — braille frames from `SPINNER_VARIANTS`, picked
+     per-id via `spinner_for_id`, paints while the main turn is live.
+  3. `STATUS_DONE` (green dot) — paints after `Stop` until the next
+     `UserPromptSubmit` clears it.
+  4. `BG_AGENT_FRAMES` twinkle (`·→✦→✶→❋→✶→✦` in solarized cyan) —
+     paints when the main turn is idle but `_bg_agents[path] > 0`
+     (one or more `Task` calls dispatched with `run_in_background=True`
+     and `SubagentStop` hasn't balanced them yet).
+  5. Ambient terminal-state — only when the row has a live terminal
+     and no higher badge applies. `SESSION_ACTIVE_GLYPH` (⠿, dense
+     braille) when `_session_active[path]` is True; otherwise
+     `TERMINAL_ONLY_GLYPH` (▌, left-half-block text cursor). Both in
+     `AMBIENT_COLOR` (solarized base01) so they read as quiet ambient
+     presence, not alerts.
+
+Both animations (working spinner + bg-agent twinkle) share the
+delegate's `spinner_frame` counter and the `_spinner_timer`, which is
+started whenever `any_working() or any_bg_agents()` is true. The
+spinner timer keeps ticking while attention is shown, so once the
+user approves and the next event clears the status, the spinner
+reappears for the rest of the turn. The left-edge **last-focused stripe** is on a separate
 axis: stored in `RepoListModel._last_focused` (single value), surfaced
 via `ROLE_LAST_FOCUSED`, mutated only by `set_last_focused()`. Claude
 events never touch it; user navigation never touches `_status`.
@@ -276,10 +326,13 @@ events never touch it; user navigation never touches `_status`.
   `set_working` on the off→on edge for UserPromptSubmit, plus
   `touch_activity` for the explicit case where UPS arrives while
   working is already True). Setting `_last_focused` does not stamp.
-- **The right-edge badge column is reserved for Claude alerts.** Working
-  spinner, `STATUS_DONE`, `STATUS_ATTENTION` paint there. The last-focused
-  bookmark renders as a thin left-edge stripe in a distinct paint pass
-  so the two never compete for the same eye-level.
+- **The right-edge badge column is reserved for Claude alerts and
+  terminal state.** Working spinner, `STATUS_DONE`, `STATUS_ATTENTION`,
+  the animated `BG_AGENT_FRAMES` twinkle, and the ambient
+  `SESSION_ACTIVE_GLYPH` / `TERMINAL_ONLY_GLYPH` indicators all paint
+  there in the priority order above. The last-focused bookmark renders
+  as a thin left-edge stripe in a distinct paint pass so the two never
+  compete for the same eye-level.
 - **`apply_hook_event` is the single entry point for hook-driven state
   changes.** Don't sequence `set_working` + `set_status` + `clear_status`
   ad-hoc from new call sites — extend the event → mutation table on
@@ -304,4 +357,8 @@ wrapper around it. Both are idempotent, write only under `$HOME`, back up
 every touched file under `~/.local/share/ccwork/backups/`, and support
 `--dry-run` and `--uninstall`. The installer wires the hook sink into
 `~/.claude/settings.json` using the `ccwork-hook-sink` marker so uninstall
-can locate and strip those entries.
+can locate and strip those entries. Hooks installed: `Stop`,
+`Notification`, `UserPromptSubmit`, `PreToolUse` (matcher `Task`),
+`SubagentStop`, `SessionStart`, and `SessionEnd`. The installer strips
+any prior ccwork hooks before writing, so re-running `install.sh` is
+the upgrade path when the set changes.
