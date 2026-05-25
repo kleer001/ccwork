@@ -103,6 +103,17 @@ notifications" preference (single source of truth:
   model / delegate / `ROLE_*` / `STATUS_*` names, so
   `from src.ui.repo_sidebar import …` keeps resolving for callers and tests.
 
+  `badge_theme.py` is **config-driven**: built-in defaults (the solarized
+  palette) are overlaid at import with an optional
+  `~/.config/ccwork/badges.toml` (a separate file from `settings.toml`).
+  Colors accept `#hex`, `rgb(r,g,b)` (0–255), `hsv(h,s,v)` (hue 0–360,
+  saturation/value 0–255), or an SVG color name; glyphs are strings,
+  frames are arrays, and the two statuses are `[statuses.done]` /
+  `[statuses.attention]` sub-tables of `{color, glyph, label}`. Omitted
+  keys keep their default; a malformed value (bad color, empty glyph,
+  unknown key) fails loudly at startup via `load_badge_theme`. The module
+  docstring carries the full example schema.
+
   The delegate reserves
   a right-edge column for a status badge (colored dot or glyph) that
   auto-hides only when fewer than ~4 chars of row text would remain — this
@@ -314,6 +325,12 @@ events never touch it; user navigation never touches `_status`.
   via `asdict` over `_raw`, so unknown keys survive.
 - **xterm spawn args are centralized** in `XtermSettings.to_xterm_args()`.
   Don't append flags ad-hoc from the UI layer — extend the settings dataclass.
+- **Badge glyphs / colors / labels live in `badge_theme.py`** — the single
+  theming source the model (tooltips) and delegate (painting) both read,
+  overridable via `~/.config/ccwork/badges.toml`. A new badge cue adds its
+  glyph + color + label there (colors go through `_parse_color`, so they
+  accept hex / `rgb()` / `hsv()` / SVG names) rather than hardcoding a
+  `QColor(...)` or glyph literal in the delegate's paint method.
 - **User-state and Claude-alert state are storage-separate.** Last-focused
   lives in `RepoListModel._last_focused` (one path, its own role
   `ROLE_LAST_FOCUSED`). Claude alerts live in `_status` (DONE/ATTENTION
