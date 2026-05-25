@@ -171,14 +171,16 @@ def _read_overrides(path: Path | None) -> dict:
 
 
 def _merge_defaults(overrides: dict) -> dict:
-    """Overlay `overrides` onto `_DEFAULTS` key-by-key (statuses field-by-field)."""
+    """Overlay `overrides` onto `_DEFAULTS`: flat keys whole, statuses field-by-field.
+
+    `_read_overrides` already rejected unknown keys, so every flat key here is
+    a known `_DEFAULTS` knob; `statuses` is the one nested table and is merged
+    field-by-field below.
+    """
     cfg = copy.deepcopy(_DEFAULTS)
-    for key in (
-        "spinner_color", "bg_agents_color", "ambient_color", "last_focused",
-        "session_glyph", "terminal_glyph", "bg_agent_frames", "spinner_variants",
-    ):
-        if key in overrides:
-            cfg[key] = overrides[key]
+    for key, value in overrides.items():
+        if key != "statuses":
+            cfg[key] = value
     override_statuses = overrides.get("statuses", {})
     for name in _STATUS_NAMES:
         sub = override_statuses.get(name, {})

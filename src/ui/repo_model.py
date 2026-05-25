@@ -470,7 +470,7 @@ class RepoListModel(QAbstractListModel):
           • Stop — clear working, set DONE. Stamping is implicit in
             set_status for DONE/ATTENTION. Does NOT clear _bg_agents:
             backgrounded subagents survive past the main turn end, which
-            is the whole point of the ◌ indicator.
+            is the whole point of the background-agent twinkle.
           • Notification — set ATTENTION. Does NOT clear working: a
             permission_prompt fires mid-turn and the turn is still live.
           • PreToolUse — increment _bg_agents iff the tool is "Task" and

@@ -254,8 +254,8 @@ event → state mutation table. The model knows seven Claude events:
     crashed turns is automatic: `set_working(True)` no-ops when already
     True and `touch_activity` refreshes the recency stamp unconditionally.
   • `Stop` — clear working, set `STATUS_DONE`. Does **not** clear
-    `_bg_agents`: detached subagents outlive the main turn and the ◌
-    indicator is meant to surface exactly that.
+    `_bg_agents`: detached subagents outlive the main turn and the
+    bg-agent twinkle is meant to surface exactly that.
   • `Notification` — set `STATUS_ATTENTION`. Does **not** touch working:
     `permission_prompt` fires mid-turn and the turn is still live, so
     the spinner keeps running underneath the attention dot.

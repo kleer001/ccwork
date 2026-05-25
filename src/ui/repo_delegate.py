@@ -35,6 +35,12 @@ from src.ui.repo_model import (
 )
 
 
+# Paint width (px) of the right-edge column for the animated glyphs — the
+# spinner, the bg-agent twinkle, and the ambient terminal-state mark. Distinct
+# from the LayoutSettings `glyph_w` (the reserved dot / static-glyph column).
+BADGE_COL_W = 16
+
+
 class RepoDelegate(QStyledItemDelegate):
     """Two-line row: name (bold) + branch (subtitle), unread badge right-aligned.
 
@@ -268,7 +274,7 @@ class RepoDelegate(QStyledItemDelegate):
             painter.setPen(QPen(self.SPINNER_COLOR))
             frames = spinner_for_id(repo.id)
             frame = frames[self.spinner_frame % len(frames)]
-            spin_rect = QRect(rect.right() - 16, rect.top(), 16, rect.height())
+            spin_rect = QRect(rect.right() - BADGE_COL_W, rect.top(), BADGE_COL_W, rect.height())
             painter.drawText(spin_rect, Qt.AlignRight | Qt.AlignVCenter, frame)
         else:
             color = self.STATUS_COLORS.get(status)
@@ -279,7 +285,7 @@ class RepoDelegate(QStyledItemDelegate):
                 painter.setFont(bg_font)
                 painter.setPen(QPen(self.BG_AGENTS_COLOR))
                 frame = BG_AGENT_FRAMES[self.spinner_frame % len(BG_AGENT_FRAMES)]
-                bg_rect = QRect(rect.right() - 16, rect.top(), 16, rect.height())
+                bg_rect = QRect(rect.right() - BADGE_COL_W, rect.top(), BADGE_COL_W, rect.height())
                 painter.drawText(bg_rect, Qt.AlignRight | Qt.AlignVCenter, frame)
             elif color is not None:
                 if self.badge_style == "glyph":
@@ -318,7 +324,7 @@ class RepoDelegate(QStyledItemDelegate):
                 a_font.setPointSizeF(option.font.pointSizeF() * 1.4)
                 painter.setFont(a_font)
                 painter.setPen(QPen(self.AMBIENT_COLOR))
-                a_rect = QRect(rect.right() - 16, rect.top(), 16, rect.height())
+                a_rect = QRect(rect.right() - BADGE_COL_W, rect.top(), BADGE_COL_W, rect.height())
                 painter.drawText(a_rect, Qt.AlignRight | Qt.AlignVCenter, ambient_glyph)
 
         painter.restore()

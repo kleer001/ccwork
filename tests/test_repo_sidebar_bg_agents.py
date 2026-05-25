@@ -1,10 +1,11 @@
-"""Coverage for the background-agent counter and its ◌ glyph.
+"""Coverage for the background-agent counter and its twinkle indicator.
 
 Background agents (Task tool dispatched with `run_in_background=True`) keep
 running past the parent turn's Stop hook. The model tracks them via
 `_bg_agents`, incremented on PreToolUse(Task, run_in_background=True) and
 decremented on SubagentStop. When the count goes positive and the main turn
-isn't working / attention, the badge column paints a static ◌.
+isn't working / attention, the badge column paints the animated
+BG_AGENT_FRAMES twinkle (·→✦→✶→❋→✶→✦).
 """
 
 from __future__ import annotations
