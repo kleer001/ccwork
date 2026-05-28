@@ -36,7 +36,7 @@ def test_defaults_reproduce_solarized_palette(tmp_path: Path) -> None:
     """A missing badges.toml yields exactly the built-in palette."""
     t = load_badge_theme(tmp_path / "absent.toml")
     assert t.spinner_color == QColor(38, 139, 210)
-    assert t.bg_agents_color == QColor(42, 161, 152)
+    assert t.subagent_color == QColor(42, 161, 152)
     assert t.ambient_color == QColor(88, 110, 117)
     assert t.last_focused == QColor(108, 113, 196)
     assert t.status_done.color == QColor(133, 153, 0)
@@ -47,7 +47,10 @@ def test_defaults_reproduce_solarized_palette(tmp_path: Path) -> None:
     assert t.status_attention.value == STATUS_ATTENTION
     assert t.session_glyph == "⠿"
     assert t.terminal_glyph == "▌"
-    assert t.bg_agent_frames == ("·", "✦", "✶", "❋", "✶", "✦")
+    assert t.subagent_frames == (
+        "✲", "✵", "✷", "✱", "❂", "✹", "✺", "✸", "❉", "❊", "❋",
+        "❊", "❉", "✸", "✺", "✹", "❂", "✱", "✷", "✵",
+    )
     assert len(t.spinner_variants) == 5
     assert all(isinstance(v, tuple) for v in t.spinner_variants)
 
@@ -72,7 +75,7 @@ def test_partial_override_keeps_defaults(tmp_path: Path) -> None:
     assert t.spinner_color == QColor(1, 2, 3)          # overridden
     assert t.status_done.color == QColor("lime")       # overridden field
     assert t.status_done.glyph == "✓"                  # sibling field kept
-    assert t.bg_agents_color == QColor(42, 161, 152)   # untouched key kept
+    assert t.subagent_color == QColor(42, 161, 152)    # untouched key kept
 
 
 @pytest.mark.parametrize("text, needle", [
@@ -83,7 +86,7 @@ def test_partial_override_keeps_defaults(tmp_path: Path) -> None:
     ('[statuses.bogus]\ncolor = "#fff"', "unknown key"),     # unknown status name
     ('session_glyph = ""', "non-empty"),
     ('spinner_color = 123', "must be a color string"),
-    ('bg_agent_frames = []', "non-empty array"),
+    ('subagent_frames = []', "non-empty array"),
 ])
 def test_malformed_fails_loudly(tmp_path: Path, text: str, needle: str) -> None:
     with pytest.raises(ValueError, match=needle):

@@ -3,7 +3,7 @@
 The two ambient badges (⠿ when a Claude session is live, ▌ when only the
 bare terminal is open) ride a single per-path boolean: `_session_active`.
 SessionStart flips it on, SessionEnd flips it off AND cascade-clears the
-per-session signals (`_status`, `_working`, `_bg_agents`, `_turn_started`)
+per-session signals (`_status`, `_working`, `_subagents`, `_turn_started`)
 that would otherwise mask the bare-terminal indicator.
 """
 
@@ -21,7 +21,7 @@ from src.core.hook_server import (
 )
 from src.core.repo_store import Repo, RepoStore
 from src.ui.repo_sidebar import (
-    ROLE_BG_AGENTS,
+    ROLE_SUBAGENTS,
     ROLE_SESSION_ACTIVE,
     ROLE_STATUS,
     ROLE_WORKING,
@@ -82,28 +82,28 @@ def test_session_end_clears_stuck_working(qapp, tmp_path: Path) -> None:
     assert model.any_working() is False
 
 
-def test_session_end_clears_bg_agents(qapp, tmp_path: Path) -> None:
-    """Background agents don't outlive their parent session — clear the
-    counter on SessionEnd so a stale SubagentStop that arrives late
-    can't drive it below zero (well, the clamp would catch that, but
-    the indicator would still flicker)."""
+def test_session_end_clears_subagents(qapp, tmp_path: Path) -> None:
+    """Subagents don't outlive their parent session — clear the counter
+    on SessionEnd so a stale SubagentStop that arrives late can't drive
+    it below zero (well, the clamp would catch that, but the indicator
+    would still flicker)."""
     repo = tmp_path / "repo"
     repo.mkdir()
     model = RepoListModel(_store_with(str(repo), tmp_path / "repos.json"))
 
     payload = {
-        "tool_name": "Task",
-        "tool_input": {"subagent_type": "general-purpose", "run_in_background": True},
+        "tool_name": "Agent",
+        "tool_input": {"subagent_type": "general-purpose"},
     }
     model.apply_hook_event(EVENT_SESSION_START, str(repo))
     model.apply_hook_event(EVENT_PRE_TOOL_USE, str(repo), payload)
     model.apply_hook_event(EVENT_PRE_TOOL_USE, str(repo), payload)
-    assert model.bg_agents(str(repo)) == 2
+    assert model.subagents(str(repo)) == 2
 
     model.apply_hook_event(EVENT_SESSION_END, str(repo))
-    assert model.bg_agents(str(repo)) == 0
-    assert model.index(0).data(ROLE_BG_AGENTS) == 0
-    assert model.any_bg_agents() is False
+    assert model.subagents(str(repo)) == 0
+    assert model.index(0).data(ROLE_SUBAGENTS) == 0
+    assert model.any_subagents() is False
 
 
 def test_session_end_clears_attention(qapp, tmp_path: Path) -> None:

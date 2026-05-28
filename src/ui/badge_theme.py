@@ -20,12 +20,12 @@ Example `badges.toml`::
     #   "hsv(205, 82, 82)"   Qt-native: hue 0–360, saturation 0–255, value 0–255
     #   "steelblue"          any SVG/X11 color name
     spinner_color   = "rgb(38, 139, 210)"
-    bg_agents_color = "#2aa198"
+    subagent_color  = "#2aa198"
     ambient_color   = "hsv(194, 63, 117)"
     last_focused    = "slateblue"
     session_glyph   = "⠿"
     terminal_glyph  = "▌"
-    bg_agent_frames = ["·", "✦", "✶", "❋", "✶", "✦"]
+    subagent_frames = ["✲", "✵", "✷", "✱", "❂", "✹", "✺", "✸", "❉", "❊", "❋"]
 
     [statuses.done]
     color = "#859900"
@@ -71,7 +71,7 @@ STATUS_ATTENTION = "attention"
 # Tooltip text that isn't tied to a glyph/color knob — kept in code.
 WORKING_LABEL = "Claude is working…"
 LAST_FOCUSED_LABEL = "Last focused"
-BG_AGENTS_LABEL = "Background agents running"
+SUBAGENTS_LABEL = "Subagents running"
 SESSION_ACTIVE_LABEL = "Claude session active"
 TERMINAL_ONLY_LABEL = "Terminal open (no Claude session)"
 
@@ -79,22 +79,25 @@ TERMINAL_ONLY_LABEL = "Terminal open (no Claude session)"
 # the canonical solarized hex; the loader also accepts rgb(), hsv(), and
 # SVG names in the override file.
 #   done   = solarized green (calmer), attention = solarized red (urgent)
-#   spinner = solarized blue, bg-agents = solarized cyan (live secondary
+#   spinner = solarized blue, subagent = solarized cyan (live parallel
 #   work), ambient = solarized base01 (quiet presence), last-focused =
 #   solarized violet.
-# bg_agent_frames step ·→✦→✶→❋→✶→✦ — a Claude-flower asterisk growing and
-# shrinking, so the eye reads "background work in flight". session_glyph ⠿
-# (dense braille, "Claude is here") vs terminal_glyph ▌ (text-cursor block,
-# "bare bash"). spinner_variants: five braille cycles; each repo gets one
-# deterministically (see spinner_for_id).
+# subagent_frames are concentric asterisk-stars (all center-aligned, similar
+# size) ordered light→heavy→light, so the twinkle blooms and contracts as a
+# smooth pulse without the glyph jittering off-center — the eye reads "a
+# subagent is doing work". Paints one slot inboard of the main-turn spinner
+# and advances at a third of its rate (see SUBAGENT_SLOWDOWN in
+# repo_delegate). session_glyph ⠿ (dense braille, "Claude is here") vs
+# terminal_glyph ▌ (text-cursor block, "bare bash"). spinner_variants: five
+# braille cycles; each repo gets one deterministically (see spinner_for_id).
 _DEFAULTS: dict = {
     "spinner_color": "#268bd2",
-    "bg_agents_color": "#2aa198",
+    "subagent_color": "#2aa198",
     "ambient_color": "#586e75",
     "last_focused": "#6c71c4",
     "session_glyph": "⠿",
     "terminal_glyph": "▌",
-    "bg_agent_frames": ["·", "✦", "✶", "❋", "✶", "✦"],
+    "subagent_frames": ["✲", "✵", "✷", "✱", "❂", "✹", "✺", "✸", "❉", "❊", "❋", "❊", "❉", "✸", "✺", "✹", "❂", "✱", "✷", "✵"],
     "spinner_variants": [
         ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
         ["⠋", "⠙", "⠚", "⠞", "⠖", "⠦", "⠴", "⠲", "⠳", "⠓"],
@@ -117,12 +120,12 @@ _STATUS_FIELDS = frozenset({"color", "glyph", "label"})
 class BadgeTheme:
     """Resolved badge theme: defaults overlaid with the user's badges.toml."""
     spinner_color: QColor
-    bg_agents_color: QColor
+    subagent_color: QColor
     ambient_color: QColor
     last_focused: QColor
     session_glyph: str
     terminal_glyph: str
-    bg_agent_frames: tuple[str, ...]
+    subagent_frames: tuple[str, ...]
     spinner_variants: tuple[tuple[str, ...], ...]
     status_done: StatusDefinition
     status_attention: StatusDefinition
@@ -282,12 +285,12 @@ def load_badge_theme(path: Path | None = None) -> BadgeTheme:
     cfg = _merge_defaults(_read_overrides(path))
     return BadgeTheme(
         spinner_color=_parse_color(cfg["spinner_color"], where="spinner_color"),
-        bg_agents_color=_parse_color(cfg["bg_agents_color"], where="bg_agents_color"),
+        subagent_color=_parse_color(cfg["subagent_color"], where="subagent_color"),
         ambient_color=_parse_color(cfg["ambient_color"], where="ambient_color"),
         last_focused=_parse_color(cfg["last_focused"], where="last_focused"),
         session_glyph=_require_glyph(cfg["session_glyph"], where="session_glyph"),
         terminal_glyph=_require_glyph(cfg["terminal_glyph"], where="terminal_glyph"),
-        bg_agent_frames=_require_frames(cfg["bg_agent_frames"], where="bg_agent_frames"),
+        subagent_frames=_require_frames(cfg["subagent_frames"], where="subagent_frames"),
         spinner_variants=_require_variants(cfg["spinner_variants"], where="spinner_variants"),
         status_done=_status(cfg, STATUS_DONE),
         status_attention=_status(cfg, STATUS_ATTENTION),
@@ -299,12 +302,12 @@ def load_badge_theme(path: Path | None = None) -> BadgeTheme:
 _THEME = load_badge_theme()
 
 SPINNER_COLOR = _THEME.spinner_color
-BG_AGENTS_COLOR = _THEME.bg_agents_color
+SUBAGENT_COLOR = _THEME.subagent_color
 AMBIENT_COLOR = _THEME.ambient_color
 LAST_FOCUSED_BASE = _THEME.last_focused
 SESSION_ACTIVE_GLYPH = _THEME.session_glyph
 TERMINAL_ONLY_GLYPH = _THEME.terminal_glyph
-BG_AGENT_FRAMES = _THEME.bg_agent_frames
+SUBAGENT_FRAMES = _THEME.subagent_frames
 SPINNER_VARIANTS = _THEME.spinner_variants
 
 STATUS_DONE_DEF = _THEME.status_done

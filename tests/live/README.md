@@ -43,6 +43,8 @@ skips them entirely.
 | `check_f1_cheatsheet.py` | F1 opens the keyboard-shortcuts dialog. Visible-window check via wmctrl matching `"Keyboard shortcuts"`. |
 | `check_window_geometry.py` | A clean Ctrl+Shift+Q quit writes a non-empty base64 `geometry` blob into the sandboxed `settings.toml`. |
 | `probe_xgrabkey.py` | Diagnostic — a minimal standalone X grabber (no Qt). Useful when investigating whether XTest injection or XGrabKey itself is the failure mode. Run, then in another shell trigger the combo or inject manually. |
+| `audition_subagent_glyphs.py` | Visual tool (not inject-and-assert). Steps through candidate subagent-twinkle glyphs one at a time — painted exactly as `RepoDelegate` renders them, beside an animating spinner with centre crosshairs — and lets you keep/drop each. Prints the kept frame list to stdout. |
+| `preview_subagent_sequences.py` | Visual tool. Animates two orderings of the chosen subagent glyphs side by side at the real twinkle rate, so you can compare candidate `subagent_frames` sequences before committing one. |
 
 ## Adding a new live test
 

@@ -33,11 +33,11 @@ EVENT_NOTIFICATION = "Notification"
 EVENT_REPO_ADDED = "RepoAdded"
 # PreToolUse fires before every tool invocation; we only register a hook with
 # matcher "Task" so the payload always carries a subagent dispatch. The model
-# further filters to run_in_background=True, since foreground Task calls
-# resolve inside the same turn and are already covered by the working spinner.
+# counts every dispatch (foreground or background) — the subagent twinkle
+# paints alongside the main-turn spinner, so both deserve a glyph.
 EVENT_PRE_TOOL_USE = "PreToolUse"
 # Fires when any subagent (foreground or background) finishes. We use it to
-# decrement the background-agent counter set up by PreToolUse.
+# decrement the subagent counter set up by PreToolUse.
 EVENT_SUBAGENT_STOP = "SubagentStop"
 # Fires when a Claude session starts (user invoked `claude` in the terminal).
 # Drives the "is there a live Claude session in this terminal?" axis, which

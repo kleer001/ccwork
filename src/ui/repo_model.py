@@ -31,12 +31,12 @@ from src.core.hook_server import (
 )
 from src.core.repo_store import Repo, RepoStore
 from src.ui.badge_theme import (
-    BG_AGENTS_LABEL,
     LAST_FOCUSED_LABEL,
     SESSION_ACTIVE_LABEL,
     STATUS_ATTENTION,
     STATUS_DONE,
     STATUS_LABELS,
+    SUBAGENTS_LABEL,
     TERMINAL_ONLY_LABEL,
     WORKING_LABEL,
 )
@@ -73,7 +73,7 @@ ROLE_WORKING      = Qt.UserRole + 4   # bool — Claude mid-turn in this repo
 ROLE_HAS_TERMINAL = Qt.UserRole + 5   # bool — a TerminalHost exists for this repo this session
 ROLE_LAST_FOCUSED = Qt.UserRole + 6   # bool — user's previous selection (bookmark)
 ROLE_PATH_MISSING = Qt.UserRole + 7   # bool — repo.path doesn't exist on disk (renamed/deleted)
-ROLE_BG_AGENTS    = Qt.UserRole + 8   # int — background subagents currently running
+ROLE_SUBAGENTS    = Qt.UserRole + 8   # int — subagents (fg or bg) currently running
 ROLE_SESSION_ACTIVE = Qt.UserRole + 9 # bool — a live Claude session exists in this terminal
 
 
@@ -89,23 +89,23 @@ def _norm(path: str) -> str:
     return os.path.realpath(path) if path else ""
 
 
-def _is_background_task_dispatch(payload: dict | None) -> bool:
-    """True iff `payload` describes a PreToolUse for a backgrounded Task.
+def _is_subagent_dispatch(payload: dict | None) -> bool:
+    """True iff `payload` describes a PreToolUse for a subagent dispatch.
 
     Claude Code's PreToolUse payload carries `tool_name` and `tool_input`.
-    We register the hook with a "Task" matcher so the tool check is
-    belt-and-braces; the `run_in_background` flag is what genuinely
-    distinguishes the case we care about — foreground subagents block the
-    turn and are already covered by the working spinner.
+    The tool was historically named "Task" and was later renamed to "Agent";
+    we accept both so the matcher works across Claude Code versions. The
+    install.sh hook config registers PreToolUse with matcher "Task", which
+    Claude Code currently leniently matches against both names.
+
+    We do NOT filter on `tool_input.run_in_background`: the subagent
+    indicator paints on the left while the main turn's braille spinner
+    paints on the right, so foreground and background subagents both
+    deserve their own glyph for the duration of the dispatch.
     """
     if not isinstance(payload, dict):
         return False
-    if payload.get("tool_name") != "Task":
-        return False
-    tool_input = payload.get("tool_input")
-    if not isinstance(tool_input, dict):
-        return False
-    return bool(tool_input.get("run_in_background"))
+    return payload.get("tool_name") in ("Task", "Agent")
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -167,13 +167,15 @@ class RepoListModel(QAbstractListModel):
         # not "any Claude event happened". Path-keyed unnormalized to match
         # _status and _last_activity (not _working, which is normalized).
         self._turn_started: dict[str, float] = {}
-        # Per-path count of background subagents currently running.
-        # Incremented on PreToolUse(tool=Task, run_in_background=True),
-        # decremented on SubagentStop (clamped at 0). Path-keyed unnormalized
-        # to match _status / _last_activity. Drives the BG_AGENT_FRAMES
-        # twinkle when the main turn is idle but background work is still
-        # in flight.
-        self._bg_agents: dict[str, int] = {}
+        # Per-path count of subagents (foreground or background) currently
+        # running. Incremented on PreToolUse(tool=Task|Agent), decremented on
+        # SubagentStop (clamped at 0). Path-keyed unnormalized to match
+        # _status / _last_activity. Drives the SUBAGENT_FRAMES twinkle —
+        # painted on the LEFT badge column while a subagent is in flight,
+        # independent of the main turn's working state (which lives on the
+        # right). The two indicators are visually separate so the user can
+        # tell at a glance that Claude has dispatched parallel work.
+        self._subagents: dict[str, int] = {}
         # Per-path live-session flag. True between SessionStart and
         # SessionEnd. Drives the ambient terminal-state badge (⠿ when a
         # session is live, ▌ when only a bare bash terminal exists).
@@ -207,15 +209,15 @@ class RepoListModel(QAbstractListModel):
             return repo.id in self._active_ids
         if role == ROLE_LAST_FOCUSED:
             return _norm(repo.path) == self._last_focused
-        if role == ROLE_BG_AGENTS:
-            return self._bg_agents.get(repo.path, 0)
+        if role == ROLE_SUBAGENTS:
+            return self._subagents.get(repo.path, 0)
         if role == ROLE_SESSION_ACTIVE:
             return self._session_active.get(repo.path, False)
         if role == Qt.ToolTipRole:
             # Prepend a human-readable status line so hovering a row tells
             # the user what the badge means without having to memorize the
             # color palette. Path stays as the second line for context.
-            # Priority: working > Claude alert > background agents > last-focused.
+            # Priority: working > Claude alert > subagents > last-focused.
             if _norm(repo.path) in self._working:
                 started = self._turn_started.get(repo.path)
                 if started is not None:
@@ -225,10 +227,10 @@ class RepoListModel(QAbstractListModel):
             label = STATUS_LABELS.get(self._status.get(repo.path, ""))
             if label:
                 return f"{label}\n{repo.path}"
-            bg = self._bg_agents.get(repo.path, 0)
-            if bg > 0:
-                noun = "agent" if bg == 1 else "agents"
-                return f"{BG_AGENTS_LABEL}\n{repo.path}\n{bg} background {noun}"
+            sub = self._subagents.get(repo.path, 0)
+            if sub > 0:
+                noun = "subagent" if sub == 1 else "subagents"
+                return f"{SUBAGENTS_LABEL}\n{repo.path}\n{sub} {noun}"
             if _norm(repo.path) == self._last_focused:
                 return f"{LAST_FOCUSED_LABEL}\n{repo.path}"
             # Ambient terminal-state tooltips: only meaningful when a row
@@ -356,8 +358,8 @@ class RepoListModel(QAbstractListModel):
                 idx = self.index(row)
                 self.dataChanged.emit(idx, idx, [ROLE_LAST_FOCUSED, Qt.ToolTipRole])
 
-    def bg_agents(self, path: str) -> int:
-        return self._bg_agents.get(path, 0)
+    def subagents(self, path: str) -> int:
+        return self._subagents.get(path, 0)
 
     def is_session_active(self, path: str) -> bool:
         return self._session_active.get(path, False)
@@ -365,11 +367,11 @@ class RepoListModel(QAbstractListModel):
     def _set_session_active(self, path: str, active: bool) -> None:
         """Flip the session-active flag and broadcast a repaint.
 
-        On SessionEnd we also clear `_status`, `_working`, and `_bg_agents`
+        On SessionEnd we also clear `_status`, `_working`, and `_subagents`
         for `path` — the session is over, so its per-session signals (the
-        DONE/ATTENTION dot, a stuck working spinner, leftover background
-        agents whose SubagentStop didn't arrive) are stale and would
-        otherwise obscure the new "bare terminal" indicator.
+        DONE/ATTENTION dot, a stuck working spinner, leftover subagents
+        whose SubagentStop didn't arrive) are stale and would otherwise
+        obscure the new "bare terminal" indicator.
         """
         old = self._session_active.get(path, False)
         roles: list[int] = []
@@ -388,8 +390,8 @@ class RepoListModel(QAbstractListModel):
                 self.working_changed.emit()
             if self._status.pop(path, None) is not None:
                 roles.append(ROLE_STATUS)
-            if self._bg_agents.pop(path, None) is not None:
-                roles.append(ROLE_BG_AGENTS)
+            if self._subagents.pop(path, None) is not None:
+                roles.append(ROLE_SUBAGENTS)
             self._turn_started.pop(path, None)
         if roles:
             # Deduplicate while preserving order — repeated roles in the
@@ -400,22 +402,21 @@ class RepoListModel(QAbstractListModel):
                     seen.append(r)
             self._emit_changed_for_path(path, seen)
 
-    def _bump_bg_agents(self, path: str, delta: int) -> None:
-        """Adjust the background-agent counter for `path` and repaint.
+    def _bump_subagents(self, path: str, delta: int) -> None:
+        """Adjust the subagent counter for `path` and repaint.
 
         Clamped at zero — a stray SubagentStop without a matching dispatch
-        (out-of-order delivery, or a foreground subagent we didn't count)
-        must not push the counter negative.
+        (e.g. out-of-order delivery) must not push the counter negative.
         """
-        old = self._bg_agents.get(path, 0)
+        old = self._subagents.get(path, 0)
         new = max(0, old + delta)
         if new == old:
             return
         if new == 0:
-            self._bg_agents.pop(path, None)
+            self._subagents.pop(path, None)
         else:
-            self._bg_agents[path] = new
-        self._emit_changed_for_path(path, [ROLE_BG_AGENTS, Qt.ToolTipRole])
+            self._subagents[path] = new
+        self._emit_changed_for_path(path, [ROLE_SUBAGENTS, Qt.ToolTipRole])
 
     def set_working(self, path: str, working: bool) -> None:
         """Toggle the spinner for `path`. No-op if state already matches.
@@ -440,12 +441,11 @@ class RepoListModel(QAbstractListModel):
     def any_working(self) -> bool:
         return bool(self._working)
 
-    def any_bg_agents(self) -> bool:
-        """True iff at least one repo has detached background subagents
-        running. Used by the sidebar to keep the spinner timer ticking
-        even when no main turn is in flight, so the twinkle animation
-        on the bg-agent indicator stays alive."""
-        return any(v > 0 for v in self._bg_agents.values())
+    def any_subagents(self) -> bool:
+        """True iff at least one repo has subagents (foreground or background)
+        in flight. Used by the sidebar to keep the spinner timer ticking
+        for the twinkle animation, even when no main turn is working."""
+        return any(v > 0 for v in self._subagents.values())
 
     def working_paths(self) -> set[str]:
         """Normalized paths currently flagged as working. Read-only view."""
@@ -468,22 +468,23 @@ class RepoListModel(QAbstractListModel):
             existing working=True state is preserved (set_working no-ops)
             and touch_activity refreshes the timestamp anyway.
           • Stop — clear working, set DONE. Stamping is implicit in
-            set_status for DONE/ATTENTION. Does NOT clear _bg_agents:
-            backgrounded subagents survive past the main turn end, which
-            is the whole point of the background-agent twinkle.
+            set_status for DONE/ATTENTION. Does NOT clear _subagents:
+            background subagents survive past the main turn end, which
+            is the whole point of keeping the twinkle painting after Stop.
           • Notification — set ATTENTION. Does NOT clear working: a
             permission_prompt fires mid-turn and the turn is still live.
-          • PreToolUse — increment _bg_agents iff the tool is "Task" and
-            tool_input.run_in_background is True. Foreground Task calls
-            block the turn, so the working spinner already covers them.
-          • SubagentStop — decrement _bg_agents (clamped at 0). Fires for
-            both foreground and background agents; the clamp absorbs the
-            foreground decrements we never incremented for.
+          • PreToolUse — increment _subagents iff the tool is "Task" or
+            "Agent" (Claude Code renamed the tool; we accept both).
+            Foreground and background both count — the left-edge twinkle
+            paints alongside the right-edge working spinner.
+          • SubagentStop — decrement _subagents (clamped at 0). Fires for
+            every subagent regardless of fg/bg; the clamp absorbs any
+            stray decrements without a paired dispatch.
           • SessionStart — flip _session_active[path] = True. The badge
             column switches from ▌ (bare terminal) to ⠿ (Claude is here)
             once no higher-priority alert is masking either.
           • SessionEnd — flip _session_active[path] = False AND cascade-
-            clear _status / _working / _bg_agents / _turn_started for
+            clear _status / _working / _subagents / _turn_started for
             this path. The session is over; those signals are stale and
             would otherwise mask the new ▌ ambient indicator.
         """
@@ -499,10 +500,10 @@ class RepoListModel(QAbstractListModel):
         elif event == EVENT_NOTIFICATION:
             self.set_status(path, STATUS_ATTENTION)
         elif event == EVENT_PRE_TOOL_USE:
-            if _is_background_task_dispatch(payload):
-                self._bump_bg_agents(path, +1)
+            if _is_subagent_dispatch(payload):
+                self._bump_subagents(path, +1)
         elif event == EVENT_SUBAGENT_STOP:
-            self._bump_bg_agents(path, -1)
+            self._bump_subagents(path, -1)
         elif event == EVENT_SESSION_START:
             self._set_session_active(path, True)
         elif event == EVENT_SESSION_END:

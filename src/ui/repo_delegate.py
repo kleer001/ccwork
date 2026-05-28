@@ -1,10 +1,14 @@
-"""Item delegate that paints each repo row: name + branch + right-edge badge.
+"""Item delegate that paints each repo row: name + branch + edge badges.
 
-Two-line rows with a reserved right-edge column for the Claude-alert badge
-(working spinner / done / attention / background-agent twinkle / ambient
-terminal state) and a left-edge stripe for the last-focused bookmark.
-Geometry knobs come from `settings.ui.layout`; glyphs and colors come from
-`badge_theme`. Row roles are defined in `repo_model`.
+Two-line rows with two reserved badge columns:
+  • RIGHT-edge: main-turn indicators — working spinner / DONE dot /
+    ATTENTION dot / ambient terminal state.
+  • LEFT-edge (only when subagents > 0): the SUBAGENT_FRAMES twinkle,
+    painted alongside whatever's on the right so parallel work is
+    glanceable while the main turn is also live.
+A separate left-edge stripe hosts the last-focused bookmark in a different
+paint pass. Geometry knobs come from `settings.ui.layout`; glyphs and
+colors come from `badge_theme`. Row roles are defined in `repo_model`.
 """
 
 from __future__ import annotations
@@ -16,14 +20,13 @@ from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 from src.core.repo_store import Repo
 from src.ui import badge_theme
 from src.ui.badge_theme import (
-    BG_AGENT_FRAMES,
     SESSION_ACTIVE_GLYPH,
     STATUS_ATTENTION,
+    SUBAGENT_FRAMES,
     TERMINAL_ONLY_GLYPH,
     spinner_for_id,
 )
 from src.ui.repo_model import (
-    ROLE_BG_AGENTS,
     ROLE_BRANCH,
     ROLE_HAS_TERMINAL,
     ROLE_LAST_FOCUSED,
@@ -31,14 +34,21 @@ from src.ui.repo_model import (
     ROLE_REPO,
     ROLE_SESSION_ACTIVE,
     ROLE_STATUS,
+    ROLE_SUBAGENTS,
     ROLE_WORKING,
 )
 
 
-# Paint width (px) of the right-edge column for the animated glyphs — the
-# spinner, the bg-agent twinkle, and the ambient terminal-state mark. Distinct
-# from the LayoutSettings `glyph_w` (the reserved dot / static-glyph column).
+# Paint width (px) of each animated badge column. The main-turn indicator
+# sits in the outboard (rightmost) slot; the subagent twinkle sits one slot
+# inboard. Distinct from the LayoutSettings `glyph_w` (the reserved dot /
+# static-glyph column).
 BADGE_COL_W = 16
+
+# The subagent twinkle advances one frame every Nth spinner tick, so it reads
+# as a slow gentle bloom next to the faster braille spinner rather than a
+# second frenetic animation competing for attention.
+SUBAGENT_SLOWDOWN = 3
 
 
 class RepoDelegate(QStyledItemDelegate):
@@ -57,7 +67,7 @@ class RepoDelegate(QStyledItemDelegate):
     STATUS_COLORS = badge_theme.STATUS_COLORS
     STATUS_GLYPHS = badge_theme.STATUS_GLYPHS
     SPINNER_COLOR = badge_theme.SPINNER_COLOR
-    BG_AGENTS_COLOR = badge_theme.BG_AGENTS_COLOR
+    SUBAGENT_COLOR = badge_theme.SUBAGENT_COLOR
     AMBIENT_COLOR = badge_theme.AMBIENT_COLOR
     LAST_FOCUSED_BASE = badge_theme.LAST_FOCUSED_BASE
 
@@ -162,7 +172,7 @@ class RepoDelegate(QStyledItemDelegate):
         has_terminal: bool = bool(index.data(ROLE_HAS_TERMINAL))
         last_focused: bool = bool(index.data(ROLE_LAST_FOCUSED))
         path_missing: bool = bool(index.data(ROLE_PATH_MISSING))
-        bg_agents: int = int(index.data(ROLE_BG_AGENTS) or 0)
+        subagents: int = int(index.data(ROLE_SUBAGENTS) or 0)
         session_active: bool = bool(index.data(ROLE_SESSION_ACTIVE))
         # Ambient badges fire iff the row has a terminal. Without a
         # terminal there's nothing to be "in" or "exited from".
@@ -213,14 +223,18 @@ class RepoDelegate(QStyledItemDelegate):
         name_font = QFont(option.font)
         name_font.setBold(has_terminal)
         name_font.setItalic(not has_terminal)
-        show_glyph = (
+        show_right_glyph = (
             working
             or (status in self.STATUS_COLORS)
-            or bg_agents > 0
             or bool(ambient_glyph)
         )
+        show_subagent = subagents > 0
+        # Both badges live on the right edge: the main-turn glyph in the
+        # outboard (rightmost) slot, the subagent twinkle one slot inboard.
+        # Text reserves one column per occupied slot and elides to fit.
         glyph_room = self.GLYPH_W + self.GLYPH_GAP
-        text_w = max(0, rect.width() - (glyph_room if show_glyph else 0))
+        right_cols = (1 if show_right_glyph else 0) + (1 if show_subagent else 0)
+        text_w = max(0, rect.width() - right_cols * glyph_room)
 
         # Repo name (bold) on line 1. Elide at the right so we don't bleed
         # under the glyph column.
@@ -253,7 +267,29 @@ class RepoDelegate(QStyledItemDelegate):
         sub_text = painter.fontMetrics().elidedText(sub_text_raw, Qt.ElideRight, text_w)
         painter.drawText(sub_rect, Qt.AlignLeft | Qt.AlignVCenter, sub_text)
 
-        if not show_glyph:
+        # Subagent twinkle — paints whenever subagents > 0, independent of
+        # the main turn's working state. Sits one slot inboard of the
+        # main-turn glyph (or in the outboard slot when no main-turn glyph
+        # is showing). Advances at 1/SUBAGENT_SLOWDOWN the spinner rate and
+        # cycles same-center star glyphs in solarized cyan, so it reads as a
+        # slow bloom of parallel work next to the faster braille spinner.
+        if show_subagent:
+            tw_font = QFont(option.font)
+            tw_font.setPointSizeF(option.font.pointSizeF() * 1.4)
+            tw_font.setBold(True)
+            painter.setFont(tw_font)
+            painter.setPen(QPen(self.SUBAGENT_COLOR))
+            frame = SUBAGENT_FRAMES[
+                (self.spinner_frame // SUBAGENT_SLOWDOWN) % len(SUBAGENT_FRAMES)
+            ]
+            slot = 2 if show_right_glyph else 1
+            tw_rect = QRect(
+                rect.right() - slot * BADGE_COL_W, rect.top(),
+                BADGE_COL_W, rect.height(),
+            )
+            painter.drawText(tw_rect, Qt.AlignHCenter | Qt.AlignVCenter, frame)
+
+        if not show_right_glyph:
             painter.restore()
             return
 
@@ -263,9 +299,7 @@ class RepoDelegate(QStyledItemDelegate):
         #   working spinner (main turn active)
         #   color-coded status dot (DONE — never coincides with working
         #     since Stop clears working before setting done)
-        #   background-agent twinkle (main turn idle but detached subagents
-        #     still running — cycles ·→✦→✶→❋→✶→✦ in solarized cyan so the
-        #     eye reads it as live secondary work, not a main-turn spinner)
+        #   ambient terminal-state mark (no Claude alert at all)
         if working and status != STATUS_ATTENTION:
             spin_font = QFont(option.font)
             spin_font.setPointSizeF(option.font.pointSizeF() * 1.4)
@@ -278,16 +312,7 @@ class RepoDelegate(QStyledItemDelegate):
             painter.drawText(spin_rect, Qt.AlignRight | Qt.AlignVCenter, frame)
         else:
             color = self.STATUS_COLORS.get(status)
-            if color is None and bg_agents > 0:
-                bg_font = QFont(option.font)
-                bg_font.setPointSizeF(option.font.pointSizeF() * 1.4)
-                bg_font.setBold(True)
-                painter.setFont(bg_font)
-                painter.setPen(QPen(self.BG_AGENTS_COLOR))
-                frame = BG_AGENT_FRAMES[self.spinner_frame % len(BG_AGENT_FRAMES)]
-                bg_rect = QRect(rect.right() - BADGE_COL_W, rect.top(), BADGE_COL_W, rect.height())
-                painter.drawText(bg_rect, Qt.AlignRight | Qt.AlignVCenter, frame)
-            elif color is not None:
+            if color is not None:
                 if self.badge_style == "glyph":
                     glyph = self.STATUS_GLYPHS.get(status, "")
                     g_font = QFont(option.font)
@@ -318,8 +343,8 @@ class RepoDelegate(QStyledItemDelegate):
                     painter.drawEllipse(dot_rect)
             elif ambient_glyph:
                 # Lowest-priority tier: ambient terminal-state. Paints only
-                # when no working spinner, no DONE/ATTENTION dot, and no
-                # background-agent twinkle owns the column.
+                # when no working spinner and no DONE/ATTENTION dot owns
+                # the column.
                 a_font = QFont(option.font)
                 a_font.setPointSizeF(option.font.pointSizeF() * 1.4)
                 painter.setFont(a_font)

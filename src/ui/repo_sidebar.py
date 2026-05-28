@@ -57,7 +57,6 @@ from src.core.repo_store import Repo, RepoStore
 from src.ui.badge_theme import STATUS_ATTENTION, STATUS_DONE
 from src.ui.repo_delegate import RepoDelegate
 from src.ui.repo_model import (
-    ROLE_BG_AGENTS,
     ROLE_BRANCH,
     ROLE_HAS_TERMINAL,
     ROLE_LAST_FOCUSED,
@@ -65,6 +64,7 @@ from src.ui.repo_model import (
     ROLE_REPO,
     ROLE_SESSION_ACTIVE,
     ROLE_STATUS,
+    ROLE_SUBAGENTS,
     ROLE_WORKING,
     RepoListModel,
     _CLAUDE_STATE_EVENTS,
@@ -349,11 +349,11 @@ class RepoSidebar(QWidget):
         """Start the spinner ticker when any row needs animation; stop otherwise.
 
         Two independent triggers: a live working spinner OR a live
-        background-agent twinkle. Both share the same `spinner_frame`
-        counter on the delegate, so one timer drives both animations and
-        we don't pay double the repaint cost.
+        subagent twinkle. Both share the same `spinner_frame` counter on
+        the delegate, so one timer drives both animations and we don't
+        pay double the repaint cost.
         """
-        if self._model.any_working() or self._model.any_bg_agents():
+        if self._model.any_working() or self._model.any_subagents():
             if not self._spinner_timer.isActive():
                 self._spinner_timer.start()
         else:
@@ -505,12 +505,12 @@ class RepoSidebar(QWidget):
 
     def _advance_spinner(self) -> None:
         self._delegate.spinner_frame += 1
-        # Repaint rows that are working OR have a live bg-agent twinkle —
+        # Repaint rows that are working OR have a live subagent twinkle —
         # both animations share spinner_frame, so any animated row needs an
         # update each tick. Untouched rows stay quiet.
         for row in range(self._model.rowCount()):
             idx = self._model.index(row)
-            if idx.data(ROLE_WORKING) or (idx.data(ROLE_BG_AGENTS) or 0) > 0:
+            if idx.data(ROLE_WORKING) or (idx.data(ROLE_SUBAGENTS) or 0) > 0:
                 self._view.update(idx)
 
     # ── signals ──
