@@ -112,6 +112,25 @@ def test_dirty_names_aggregate_across_repos(tmp_path: Path) -> None:
     assert stats.dirty_names == ["messy"]
 
 
+def test_malformed_timestamp_is_skipped_not_raised(monkeypatch) -> None:
+    """git %ct is external input; a garbage/out-of-range value must be
+    skipped, upholding the 'never raises on a bad repo' contract."""
+    import src.core.repo_stats as rs
+
+    def fake_run_git(path, args, timeout=3):
+        if args[0] == "status":
+            return ""                                  # clean repo
+        if args[0] == "log" and "--since" in args:
+            return "99999999999999999999\nnotanumber\n"  # out-of-range + junk
+        return ""                                      # head: no recent
+
+    monkeypatch.setattr(rs, "_run_git", fake_run_git)
+    stats = rs.gather_stats([("/x", "x")], now=WED)    # must not raise
+    assert stats.repo_count == 1
+    assert stats.daily_counts == [0] * WEEK_DAYS       # bad stamps dropped
+    assert stats.commits_this_week == 0
+
+
 def test_dedups_by_realpath(tmp_path: Path) -> None:
     """Two sidebar rows on one path must count once."""
     repo = tmp_path / "r"

@@ -77,11 +77,6 @@ _ACCENT_DIRTY = QColor("#cb4b16")   # solarized orange
 _MUTED = AMBIENT_COLOR
 
 
-def _qss_card(overlay_rgb: str, radius: int = 12, alpha: float = 0.07) -> str:
-    return (f"QFrame{{background-color: rgba({overlay_rgb},{alpha});"
-            f" border-radius:{radius}px;}}")
-
-
 class BarChart(QWidget):
     """Rounded Monday-anchored week bar chart: y-axis gridlines + numbers
     on the left, weekday letters under each bar. Days after `today_idx`
@@ -281,7 +276,8 @@ class EmptyState(QWidget):
 
     def _card(self, radius: int = 12, alpha: float = 0.07) -> QFrame:
         f = QFrame(self)
-        f.setStyleSheet(_qss_card(self._overlay, radius, alpha))
+        f.setStyleSheet(f"QFrame{{background-color: rgba({self._overlay},{alpha});"
+                        f" border-radius:{radius}px;}}")
         return f
 
     def _build_pulse(self) -> QWidget:
@@ -438,9 +434,6 @@ class _StatsWorker(QThread):
         self._repos = repos
 
     def run(self) -> None:  # pragma: no cover — exercised via live runs, not offscreen
-        try:
-            stats = gather_stats(self._repos)
-        except Exception as e:
-            log.warning("repo_stats worker failed: %s", e)
-            return
-        self.done.emit(stats)
+        # gather_stats is documented exception-free on bad repos, so no
+        # blanket catch here — a real bug should surface, not be swallowed.
+        self.done.emit(gather_stats(self._repos))

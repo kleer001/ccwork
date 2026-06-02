@@ -103,11 +103,14 @@ def gather_stats(repos: Iterable[tuple[str, str]], now: datetime | None = None) 
         log_out = _run_git(path, ["log", "--since", since, "--format=%ct"])
         if log_out:
             for token in log_out.split():
+                # git %ct is external input — a malformed or out-of-range
+                # value must be skipped, not raise, so this stays the
+                # documented "never raises on a bad repo" boundary.
                 try:
-                    ct = int(token)
-                except ValueError:
+                    commit_date = datetime.fromtimestamp(int(token)).date()
+                except (ValueError, OverflowError, OSError):
                     continue
-                idx = (datetime.fromtimestamp(ct).date() - week_start).days
+                idx = (commit_date - week_start).days
                 if 0 <= idx < WEEK_DAYS:
                     stats.daily_counts[idx] += 1
 
