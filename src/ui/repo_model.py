@@ -366,6 +366,18 @@ class RepoListModel(QAbstractListModel):
     def is_session_active(self, path: str) -> bool:
         return self._session_active.get(path, False)
 
+    def clear_session(self, path: str) -> None:
+        """Tear down every per-session signal for `path`.
+
+        Same cascade as the SessionEnd hook (working spinner, DONE/
+        ATTENTION dot, leftover subagent twinkle, session-active flag).
+        Called on terminal-process exit because Claude Code does not
+        deliver a SessionEnd hook for `/exit` (anthropics/claude-code
+        #17885), so a `/exit` would otherwise leave the spinner or
+        twinkle animating forever.
+        """
+        self._set_session_active(path, False)
+
     def _set_session_active(self, path: str, active: bool) -> None:
         """Flip the session-active flag and broadcast a repaint.
 

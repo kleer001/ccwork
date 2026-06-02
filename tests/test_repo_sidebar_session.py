@@ -119,6 +119,31 @@ def test_session_end_clears_attention(qapp, tmp_path: Path) -> None:
     assert model.index(0).data(ROLE_STATUS) == ""
 
 
+def test_clear_session_tears_down_on_exit(qapp, tmp_path: Path) -> None:
+    """`/exit` gets no SessionEnd hook (anthropics/claude-code#17885), so
+    the terminal-process exit calls clear_session directly. It must match
+    the SessionEnd cascade: a stuck working spinner and a leaked subagent
+    twinkle both clear, so nothing animates forever after `/exit`."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    model = RepoListModel(_store_with(str(repo), tmp_path / "repos.json"))
+
+    payload = {
+        "tool_name": "Agent",
+        "tool_input": {"subagent_type": "general-purpose"},
+    }
+    model.apply_hook_event(EVENT_SESSION_START, str(repo))
+    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, str(repo))
+    model.apply_hook_event(EVENT_PRE_TOOL_USE, str(repo), payload)
+    assert model.any_working() is True
+    assert model.any_subagents() is True
+
+    model.clear_session(str(repo))
+    assert model.any_working() is False
+    assert model.any_subagents() is False
+    assert model.index(0).data(ROLE_SESSION_ACTIVE) is False
+
+
 def test_relaunch_clears_x_indicator(qapp, tmp_path: Path) -> None:
     """User exits Claude (⠿→▌), then types `claude` again. The next
     SessionStart must flip session_active back to True so the ⠿ returns."""

@@ -771,16 +771,18 @@ class MainWindow(QMainWindow):
         if host is not None:
             self._stack.removeWidget(host)
             host.deleteLater()
-        # Working state is path-broadcast. If another terminal at this path
-        # is still alive, leave the spinner — that other session may still
-        # be mid-turn. Otherwise clear it.
+        # Per-session state is path-broadcast. If another terminal at this
+        # path is still alive, leave it — that other session may still be
+        # mid-turn. Otherwise tear it all down: `/exit` gets no SessionEnd
+        # hook (anthropics/claude-code#17885), so the process-exit is our
+        # only chance to clear a stuck spinner or leaked subagent twinkle.
         any_alive = any(
             r.id in self._terminals and self._terminals[r.id].is_running()
             for r in self._store.repos_for_path(repo.path)
             if r.id != repo.id
         )
         if not any_alive:
-            self._sidebar.set_working(repo.path, False)
+            self._sidebar.clear_session(repo.path)
         # If the departing terminal was visible, show the placeholder so we
         # don't silently switch to some other repo's terminal.
         if was_current:

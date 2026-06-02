@@ -321,6 +321,10 @@ class RepoSidebar(QWidget):
         if working:
             self._maybe_schedule_reorder()
 
+    def clear_session(self, path: str) -> None:
+        self._model.clear_session(path)
+        self._refresh_spinner_timer()
+
     def apply_hook_event(
         self, event: str, path: str, payload: dict | None = None
     ) -> None:

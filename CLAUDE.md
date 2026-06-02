@@ -292,7 +292,14 @@ event → state mutation table. The model knows seven Claude events:
     would otherwise mask the new ▌ ambient indicator. Done inline in
     `_set_session_active(active=False)` rather than via the public
     mutators so the whole transition lands in a single dataChanged
-    emission.
+    emission. Claude Code does **not** deliver a `SessionEnd` hook for
+    the `/exit` slash command (only for Ctrl+D —
+    anthropics/claude-code#17885), so the same cascade is run as a
+    fallback from `MainWindow._on_terminal_finished` via
+    `RepoListModel.clear_session(path)` when the row's xterm process
+    exits and no duplicate terminal at that path is still alive.
+    Otherwise an `/exit` mid-turn (or with a subagent in flight) would
+    leave the spinner / twinkle animating forever.
 
 `MainWindow` no longer keeps a parallel id-keyed `_working` set; the
 quit-confirm derives its list on demand via `model.is_working(path)`
