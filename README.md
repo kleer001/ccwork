@@ -10,6 +10,13 @@ driven by Claude Code's Stop/Notification hooks.
   Click a repo to bring up its terminal; right-click for reload / remove.
   Repos you haven't opened yet this session render in regular italic;
   once a terminal exists they flip to bold upright.
+- **Splash dashboard** — when no repo is selected (a fresh launch, or
+  after a terminal closes) the main pane shows the ccwork logo, keyboard
+  hints, and a live "git pulse" built entirely from local git: this
+  week's commit total with a Monday-anchored daily bar chart, how many
+  repos you track, which ones have uncommitted changes, your most recent
+  commit, and a rotating tip. No network, no telemetry — just `git` over
+  the repos you already track.
 - **Multiple sessions per repo** — `Ctrl+Shift+O` the same repo twice to spawn
   parallel Claude sessions on it. Duplicates get Roman-numeral suffixes
   (`myrepo (I)`, `myrepo (II)`, …); remove all but one and the suffix
@@ -81,7 +88,7 @@ Open with the gear button or `Ctrl+Shift+P`. Settings persist to
   variant is more legible at narrow sidebar widths and colorblind-friendlier.
   Hover any row for a tooltip describing the current state.
 - **Reopen the last-used repo on launch** — restores focus + terminal on
-  startup.
+  startup. Turn it off to land on the splash dashboard every launch.
 - **Show desktop notifications** — gates `notify-send` pop-ups from
   `ccwork-hook-sink`. In-window indicators (badges, sidebar colors) stay
   on regardless. Mirrored by the 🔊 / 🔇 toggle in the top bar — both
