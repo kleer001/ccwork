@@ -1,10 +1,12 @@
-"""Tests for the empty-state placeholder shown when no terminal is current.
+"""Tests for the empty-state / splash placeholder shown when no terminal
+is current.
 
-The widget is static (no signals, no per-state variants). What we lock
-down here is: the heading text, the version-and-tagline subhead, the
-exact set of hints shipped (so adding one is a deliberate spec edit,
-not a stealthy regression), and the silent-hide behavior when the logo
-SVG isn't where we expect it.
+What we lock down: the heading text, the version-and-tagline subhead,
+the exact set of static hints shipped (so adding one is a deliberate
+spec edit, not a stealthy regression), the silent-hide behavior when the
+logo SVG isn't where we expect it, and the live git-pulse block —
+hidden until stats arrive, populated from a RepoStats, and the rotating
+tip cycling through TIP_LINES.
 """
 
 from __future__ import annotations
@@ -17,7 +19,8 @@ from PySide6.QtWidgets import QApplication
 
 from src.core.repo_store import RepoStore
 from src.core.settings import Settings
-from src.ui.empty_state import EmptyState, HINT_LINES
+from src.core.repo_stats import RecentActivity, RepoStats
+from src.ui.empty_state import EmptyState, HINT_LINES, TIP_LINES
 
 from tests.conftest import StubHookServer
 
@@ -82,3 +85,57 @@ def test_shown_at_startup_when_no_repos(
         assert isinstance(win._empty_placeholder, EmptyState)
     finally:
         win.close()
+
+
+# ── git-pulse bento ──
+
+def test_pulse_hidden_until_populated(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    assert es._pulse.isHidden()
+
+
+def test_apply_stats_populates_tiles(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    stats = RepoStats(
+        repo_count=3,
+        dirty_count=2,
+        dirty_names=["ccwork", "image_gen"],
+        commits_this_week=5,
+        daily_counts=[0, 1, 0, 2, 0, 1, 1],
+        today_index=3,
+        recent=RecentActivity(name="ccwork", subject="fix thing", ts=1_700_000_000),
+    )
+    es._apply_stats(stats)
+    assert es._week_total.text() == "5"
+    assert es._repos_num.text() == "3"
+    assert es._dirty_num.text() == "2"
+    # uncommitted repos are listed by name
+    listed = [lbl.text() for lbl in es._dirty_name_labels]
+    assert listed == ["• ccwork", "• image_gen"]
+    assert es._chart._counts == [0, 1, 0, 2, 0, 1, 1]
+    assert es._chart._today_idx == 3
+    assert "fix thing" in es._recent.text()
+    assert not es._pulse.isHidden()
+
+
+def test_apply_stats_rebuilds_dirty_list(qapp: QApplication) -> None:
+    """A second sweep must replace the prior names, not append."""
+    es = EmptyState(version="0.1.0")
+    es._apply_stats(RepoStats(repo_count=2, dirty_count=1, dirty_names=["a"]))
+    es._apply_stats(RepoStats(repo_count=2, dirty_count=2, dirty_names=["b", "c"]))
+    assert [lbl.text() for lbl in es._dirty_name_labels] == ["• b", "• c"]
+
+
+def test_apply_stats_no_repos_stays_hidden(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    es._apply_stats(RepoStats())  # repo_count == 0
+    assert es._pulse.isHidden()
+
+
+def test_tip_cycles_through_lines(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    seen = {es._tip.text()}
+    for _ in range(len(TIP_LINES) + 1):
+        es._next_tip()
+        seen.add(es._tip.text())
+    assert seen == set(TIP_LINES)

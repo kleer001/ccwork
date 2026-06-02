@@ -60,7 +60,21 @@ collaborate:
 ### 1. UI layer (`src/ui/`)
 
 `MainWindow` lays out a sidebar + a `QStackedWidget` of `TerminalHost`s (one
-per repo, swapped on selection). There is no menu bar — Preferences /
+per repo, swapped on selection). Index 0 of the stack is `EmptyState`
+(`src/ui/empty_state.py`) — the splash shown on a cold start with nothing
+selected and whenever the current terminal exits. Auto-opening the last
+repo at launch is gated by `ui.restore_last_repo` (default on); when off,
+ccwork lands on the splash. Below the static logo + hint lines the splash
+paints a live "git pulse" bento: a hero tile with the week's commit total
+and a `BarChart` (Monday-anchored — `daily_counts` is always 7 wide with
+weekday letters and y-axis gridlines; days after `today_index` render
+blank so the chart never changes width), a repos count, the list of repos
+with uncommitted changes, the most-recent commit, and a rotating tip.
+Stats come from `src/core/repo_stats.py` (`gather_stats`, pure, shells out
+to git like `repo_store` and skips unreadable repos), gathered on a
+short-lived `_StatsWorker` QThread each time the splash is shown so git
+forks never block the GUI. Bento accents are sourced from `badge_theme`;
+card fills are translucent overlays so they read on any palette. There is no menu bar — Preferences /
 Add Repo / Quit / F1 / row-jumps / cycle / zoom are bound via a passive
 `XGrabKey` on MainWindow's own X window plus a single
 `QAbstractNativeEventFilter` on the `QApplication` (see

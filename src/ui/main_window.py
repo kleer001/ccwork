@@ -653,7 +653,12 @@ class MainWindow(QMainWindow):
         with no repos, and a terminal that just exited while it was
         visible). See `src/ui/empty_state.py` for the layout.
         """
-        return EmptyState(version=__version__, logo_path=_LOGO_PATH, parent=self)
+        return EmptyState(
+            version=__version__,
+            logo_path=_LOGO_PATH,
+            parent=self,
+            repos_provider=lambda: [(r.path, r.display_name) for r in self._store.repos],
+        )
 
     def _ensure_terminal(self, repo: Repo) -> TerminalHost:
         """Lazy-spawn a TerminalHost for the given repo."""
