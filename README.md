@@ -1,5 +1,19 @@
 # ccwork
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="logo/banner.svg">
+    <img alt="ccwork — Many repos. Real terminals. Live alerts." src="logo/banner_light.svg" width="640">
+  </picture>
+</p>
+
+<p align="center">
+  <a href="https://github.com/kleer001/ccwork/actions/workflows/test.yml"><img alt="Tests" src="https://github.com/kleer001/ccwork/actions/workflows/test.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue.svg">
+  <img alt="Platform: Linux · X11/XWayland" src="https://img.shields.io/badge/platform-Linux%20%C2%B7%20X11%2FXWayland-lightgrey.svg">
+</p>
+
 A Qt desktop GUI for running Claude Code across many repos. One window, a
 clickable sidebar of repos, real embedded terminals, and a live alerts panel
 driven by Claude Code's Stop/Notification hooks.
