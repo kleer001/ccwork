@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 260" width="900" height="260">
+  <defs>
+    <style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;600;700&amp;display=swap');</style>
+  </defs>
+  <rect width="900" height="260" rx="12" fill="#ffffff"/>
+  <rect width="900" height="260" rx="12" fill="none" stroke="#e0e0e0" stroke-width="1"/>
+
+  <!-- ccwork mark: dark rounded square with three chevrons (gray → tan → orange),
+       the v2-icon scaled from its native 64×64 to a 200px square. -->
+  <g transform="translate(40,30) scale(3.125)">
+    <rect x="2" y="2" width="60" height="60" rx="10" fill="#1a1a1a"/>
+    <path d="M 13,21 L 31,29 L 31,35 L 13,43 L 13,38 L 27,32 L 13,26 Z" fill="#888888"/>
+    <path d="M 23,21 L 41,29 L 41,35 L 23,43 L 23,38 L 37,32 L 23,26 Z" fill="#b89968"/>
+    <path d="M 33,21 L 51,29 L 51,35 L 33,43 L 33,38 L 47,32 L 33,26 Z" fill="#e07820"/>
+  </g>
+
+  <text x="286" y="120" font-family="Inter, Helvetica, Arial, sans-serif" font-weight="700" font-size="58" fill="#1a1a1a" letter-spacing="1">ccwork</text>
+  <text x="288" y="164" font-family="Inter, Helvetica, Arial, sans-serif" font-weight="600" font-size="26" fill="#e07820">Many repos. Real terminals. Live alerts.</text>
+  <rect x="289" y="182" width="150" height="3" rx="1.5" fill="#e07820" opacity="0.6"/>
+</svg>
