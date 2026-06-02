@@ -1,11 +1,11 @@
 """Item delegate that paints each repo row: name + branch + edge badges.
 
-Two-line rows with two reserved badge columns:
-  • RIGHT-edge: main-turn indicators — working spinner / DONE dot /
-    ATTENTION dot / ambient terminal state.
-  • LEFT-edge (only when subagents > 0): the SUBAGENT_FRAMES twinkle,
-    painted alongside whatever's on the right so parallel work is
-    glanceable while the main turn is also live.
+Two-line rows with two reserved right-edge badge slots:
+  • OUTBOARD (rightmost): main-turn indicators — working spinner / DONE
+    dot / ATTENTION dot / ambient terminal state.
+  • INBOARD (one slot to its left, only when subagents > 0): the
+    SUBAGENT_FRAMES twinkle, painted alongside whatever's outboard so
+    parallel work is glanceable while the main turn is also live.
 A separate left-edge stripe hosts the last-focused bookmark in a different
 paint pass. Geometry knobs come from `settings.ui.layout`; glyphs and
 colors come from `badge_theme`. Row roles are defined in `repo_model`.
@@ -49,6 +49,10 @@ BADGE_COL_W = 16
 # as a slow gentle bloom next to the faster braille spinner rather than a
 # second frenetic animation competing for attention.
 SUBAGENT_SLOWDOWN = 3
+
+# Animated badge glyphs (spinner, twinkle, status glyph, ambient mark) paint
+# enlarged relative to the row font so they read as marks, not body text.
+GLYPH_FONT_SCALE = 1.4
 
 
 class RepoDelegate(QStyledItemDelegate):
@@ -275,7 +279,7 @@ class RepoDelegate(QStyledItemDelegate):
         # slow bloom of parallel work next to the faster braille spinner.
         if show_subagent:
             tw_font = QFont(option.font)
-            tw_font.setPointSizeF(option.font.pointSizeF() * 1.4)
+            tw_font.setPointSizeF(option.font.pointSizeF() * GLYPH_FONT_SCALE)
             tw_font.setBold(True)
             painter.setFont(tw_font)
             painter.setPen(QPen(self.SUBAGENT_COLOR))
@@ -302,7 +306,7 @@ class RepoDelegate(QStyledItemDelegate):
         #   ambient terminal-state mark (no Claude alert at all)
         if working and status != STATUS_ATTENTION:
             spin_font = QFont(option.font)
-            spin_font.setPointSizeF(option.font.pointSizeF() * 1.4)
+            spin_font.setPointSizeF(option.font.pointSizeF() * GLYPH_FONT_SCALE)
             spin_font.setBold(True)
             painter.setFont(spin_font)
             painter.setPen(QPen(self.SPINNER_COLOR))
@@ -316,7 +320,7 @@ class RepoDelegate(QStyledItemDelegate):
                 if self.badge_style == "glyph":
                     glyph = self.STATUS_GLYPHS.get(status, "")
                     g_font = QFont(option.font)
-                    g_font.setPointSizeF(option.font.pointSizeF() * 1.4)
+                    g_font.setPointSizeF(option.font.pointSizeF() * GLYPH_FONT_SCALE)
                     g_font.setBold(True)
                     painter.setFont(g_font)
                     painter.setPen(QPen(color))
@@ -346,7 +350,7 @@ class RepoDelegate(QStyledItemDelegate):
                 # when no working spinner and no DONE/ATTENTION dot owns
                 # the column.
                 a_font = QFont(option.font)
-                a_font.setPointSizeF(option.font.pointSizeF() * 1.4)
+                a_font.setPointSizeF(option.font.pointSizeF() * GLYPH_FONT_SCALE)
                 painter.setFont(a_font)
                 painter.setPen(QPen(self.AMBIENT_COLOR))
                 a_rect = QRect(rect.right() - BADGE_COL_W, rect.top(), BADGE_COL_W, rect.height())

@@ -99,9 +99,10 @@ def _is_subagent_dispatch(payload: dict | None) -> bool:
     Claude Code currently leniently matches against both names.
 
     We do NOT filter on `tool_input.run_in_background`: the subagent
-    indicator paints on the left while the main turn's braille spinner
-    paints on the right, so foreground and background subagents both
-    deserve their own glyph for the duration of the dispatch.
+    indicator paints in the inboard right-edge slot while the main turn's
+    braille spinner paints in the outboard slot, so foreground and
+    background subagents both deserve their own glyph for the duration of
+    the dispatch.
     """
     if not isinstance(payload, dict):
         return False
@@ -171,10 +172,11 @@ class RepoListModel(QAbstractListModel):
         # running. Incremented on PreToolUse(tool=Task|Agent), decremented on
         # SubagentStop (clamped at 0). Path-keyed unnormalized to match
         # _status / _last_activity. Drives the SUBAGENT_FRAMES twinkle —
-        # painted on the LEFT badge column while a subagent is in flight,
-        # independent of the main turn's working state (which lives on the
-        # right). The two indicators are visually separate so the user can
-        # tell at a glance that Claude has dispatched parallel work.
+        # painted in the inboard right-edge slot while a subagent is in
+        # flight, independent of the main turn's working state (whose glyph
+        # sits in the outboard slot). The two indicators occupy separate
+        # slots so the user can tell at a glance that Claude has dispatched
+        # parallel work.
         self._subagents: dict[str, int] = {}
         # Per-path live-session flag. True between SessionStart and
         # SessionEnd. Drives the ambient terminal-state badge (⠿ when a
