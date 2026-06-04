@@ -16,3 +16,19 @@ if [ -n "$_ccwork_bin" ]; then
     export PATH="$_ccwork_bin:$PATH"
 fi
 unset _ccwork_bin
+
+# ccwork "Launch" (crash-recovery resume): the GUI sets CCWORK_RESUME_CMD
+# when the user clicks Launch on the splash banner. Present it HERE — at the
+# tail of init, after /etc/bash.bashrc and the user's ~/.bashrc have already
+# printed — so the banner isn't buried in shell-startup output. Then seed the
+# command into history so a single Up-arrow + Enter runs it. We do not
+# auto-run: the user stays in control.
+if [ -n "${CCWORK_RESUME_CMD:-}" ]; then
+    printf '\n══════════════════════════════════════════════\n'
+    printf "  HERE'S YOUR COMMAND TO CONTINUE TO WORK:\n\n"
+    printf '      %s\n\n' "$CCWORK_RESUME_CMD"
+    printf '  (press ↑ then Enter to run it)\n'
+    printf '══════════════════════════════════════════════\n\n'
+    history -s "$CCWORK_RESUME_CMD"
+    unset CCWORK_RESUME_CMD
+fi

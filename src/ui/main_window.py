@@ -46,9 +46,11 @@ from PySide6.QtWidgets import (
 from pathlib import Path
 
 from src import __version__
+from src.core import session_recovery
 from src.core.hook_server import (
     EVENT_NOTIFICATION,
     EVENT_REPO_ADDED,
+    EVENT_SESSION_END,
     EVENT_STOP,
     EVENT_USER_PROMPT_SUBMIT,
     IDLE_EVENTS,
@@ -59,7 +61,7 @@ from src.core.key_grab import (
     MainWindowSlots,
     build_main_window_bindings,
 )
-from src.core.repo_store import Repo, RepoStore
+from src.core.repo_store import Repo, RepoStore, is_git_root
 from src.core.settings import Settings, load_settings, save_settings
 from src.core.terminal_session import build_session
 from src.core import x11
@@ -154,6 +156,16 @@ class MainWindow(QMainWindow):
         self._empty_placeholder = self._make_empty_placeholder()
         self._stack.addWidget(self._empty_placeholder)
         self._stack.setCurrentWidget(self._empty_placeholder)
+        self._empty_placeholder.recovery_dismissed.connect(
+            lambda: session_recovery.dismiss())
+        self._empty_placeholder.status_message.connect(
+            lambda m: self.statusBar().showMessage(m, 2000))
+        self._empty_placeholder.resume_requested.connect(self._on_resume_requested)
+        # Sessions left "open" by a previous run that didn't shut down
+        # cleanly become the splash crash-recovery banner.
+        crashed = session_recovery.promote_crashes()
+        if crashed:
+            self._empty_placeholder.show_recovery(crashed)
 
         splitter = QSplitter(Qt.Horizontal, self)
         self._splitter = splitter
@@ -660,12 +672,15 @@ class MainWindow(QMainWindow):
             repos_provider=lambda: [(r.path, r.display_name) for r in self._store.repos],
         )
 
-    def _ensure_terminal(self, repo: Repo) -> TerminalHost:
-        """Lazy-spawn a TerminalHost for the given repo."""
+    def _ensure_terminal(self, repo: Repo,
+                         extra_env: dict[str, str] | None = None) -> TerminalHost:
+        """Lazy-spawn a TerminalHost for the given repo. `extra_env` is passed
+        through to the spawn (only honored on first spawn — a pre-existing host
+        is returned untouched)."""
         host = self._terminals.get(repo.id)
         if host is not None:
             return host
-        spec = build_session(repo, xterm_settings=self._settings.xterm)
+        spec = build_session(repo, xterm_settings=self._settings.xterm, extra_env=extra_env)
         host = TerminalHost(
             argv=spec.argv,
             env=spec.env,
@@ -709,6 +724,37 @@ class MainWindow(QMainWindow):
 
     def _select_repo(self, repo: Repo) -> None:
         """Convenience for keyboard-cycle: pick a specific repo by id."""
+        self._sidebar.select_id(repo.id)
+
+    def _on_resume_requested(self, path: str, session_id: str) -> None:
+        """Crash-banner Launch: open a terminal for `path` and present
+        `claude --resume <id>` ready to run. Reuses the row if one exists,
+        else re-adds it when the directory is still a git root."""
+        repos = self._store.repos_for_path(path)
+        if repos:
+            repo = repos[0]
+        elif is_git_root(path):
+            repo = self._sidebar.model.add_repo(path)
+        else:
+            self.statusBar().showMessage(
+                f"Can't launch — {Path(path).name} is no longer a git repo", 3500)
+            return
+
+        cmd = f"claude --resume {session_id}"
+        existing = self._terminals.get(repo.id)
+        if existing is not None and existing.is_running():
+            # Live shell already at a prompt — pre-type the command (no
+            # newline) so the user reviews it and presses Enter. No startup
+            # race here, so no banner is needed.
+            self._sidebar.select_id(repo.id)
+            existing.paste_text(cmd)
+            return
+
+        # Fresh spawn: hand the command to the shell via the environment so
+        # `bin/ccwork-bashrc` presents it AFTER init (deterministic — no PTY
+        # race against dotfile output, unlike blind-typing). select_id then
+        # handles title / focus / last-focused on the now-existing host.
+        self._ensure_terminal(repo, extra_env={"CCWORK_RESUME_CMD": cmd})
         self._sidebar.select_id(repo.id)
 
     def changeEvent(self, event) -> None:
@@ -783,6 +829,9 @@ class MainWindow(QMainWindow):
         )
         if not any_alive:
             self._sidebar.clear_session(repo.path)
+            # The last live terminal at this path is gone — a clean end, so
+            # drop it from crash tracking (only a crash leaves it behind).
+            session_recovery.clear_open(repo.path)
         # If the departing terminal was visible, show the placeholder so we
         # don't silently switch to some other repo's terminal.
         if was_current:
@@ -826,6 +875,15 @@ class MainWindow(QMainWindow):
             return
 
         self._sidebar.apply_hook_event(event, str(cwd), payload)
+
+        # Crash-recovery bookkeeping. Every Claude hook carries a session_id;
+        # record_open is idempotent (writes only when the id changes) so
+        # calling it per event is cheap. SessionEnd is a clean end — drop it.
+        sid = payload.get("session_id")
+        if event == EVENT_SESSION_END:
+            session_recovery.clear_open(str(cwd))
+        elif sid:
+            session_recovery.record_open(str(cwd), str(sid), matching[0].display_name)
 
         if event in IDLE_EVENTS:
             # Bell dot: glanceable "something happened" signal even when
@@ -875,6 +933,9 @@ class MainWindow(QMainWindow):
         # the path past the working-session prompt so a cancelled quit
         # doesn't persist a transient size.
         self._persist_window_state()
+        # Clean quit: empty the live-session bucket so next launch shows no
+        # crash banner. (Leaves the dismiss-gated recovery snapshot alone.)
+        session_recovery.clear_all_open()
         for host in list(self._terminals.values()):
             host.stop()
         self._terminals.clear()

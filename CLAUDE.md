@@ -74,7 +74,22 @@ Stats come from `src/core/repo_stats.py` (`gather_stats`, pure, shells out
 to git like `repo_store` and skips unreadable repos), gathered on a
 short-lived `_StatsWorker` QThread each time the splash is shown so git
 forks never block the GUI. Bento accents are sourced from `badge_theme`;
-card fills are translucent overlays so they read on any palette. There is no menu bar — Preferences /
+card fills are translucent overlays so they read on any palette. Above
+the logo the splash can paint a **crash-recovery banner**: after an
+unclean shutdown it lists the Claude sessions that were open, each with a
+**Copy** button (session ID → clipboard) and a **Launch** button (opens a
+terminal for that repo running `claude --resume <id>`), plus Dismiss.
+Visibility is driven by `src/core/session_recovery.py` (see core domain);
+the banner stays hidden on a normal launch. `EmptyState` is
+display-agnostic — it emits `status_message` (clipboard confirmations,
+flashed in MainWindow's status bar), `recovery_dismissed` (clears the
+snapshot), and `resume_requested(path, session_id)` (handled by
+`MainWindow._on_resume_requested`, which spawns the repo's terminal with
+`CCWORK_RESUME_CMD` in its env — `bin/ccwork-bashrc` presents that command
+after shell init and seeds it into history so ↑+Enter runs it, avoiding
+the PTY race that blind-typing hit; a *live* terminal already at a prompt
+is instead pre-typed via `paste_text`) rather than reaching for a status
+bar or terminal itself. There is no menu bar — Preferences /
 Add Repo / Quit / F1 / row-jumps / cycle / zoom are bound via a passive
 `XGrabKey` on MainWindow's own X window plus a single
 `QAbstractNativeEventFilter` on the `QApplication` (see
@@ -230,6 +245,18 @@ but no widgets):
   returns the list of knobs that couldn't be applied.
 - `x11.py` — minimal `ctypes` wrapper around libX11 for window-geometry
   ops. Everything else goes through Qt.
+- `session_recovery.py` — tracks which Claude sessions are open so the
+  splash can offer `claude --resume` IDs after a crash. State is
+  `~/.config/ccwork/open_sessions.json` (atomic writes, corrupt-tolerant)
+  with two path-keyed buckets: `open` (live sessions — upserted from hook
+  `session_id`s by `MainWindow._on_hook_event`, dropped on `SessionEnd` /
+  terminal exit, emptied on a clean `closeEvent`) and `recovery` (the
+  dismiss-gated banner snapshot). At startup `promote_crashes()` folds any
+  *leftover* `open` entries — a clean quit would have emptied them, so
+  their presence means the last run died — into `recovery` and returns
+  them for the banner. The file lives in the config dir, not
+  `$XDG_RUNTIME_DIR`, so it survives a reboot (the power-loss case). We
+  resume the *conversation*, never the dead PTY.
 
 ### 3. External integration (`bin/`)
 

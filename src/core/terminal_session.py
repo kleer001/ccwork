@@ -37,6 +37,7 @@ def build_session(
     *,
     xterm_settings: XtermSettings | None = None,
     gui_marker: bool = True,
+    extra_env: dict[str, str] | None = None,
 ) -> SessionSpec:
     """Return the xterm command pieces for this repo.
 
@@ -46,6 +47,10 @@ def build_session(
 
     `gui_marker` sets CCWORK_GUI=1 so the `claude` wrapper can tell it is
     being invoked from inside the GUI and ping the hook socket.
+
+    `extra_env` is merged in last (e.g. `CCWORK_RESUME_CMD` for the splash
+    "Launch" button, which `bin/ccwork-bashrc` reads to present a resume
+    command after shell init).
     """
     inner_cmd = _inner_command()
     xterm_flags = (xterm_settings or XtermSettings()).to_xterm_args()
@@ -57,6 +62,8 @@ def build_session(
     env: dict[str, str] = {}
     if gui_marker:
         env["CCWORK_GUI"] = "1"
+    if extra_env:
+        env.update(extra_env)
 
     return SessionSpec(argv=xterm_tail, cwd=repo.path, env=env)
 

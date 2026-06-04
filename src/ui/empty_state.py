@@ -29,10 +29,13 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QRectF, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPalette, QPixmap
+from PySide6.QtGui import (
+    QColor, QFont, QGuiApplication, QPainter, QPainterPath, QPalette, QPixmap,
+)
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
+    QToolButton, QVBoxLayout, QWidget,
 )
 
 from src.core.repo_stats import RepoStats, gather_stats, relative_time
@@ -164,7 +167,17 @@ class EmptyState(QWidget):
         ``_pulse`` — the bento container (hidden until stats arrive).
         ``_chart`` / ``_week_total`` / ``_repos_num`` / ``_dirty_num`` /
         ``_recent`` / ``_tip`` — the populated stat widgets.
+        ``_recovery`` — the crash-recovery banner (hidden until populated).
     """
+
+    # Emitted when the user clicks Dismiss on the crash banner, and when a
+    # copy button puts text on the clipboard. The widget owns no status bar;
+    # MainWindow clears the recovery file / flashes a confirmation.
+    recovery_dismissed = Signal()
+    status_message = Signal(str)
+    # (repo path, session id) — Launch was clicked; MainWindow opens a
+    # terminal there running `claude --resume <id>`.
+    resume_requested = Signal(str, str)
 
     LOGO_PX = 96
 
@@ -193,6 +206,12 @@ class EmptyState(QWidget):
         outer.addStretch(1)
 
         column.addStretch(1)
+
+        # Crash-recovery banner: sits above the logo so it's the first thing
+        # read after an unclean shutdown. Hidden until `show_recovery`.
+        self._recovery = self._build_recovery()
+        self._recovery.hide()
+        column.addWidget(self._recovery, 0, Qt.AlignHCenter)
 
         self._logo = QLabel(self)
         self._logo.setAlignment(Qt.AlignCenter)
@@ -340,6 +359,96 @@ class EmptyState(QWidget):
         self._recent_card = foot
         v.addWidget(foot)
         return root
+
+    # ── crash-recovery banner ──
+
+    def _build_recovery(self) -> QFrame:
+        """The crash banner skeleton. Rows land in `show_recovery`."""
+        card = self._card(12, 0.12)
+        card.setFixedWidth(440)
+        v = QVBoxLayout(card)
+        v.setContentsMargins(16, 12, 16, 12)
+        v.setSpacing(6)
+
+        hdr = QHBoxLayout(); hdr.setSpacing(8)
+        hdr.addWidget(self._label("⚠", color=_ACCENT_DIRTY, pt=14, bold=True))
+        hdr.addWidget(self._label("ccwork didn't close cleanly",
+                                  color=self._txt, pt=11, bold=True))
+        hdr.addStretch(1)
+        v.addLayout(hdr)
+
+        v.addWidget(self._label("Claude sessions you can resume:",
+                                color=_MUTED, pt=9))
+
+        self._recovery_rows_lay = QVBoxLayout()
+        self._recovery_rows_lay.setSpacing(2)
+        self._recovery_row_widgets: list[QWidget] = []
+        v.addLayout(self._recovery_rows_lay)
+
+        foot = QHBoxLayout(); foot.addStretch(1)
+        dismiss = QToolButton(card)
+        dismiss.setText("Dismiss")
+        dismiss.setAutoRaise(True)
+        dismiss.setCursor(Qt.PointingHandCursor)
+        dismiss.clicked.connect(lambda _=False: self._on_dismiss())
+        foot.addWidget(dismiss)
+        v.addLayout(foot)
+        return card
+
+    def show_recovery(self, entries: list[dict]) -> None:
+        """Populate and reveal the banner. `entries` is a list of
+        {"name", "id"} dicts (the "path" key is ignored here). An empty
+        list hides the banner."""
+        for w in self._recovery_row_widgets:
+            self._recovery_rows_lay.removeWidget(w)
+            w.deleteLater()
+        self._recovery_row_widgets = []
+        for e in entries:
+            row = self._make_recovery_row(
+                str(e.get("name", "")), str(e.get("id", "")), str(e.get("path", "")))
+            self._recovery_rows_lay.addWidget(row)
+            self._recovery_row_widgets.append(row)
+        self._recovery.setVisible(bool(entries))
+
+    def _make_recovery_row(self, name: str, session_id: str, path: str) -> QWidget:
+        row = QWidget(self)
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(8)
+        h.addWidget(self._label(name or "(unknown repo)", color=self._txt, pt=10, bold=True))
+        h.addStretch(1)
+
+        short = session_id if len(session_id) <= 16 else session_id[:15] + "…"
+        id_lbl = self._label(short, color=_MUTED, pt=9)
+        mono = QFont("monospace"); mono.setPointSizeF(9.0)
+        id_lbl.setFont(mono)
+        id_lbl.setToolTip(session_id)
+        h.addWidget(id_lbl)
+
+        copy_btn = QPushButton("Copy", self)
+        copy_btn.setToolTip("Copy this session's ID to the clipboard")
+        copy_btn.setCursor(Qt.PointingHandCursor)
+        copy_btn.clicked.connect(
+            lambda _=False, s=session_id: self._copy(s, "Session ID copied")
+        )
+        h.addWidget(copy_btn)
+
+        launch_btn = QPushButton("Launch", self)
+        launch_btn.setToolTip("Open a terminal here running `claude --resume`")
+        launch_btn.setCursor(Qt.PointingHandCursor)
+        launch_btn.clicked.connect(
+            lambda _=False, p=path, s=session_id: self.resume_requested.emit(p, s)
+        )
+        h.addWidget(launch_btn)
+        return row
+
+    def _copy(self, text: str, message: str) -> None:
+        QGuiApplication.clipboard().setText(text)
+        self.status_message.emit(message)
+
+    def _on_dismiss(self) -> None:
+        self._recovery.hide()
+        self.recovery_dismissed.emit()
 
     def _render_logo(self, path: Path) -> QPixmap | None:
         """Rasterize the SVG to a square LOGO_PX pixmap. Returns None on

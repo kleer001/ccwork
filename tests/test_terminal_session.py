@@ -60,3 +60,14 @@ def test_settings_flags_are_applied() -> None:
 def test_gui_marker_toggleable() -> None:
     spec = terminal_session.build_session(Repo(path="/fake/repo"), gui_marker=False)
     assert spec.env == {}
+
+
+def test_extra_env_merges_with_gui_marker() -> None:
+    spec = terminal_session.build_session(
+        Repo(path="/fake/repo"),
+        extra_env={"CCWORK_RESUME_CMD": "claude --resume abc"},
+    )
+    assert spec.env == {
+        "CCWORK_GUI": "1",
+        "CCWORK_RESUME_CMD": "claude --resume abc",
+    }

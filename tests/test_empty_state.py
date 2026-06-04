@@ -139,3 +139,75 @@ def test_tip_cycles_through_lines(qapp: QApplication) -> None:
         es._next_tip()
         seen.add(es._tip.text())
     assert seen == set(TIP_LINES)
+
+
+def test_recovery_banner_hidden_by_default(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    assert es._recovery.isHidden()
+
+
+def test_show_recovery_populates_rows(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    es.show_recovery([
+        {"path": "/r/a", "name": "alpha", "id": "sid-1"},
+        {"path": "/r/b", "name": "beta", "id": "sid-2"},
+    ])
+    assert not es._recovery.isHidden()
+    assert len(es._recovery_row_widgets) == 2
+
+
+def test_show_recovery_empty_hides(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    es.show_recovery([{"path": "/r/a", "name": "alpha", "id": "sid-1"}])
+    es.show_recovery([])
+    assert es._recovery.isHidden()
+    assert es._recovery_row_widgets == []
+
+
+def test_dismiss_emits_and_hides(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    es.show_recovery([{"path": "/r/a", "name": "alpha", "id": "sid-1"}])
+    fired = []
+    es.recovery_dismissed.connect(lambda: fired.append(True))
+    es._on_dismiss()
+    assert fired == [True]
+    assert es._recovery.isHidden()
+
+
+def test_copy_puts_text_on_clipboard_and_signals(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    msgs = []
+    es.status_message.connect(msgs.append)
+    es._copy("claude --resume sid-1", "Resume command copied")
+    assert QApplication.clipboard().text() == "claude --resume sid-1"
+    assert msgs == ["Resume command copied"]
+
+
+def _row_button(es, row_idx: int, label: str):
+    from PySide6.QtWidgets import QPushButton
+    btns = es._recovery_row_widgets[row_idx].findChildren(QPushButton)
+    return next(b for b in btns if b.text() == label)
+
+
+def test_rows_have_labeled_copy_and_launch_buttons(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    es.show_recovery([{"path": "/r/a", "name": "alpha", "id": "sid-1"}])
+    from PySide6.QtWidgets import QPushButton
+    labels = {b.text() for b in es._recovery_row_widgets[0].findChildren(QPushButton)}
+    assert labels == {"Copy", "Launch"}
+
+
+def test_copy_button_copies_session_id(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    es.show_recovery([{"path": "/r/a", "name": "alpha", "id": "sid-xyz"}])
+    _row_button(es, 0, "Copy").click()
+    assert QApplication.clipboard().text() == "sid-xyz"
+
+
+def test_launch_button_emits_resume_requested(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    got = []
+    es.resume_requested.connect(lambda p, s: got.append((p, s)))
+    es.show_recovery([{"path": "/r/a", "name": "alpha", "id": "sid-1"}])
+    _row_button(es, 0, "Launch").click()
+    assert got == [("/r/a", "sid-1")]
