@@ -159,6 +159,48 @@ def test_relaunch_clears_x_indicator(qapp, tmp_path: Path) -> None:
     assert model.index(0).data(ROLE_SESSION_ACTIVE) is True
 
 
+def test_sibling_session_end_keeps_active_session_working(qapp, tmp_path: Path) -> None:
+    """Two `claude` processes share one repo dir. One is mid-turn (working
+    spinner up); a *different* session on the same path exits. State is
+    path-keyed, so the dead session's SessionEnd must NOT cascade-clear the
+    live session's working flag — the bug where an active row reverted to the
+    ▌ "bare terminal" badge mid-turn."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    model = RepoListModel(_store_with(str(repo), tmp_path / "repos.json"))
+
+    live = {"session_id": "live-aaa"}
+    other = {"session_id": "other-bbb"}
+    model.apply_hook_event(EVENT_SESSION_START, str(repo), live)
+    model.apply_hook_event(EVENT_SESSION_START, str(repo), other)
+    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, str(repo))
+    assert model.index(0).data(ROLE_WORKING) is True
+
+    # The idle sibling exits. The working session keeps spinning.
+    model.apply_hook_event(EVENT_SESSION_END, str(repo), other)
+    assert model.index(0).data(ROLE_WORKING) is True
+    assert model.index(0).data(ROLE_SESSION_ACTIVE) is True
+
+    # When the last session ends, the cascade runs as before.
+    model.apply_hook_event(EVENT_SESSION_END, str(repo), live)
+    assert model.index(0).data(ROLE_WORKING) is False
+    assert model.index(0).data(ROLE_SESSION_ACTIVE) is False
+
+
+def test_unknown_session_end_still_cascades(qapp, tmp_path: Path) -> None:
+    """A SessionEnd whose id we never tracked, with no other live session on
+    the path, must still tear down (matches the pre-tracking behavior so a
+    resumed session whose SessionStart we missed doesn't get stuck)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    model = RepoListModel(_store_with(str(repo), tmp_path / "repos.json"))
+
+    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, str(repo))
+    assert model.index(0).data(ROLE_WORKING) is True
+    model.apply_hook_event(EVENT_SESSION_END, str(repo), {"session_id": "ghost"})
+    assert model.index(0).data(ROLE_WORKING) is False
+
+
 def test_session_active_is_path_keyed(qapp, tmp_path: Path) -> None:
     """Two repos: a session on one must not leak into the other."""
     a = tmp_path / "a"

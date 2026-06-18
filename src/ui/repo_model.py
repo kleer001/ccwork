@@ -183,6 +183,14 @@ class RepoListModel(QAbstractListModel):
         # session is live, ▌ when only a bare bash terminal exists).
         # Path-keyed unnormalized to match the other Claude-state dicts.
         self._session_active: dict[str, bool] = {}
+        # Per-path set of live Claude session ids (between SessionStart and
+        # SessionEnd). Several `claude` processes can share one repo path —
+        # state here is path-keyed, so without this we can't tell whose
+        # SessionEnd just arrived. We only run the per-session teardown
+        # cascade (clear working / status / subagents) when the LAST session
+        # on a path ends; a SessionEnd from one session must not wipe the
+        # live working spinner of a sibling session on the same path.
+        self._live_sessions: dict[str, set[str]] = {}
 
     # ── Qt model API ──
 
@@ -376,6 +384,10 @@ class RepoListModel(QAbstractListModel):
         #17885), so a `/exit` would otherwise leave the spinner or
         twinkle animating forever.
         """
+        # The xterm process is gone, so every session it hosted is dead —
+        # drop the whole live-session set, not just one id, before the
+        # cascade. Otherwise a stale id would keep session_active pinned on.
+        self._live_sessions.pop(path, None)
         self._set_session_active(path, False)
 
     def _set_session_active(self, path: str, active: bool) -> None:
@@ -497,10 +509,13 @@ class RepoListModel(QAbstractListModel):
           • SessionStart — flip _session_active[path] = True. The badge
             column switches from ▌ (bare terminal) to ⠿ (Claude is here)
             once no higher-priority alert is masking either.
-          • SessionEnd — flip _session_active[path] = False AND cascade-
-            clear _status / _working / _subagents / _turn_started for
-            this path. The session is over; those signals are stale and
-            would otherwise mask the new ▌ ambient indicator.
+          • SessionEnd — drop this session's id from _live_sessions[path].
+            Only when it was the LAST live session on the path do we flip
+            _session_active = False AND cascade-clear _status / _working /
+            _subagents / _turn_started. Several `claude` processes can
+            share one repo dir, so a SessionEnd from one must not wipe a
+            sibling's live working spinner — the bug where an active row
+            reverted to the ▌ "bare terminal" badge mid-turn.
         """
         if event == EVENT_USER_PROMPT_SUBMIT:
             self.clear_status(path)
@@ -519,9 +534,21 @@ class RepoListModel(QAbstractListModel):
         elif event == EVENT_SUBAGENT_STOP:
             self._bump_subagents(path, -1)
         elif event == EVENT_SESSION_START:
+            sid = payload.get("session_id") if isinstance(payload, dict) else None
+            if sid:
+                self._live_sessions.setdefault(path, set()).add(str(sid))
             self._set_session_active(path, True)
         elif event == EVENT_SESSION_END:
-            self._set_session_active(path, False)
+            sid = payload.get("session_id") if isinstance(payload, dict) else None
+            live = self._live_sessions.get(path)
+            if sid and live is not None:
+                live.discard(str(sid))
+            # Only tear down per-session signals when no session remains on
+            # this path. A SessionEnd from one of several concurrent sessions
+            # sharing a repo dir must not clobber a sibling's working spinner.
+            if not self._live_sessions.get(path):
+                self._live_sessions.pop(path, None)
+                self._set_session_active(path, False)
 
     def set_emoji(self, repo_id: str, emoji: str) -> None:
         """Set or clear the optional leading emoji for one row.
@@ -750,6 +777,7 @@ class RepoListModel(QAbstractListModel):
             self._working.discard(_norm(path))
             self._last_activity.pop(path, None)
             self._turn_started.pop(path, None)
+            self._live_sessions.pop(path, None)
             if self._last_focused == _norm(path):
                 self._last_focused = None
         self._store.save()

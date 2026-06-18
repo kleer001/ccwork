@@ -313,20 +313,31 @@ event → state mutation table. The model knows seven Claude events:
   • `SessionStart` — flips `_session_active[path] = True`. The ambient
     badge in the right-edge column switches from ▌ (bare terminal) to
     ⠿ (Claude is here) when no higher-priority alert is showing.
-  • `SessionEnd` — flips `_session_active[path] = False` AND
-    cascade-clears `_status`, `_working`, `_subagents`, `_turn_started`
-    for this path. The session is over, so those signals are stale and
-    would otherwise mask the new ▌ ambient indicator. Done inline in
-    `_set_session_active(active=False)` rather than via the public
-    mutators so the whole transition lands in a single dataChanged
+  • `SessionEnd` — drops this session's id from `_live_sessions[path]`
+    (a per-path set of live Claude `session_id`s, populated on
+    `SessionStart`). Only when that set goes empty — i.e. the **last**
+    session on the path ended — does it flip `_session_active[path] =
+    False` AND cascade-clear `_status`, `_working`, `_subagents`,
+    `_turn_started`. Several `claude` processes can share one repo dir
+    (state is path-keyed), so a `SessionEnd` from one must **not** wipe a
+    sibling's live working spinner — without the set, a dead session's
+    exit reverted an actively-working row to the ▌ ambient badge
+    mid-turn. A `SessionEnd` whose id was never tracked (resumed session,
+    sink started mid-session) with no other live session on the path
+    still cascades, matching the pre-tracking behavior. The cascade is
+    done inline in `_set_session_active(active=False)` rather than via the
+    public mutators so the whole transition lands in a single dataChanged
     emission. Claude Code does **not** deliver a `SessionEnd` hook for
     the `/exit` slash command (only for Ctrl+D —
     anthropics/claude-code#17885), so the same cascade is run as a
     fallback from `MainWindow._on_terminal_finished` via
     `RepoListModel.clear_session(path)` when the row's xterm process
     exits and no duplicate terminal at that path is still alive.
-    Otherwise an `/exit` mid-turn (or with a subagent in flight) would
-    leave the spinner / twinkle animating forever.
+    `clear_session` drops the *whole* `_live_sessions[path]` set (the
+    xterm is gone, so every session it hosted is dead) before the
+    cascade, unlike the single-id `SessionEnd` drop. Otherwise an `/exit`
+    mid-turn (or with a subagent in flight) would leave the spinner /
+    twinkle animating forever.
 
 `MainWindow` no longer keeps a parallel id-keyed `_working` set; the
 quit-confirm derives its list on demand via `model.is_working(path)`
@@ -425,7 +436,11 @@ events never touch it; user navigation never touches `_status`.
   state is path-keyed — `apply_hook_event(event, path)` broadcasts to
   every duplicate row. The quit-confirm derives its working-id list on
   demand from `model.is_working(path)` rather than maintaining a
-  parallel set. Per-session routing is future work.
+  parallel set. Most per-row state is still broadcast to every session
+  on a path; the one exception is session liveness, tracked per
+  `session_id` in `_live_sessions[path]` so one session's `SessionEnd`
+  doesn't tear down a sibling's live turn. Finer per-session routing
+  (whose spinner, whose DONE dot) is future work.
 - Tests use `QT_QPA_PLATFORM=offscreen`. The shared `qapp` fixture and
   `StubHookServer` stand-in live in `tests/conftest.py` — depend on those
   rather than re-rolling them per file.
