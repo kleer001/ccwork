@@ -87,6 +87,11 @@ class RepoStore:
 
     config_path: Path = field(default_factory=default_config_path)
     repos: list[Repo] = field(default_factory=list)
+    # Repos the user has removed from the sidebar, most-recent first. Each
+    # entry is {"path": <resolved>, "emoji": <badge>} — just enough to re-add
+    # with its badge restored. Uncapped; deduped by path. Surfaced by the
+    # sidebar's "Recent" recall slot.
+    recent: list[dict] = field(default_factory=list)
 
     # ── disk ──
 
@@ -136,12 +141,26 @@ class RepoStore:
             out.append(Repo(path=str(r["path"]), id=rid, instance=inst, emoji=emoji))
         self.repos = out
 
+        recent_raw = data.get("recent", [])
+        recent: list[dict] = []
+        if isinstance(recent_raw, list):
+            for e in recent_raw:
+                if not isinstance(e, dict) or "path" not in e:
+                    continue
+                em = e.get("emoji", "")
+                recent.append({
+                    "path": str(e["path"]),
+                    "emoji": em if isinstance(em, str) else "",
+                })
+        self.recent = recent
+
     def save(self) -> None:
         """Write `self.repos` to `self.config_path` atomically."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "version": SCHEMA_VERSION,
             "repos": [asdict(r) for r in self.repos],
+            "recent": self.recent,
         }
         tmp = self.config_path.with_suffix(self.config_path.suffix + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2) + "\n")
@@ -198,8 +217,25 @@ class RepoStore:
         else:
             new_inst = max(s.instance for s in siblings) + 1
         repo = Repo(path=resolved, instance=new_inst)
+        # Re-adding a path that was previously removed restores its badge and
+        # forgets it as "recent" (it's back on the shelf). A path only lands
+        # in `recent` once every row for it is gone, so a hit here is always a
+        # genuine re-add, never a live duplicate.
+        for i, e in enumerate(self.recent):
+            if os.path.realpath(e.get("path", "")) == resolved:
+                repo.emoji = e.get("emoji", "")
+                self.recent.pop(i)
+                break
         self.repos.append(repo)
         return repo
+
+    def _push_recent(self, resolved: str, emoji: str) -> None:
+        """Record a just-removed path at the front of `recent`, deduped."""
+        self.recent = [
+            e for e in self.recent
+            if os.path.realpath(e.get("path", "")) != resolved
+        ]
+        self.recent.insert(0, {"path": resolved, "emoji": emoji})
 
     def remove_by_id(self, repo_id: str) -> bool:
         """Remove the repo with this id. Returns True if removed.
@@ -210,10 +246,15 @@ class RepoStore:
         for i, r in enumerate(self.repos):
             if r.id == repo_id:
                 resolved = os.path.realpath(r.path)
+                emoji = r.emoji
                 self.repos.pop(i)
                 survivors = [self.repos[j] for j in self.indices_of(resolved)]
                 if len(survivors) == 1:
                     survivors[0].instance = 0
+                # Only the *last* row for a path leaving the sidebar counts as
+                # "removed" — while a duplicate remains, the path is still here.
+                elif not survivors:
+                    self._push_recent(resolved, emoji)
                 return True
         return False
 

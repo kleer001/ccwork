@@ -24,6 +24,9 @@ driven by Claude Code's Stop/Notification hooks.
   Click a repo to bring up its terminal; right-click for reload / remove.
   Repos you haven't opened yet this session render in regular italic;
   once a terminal exists they flip to bold upright.
+- **Recent recall** — a faded half-width slot rides the bottom of the repo
+  stack. Click it for a drop-down list of every repo you've removed;
+  pick one to add it straight back (badge and all).
 - **Splash dashboard** — when no repo is selected (a fresh launch, or
   after a terminal closes) the main pane shows the ccwork logo, keyboard
   hints, and a live "git pulse" built entirely from local git: this

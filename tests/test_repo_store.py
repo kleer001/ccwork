@@ -349,3 +349,74 @@ def test_current_branch_detached(git_repo: Path) -> None:
 
 def test_current_branch_non_repo(tmp_path: Path) -> None:
     assert repo_store.current_branch(tmp_path) is None
+
+
+# ── recently-removed recall ──
+
+def test_remove_pushes_to_recent(store_path: Path, tmp_path: Path) -> None:
+    s = RepoStore(config_path=store_path)
+    r = s.add(str(tmp_path / "gone"))
+    s.remove_by_id(r.id)
+    assert [os.path.basename(e["path"]) for e in s.recent] == ["gone"]
+
+
+def test_remove_carries_emoji_into_recent(store_path: Path, tmp_path: Path) -> None:
+    s = RepoStore(config_path=store_path)
+    r = s.add(str(tmp_path / "gone"))
+    r.emoji = "🚀"
+    s.remove_by_id(r.id)
+    assert s.recent[0]["emoji"] == "🚀"
+
+
+def test_duplicate_removal_does_not_push_until_last(store_path: Path, tmp_path: Path) -> None:
+    target = tmp_path / "dup"
+    s = RepoStore(config_path=store_path)
+    a = s.add(str(target))
+    b = s.add(str(target))
+    # First removal: a sibling still holds the path → nothing recalled.
+    s.remove_by_id(a.id)
+    assert s.recent == []
+    # Last removal: the path is truly gone → now it's recallable.
+    s.remove_by_id(b.id)
+    assert len(s.recent) == 1
+    assert os.path.realpath(s.recent[0]["path"]) == os.path.realpath(str(target))
+
+
+def test_recent_dedupes_by_path_most_recent_first(store_path: Path, tmp_path: Path) -> None:
+    s = RepoStore(config_path=store_path)
+    for _ in range(3):
+        r = s.add(str(tmp_path / "churn"))
+        s.remove_by_id(r.id)
+    assert len(s.recent) == 1  # deduped, not three entries
+
+
+def test_readd_restores_emoji_and_clears_recent(store_path: Path, tmp_path: Path) -> None:
+    s = RepoStore(config_path=store_path)
+    r = s.add(str(tmp_path / "back"))
+    r.emoji = "🔧"
+    s.remove_by_id(r.id)
+    again = s.add(str(tmp_path / "back"))
+    assert again.emoji == "🔧"
+    assert s.recent == []  # dropped once re-added
+
+
+def test_recent_is_uncapped(store_path: Path, tmp_path: Path) -> None:
+    s = RepoStore(config_path=store_path)
+    for i in range(30):
+        r = s.add(str(tmp_path / f"r{i}"))
+        s.remove_by_id(r.id)
+    assert len(s.recent) == 30
+
+
+def test_recent_round_trips(store_path: Path, tmp_path: Path) -> None:
+    s = RepoStore(config_path=store_path)
+    r = s.add(str(tmp_path / "saved"))
+    r.emoji = "🌟"
+    s.remove_by_id(r.id)
+    s.save()
+
+    s2 = RepoStore(config_path=store_path)
+    s2.load()
+    assert len(s2.recent) == 1
+    assert s2.recent[0]["emoji"] == "🌟"
+    assert os.path.basename(s2.recent[0]["path"]) == "saved"

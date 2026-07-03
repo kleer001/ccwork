@@ -132,6 +132,23 @@ notifications" preference (single source of truth:
   model / delegate / `ROLE_*` / `STATUS_*` names, so
   `from src.ui.repo_sidebar import …` keeps resolving for callers and tests.
 
+  Below the list, above the `+ Add Repo` button, the sidebar hosts the
+  **Recent recall slot** (`_recent_btn`) — a half-width, half-height faded
+  row-clone with rounded bottom corners that reads as a quiet tail of the
+  stack. It is **parented to the list viewport**, not pinned to a layout,
+  and `_position_recent_slot` glues it just below the last row's
+  `visualRect` on every change that shifts that row (insert / remove /
+  reset / bubble-walk `rowsMoved` / grouping `dataChanged` / scroll,
+  plus `resizeEvent` / `showEvent`), so it rides up and down with the
+  stack. Clicking it opens `_show_recent_popup`: a `Qt.Popup` `QListWidget`
+  of every `repo_store.recent` entry (two-line emoji + basename + path),
+  **dropping down** into the empty space below the slot (flips up only if
+  it would fall off-screen). Item widgets set `WA_TransparentForMouseEvents`
+  so the list receives `::item:hover` rollover *and* still fires
+  `itemClicked` → `_readd_recent` → `_add_path`, which re-adds the repo and
+  drops it from `recent`. Styling is derived from the palette + `AMBIENT_COLOR`
+  so it matches the row delegate in any theme.
+
   `badge_theme.py` is **config-driven**: built-in defaults (the solarized
   palette) are overlaid at import with an optional
   `~/.config/ccwork/badges.toml` (a separate file from `settings.toml`).
@@ -231,6 +248,13 @@ but no widgets):
   (validated with `is_git_root`); `display_name` is a derived property
   over `path` basename + emoji + instance, so renaming the directory
   and rebinding flows through without a separate "rename row" action.
+  The store also keeps a `recent` list (in the same `repos.json`, so no
+  new file) — the recently-removed history that feeds the sidebar's
+  *Recent* recall slot. Each entry is `{path, emoji}`, most-recent first,
+  **uncapped and deduped by path**. `remove_by_id` pushes to `recent`
+  only when the *last* row for a path leaves (a surviving duplicate means
+  the path is still on the shelf); `add` restores the badge from a
+  matching `recent` entry and drops it (re-adding forgets it as "recent").
 - `terminal_session.py` — builds the argv passed to `TerminalHost`. Sets
   `CCWORK_GUI=1` in the child env (the gate the hook sink checks). Launches
   bash with `--rcfile bin/ccwork-bashrc` so ccwork's `bin/` wins on `PATH`

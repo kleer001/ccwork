@@ -31,11 +31,14 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListView,
+    QListWidget,
+    QListWidgetItem,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -202,10 +205,37 @@ class RepoSidebar(QWidget):
         self._add_btn = QPushButton("+ Add Repo", self)
         self._add_btn.clicked.connect(self.add_repo_via_dialog)
 
+        # "Recent" recall slot: a half-width, half-height faded row-clone with
+        # rounded bottom corners that lives at the *bottom of the repo stack* —
+        # parented to the list viewport and repositioned just below the last
+        # row, so it rides up and down as repos are added and removed. Click
+        # opens a scrollable list of every removed repo (uncapped) to re-add.
+        # Styled from the palette + AMBIENT_COLOR so it reads as quiet ambient
+        # presence, matching the row delegate.
+        self._recent_btn = QPushButton("⟲  Recent", self._view.viewport())
+        self._recent_btn.setObjectName("recentSlot")
+        self._recent_btn.setFixedHeight(18)
+        self._recent_btn.setCursor(Qt.PointingHandCursor)
+        self._recent_btn.clicked.connect(self._show_recent_popup)
+        self._style_recent_slot()
+        self._recent_btn.hide()  # shown/placed by _position_recent_slot
+        self._recent_popup: QWidget | None = None
+
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._view, 1)
         lay.addWidget(self._add_btn, 0)
+
+        # Keep the slot glued to the tail of the stack through every change
+        # that shifts the last row: insert/remove, reset, the bubble-walk
+        # (rowsMoved), grouping height changes (dataChanged), and scrolling.
+        self._model.rowsInserted.connect(self._position_recent_slot)
+        self._model.rowsRemoved.connect(self._position_recent_slot)
+        self._model.modelReset.connect(self._position_recent_slot)
+        self._model.rowsMoved.connect(self._position_recent_slot)
+        self._model.layoutChanged.connect(self._position_recent_slot)
+        self._model.dataChanged.connect(self._position_recent_slot)
+        self._view.verticalScrollBar().valueChanged.connect(self._position_recent_slot)
 
         # Allow the splitter to drag the sidebar narrow. The status badge is
         # always reserved when present; text elides to fit.
@@ -557,6 +587,159 @@ class RepoSidebar(QWidget):
             self._view.setCurrentIndex(self._model.index(row))
         self.repo_added.emit(added)
         return added
+
+    # ── "Recent" recall slot ──
+
+    def _style_recent_slot(self) -> None:
+        """Paint the slot as a quiet faded row-clone from the current palette."""
+        from src.ui.badge_theme import AMBIENT_COLOR
+        pal = self.palette()
+        base = pal.base().color().name()
+        mid = pal.mid().color().name()
+        text = pal.text().color().name()
+        amb = AMBIENT_COLOR.name()
+        self._recent_btn.setStyleSheet(
+            f"""
+            QPushButton#recentSlot {{
+                background: {base};
+                color: {amb};
+                border: 1px solid {mid};
+                border-top: none;
+                border-radius: 0 0 8px 8px;
+                padding: 0 8px;
+                text-align: left;
+                font-size: 11px;
+            }}
+            QPushButton#recentSlot:hover {{ color: {text}; }}
+            QPushButton#recentSlot:disabled {{ color: {mid}; }}
+            """
+        )
+
+    def _position_recent_slot(self, *args) -> None:
+        """Glue the slot to the bottom of the stack, just under the last row.
+
+        Parented to the viewport, so `visualRect` coordinates line up. Follows
+        the last row wherever it lands — including off the bottom when the list
+        is scrolled — so it reads as the tail of the stack, not a fixed footer.
+        """
+        vp = self._view.viewport()
+        n = self._model.rowCount()
+        if n > 0:
+            r = self._view.visualRect(self._model.index(n - 1))
+            self._recent_btn.move(max(0, r.left()), r.bottom() + 1)
+        else:
+            self._recent_btn.move(0, 0)
+        self._recent_btn.setFixedWidth(max(60, vp.width() // 2))
+        count = len(self._store.recent)
+        self._recent_btn.setEnabled(count > 0)
+        self._recent_btn.setToolTip(
+            f"{count} recently removed — click to re-add"
+            if count else "No recently removed repos"
+        )
+        self._recent_btn.show()
+        self._recent_btn.raise_()
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._position_recent_slot()
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        self._position_recent_slot()
+
+    def _show_recent_popup(self) -> None:
+        recent = list(self._store.recent)
+        if not recent:
+            return
+        popup = QWidget(self, Qt.Popup)
+        popup.setObjectName("recentPopup")
+        pal = self.palette()
+        hover_bg = pal.base().color().darker(108).name()
+        popup.setStyleSheet(
+            f"""
+            QWidget#recentPopup {{
+                background: {pal.base().color().name()};
+                border: 1px solid {pal.mid().color().name()};
+                border-radius: 8px;
+            }}
+            QListWidget {{ background: transparent; border: none; }}
+            QListWidget::item {{ border-radius: 5px; }}
+            QListWidget::item:hover {{ background: {hover_bg}; }}
+            """
+        )
+        v = QVBoxLayout(popup)
+        v.setContentsMargins(4, 4, 4, 4)
+        v.setSpacing(2)
+        head = QLabel(f"Recently removed — {len(recent)}", popup)
+        head.setStyleSheet("color: palette(mid); font-size: 10px; padding: 2px 4px;")
+        v.addWidget(head)
+
+        lw = QListWidget(popup)
+        lw.setFrameShape(QFrame.NoFrame)
+        lw.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        lw.setMouseTracking(True)
+        for e in recent:
+            path = e.get("path", "")
+            item = QListWidgetItem(lw)
+            item.setData(Qt.UserRole, path)
+            row = self._recent_item_widget(e.get("emoji", ""), path)
+            item.setSizeHint(row.sizeHint())
+            lw.addItem(item)
+            lw.setItemWidget(item, row)
+        lw.itemClicked.connect(
+            lambda it, p=popup: self._readd_recent(it.data(Qt.UserRole), p)
+        )
+        v.addWidget(lw)
+
+        width = max(self.width(), 200)
+        popup.setFixedWidth(width)
+        rows_h = sum(lw.sizeHintForRow(i) for i in range(min(lw.count(), 6)))
+        popup.setFixedHeight(min(240, rows_h + head.sizeHint().height() + 16))
+        # Drop down from the slot's bottom edge into the empty space below the
+        # stack. Flip up only if it wouldn't fit below (slot near screen bottom).
+        below = self._recent_btn.mapToGlobal(QPoint(0, self._recent_btn.height()))
+        above = self._recent_btn.mapToGlobal(QPoint(0, 0))
+        screen = self._recent_btn.screen().availableGeometry()
+        if below.y() + popup.height() + 2 <= screen.bottom():
+            y = below.y() + 2
+        else:
+            y = max(screen.top(), above.y() - popup.height() - 2)
+        popup.move(below.x(), y)
+        popup.show()
+
+    def _recent_item_widget(self, emoji: str, path: str) -> QWidget:
+        """Two-line popup entry: emoji + basename over the dim path."""
+        name = os.path.basename(path.rstrip("/")) or path
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(6, 3, 6, 3)
+        h.setSpacing(6)
+        if emoji:
+            em = QLabel(emoji, w)
+            h.addWidget(em, 0)
+        col = QVBoxLayout()
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        n = QLabel(name, w)
+        n.setStyleSheet("font-size: 12px;")
+        p = QLabel(path, w)
+        p.setStyleSheet("color: palette(mid); font-size: 9px;")
+        col.addWidget(n)
+        col.addWidget(p)
+        h.addLayout(col, 1)
+        # Let mouse events fall through to the QListWidget so the row gets the
+        # ::item:hover rollover (and clicks still reach itemClicked). Without
+        # this the item widget swallows them and the list never sees hover.
+        w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        for lbl in w.findChildren(QLabel):
+            lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        return w
+
+    def _readd_recent(self, path: str, popup: QWidget) -> None:
+        popup.close()
+        if not path:
+            return
+        self._add_path(path)  # restores the badge and drops it from `recent`
 
     def _on_context_menu(self, pos: QPoint) -> None:
         self._bump_activity()
