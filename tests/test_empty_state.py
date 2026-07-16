@@ -1,12 +1,13 @@
-"""Tests for the empty-state / splash placeholder shown when no terminal
+"""Tests for the empty-state / splash-dashboard shown when no terminal
 is current.
 
 What we lock down: the heading text, the version-and-tagline subhead,
 the exact set of static hints shipped (so adding one is a deliberate
 spec edit, not a stealthy regression), the silent-hide behavior when the
-logo SVG isn't where we expect it, and the live git-pulse block —
-hidden until stats arrive, populated from a RepoStats, and the rotating
-tip cycling through TIP_LINES.
+logo SVG isn't where we expect it, and the dashboard — hidden until
+stats arrive, populated from a RepoStats (narrative, trend hero, facts,
+release callout, bento cards, quiet strip), swapping out the onboarding
+chrome once repos exist, and the rotating tip cycling through TIP_LINES.
 """
 
 from __future__ import annotations
@@ -19,10 +20,31 @@ from PySide6.QtWidgets import QApplication
 
 from src.core.repo_store import RepoStore
 from src.core.settings import Settings
-from src.core.repo_stats import RecentActivity, RepoStats
-from src.ui.empty_state import EmptyState, HINT_LINES, TIP_LINES
+from src.core.repo_stats import RADAR_AXES, RepoStats, RepoWeek
+from src.ui.empty_state import (
+    EmptyState, HINT_LINES, RadarChart, TIP_LINES, TrendChart,
+)
 
 from tests.conftest import StubHookServer
+
+
+GATHERED = 1_780_000_000    # arbitrary but fixed freshness stamp
+
+
+def _stats(active: list[RepoWeek] | None = None,
+           quiet: list[RepoWeek] | None = None,
+           weekly: list[int] | None = None) -> RepoStats:
+    s = RepoStats(active=active or [], quiet=quiet or [], gathered_ts=GATHERED)
+    if weekly is not None:
+        s.weekly_totals = weekly
+    return s
+
+
+def _active(name: str = "r", path: str = "/r", **kw) -> RepoWeek:
+    kw.setdefault("commits", 5)
+    kw.setdefault("insertions", 100)
+    kw.setdefault("deletions", 20)
+    return RepoWeek(name=name, path=path, **kw)
 
 
 def test_heading_text_is_ccwork(qapp: QApplication) -> None:
@@ -87,49 +109,99 @@ def test_shown_at_startup_when_no_repos(
         win.close()
 
 
-# ── git-pulse bento ──
+# ── dashboard ──
 
-def test_pulse_hidden_until_populated(qapp: QApplication) -> None:
+def test_dashboard_hidden_until_populated(qapp: QApplication) -> None:
     es = EmptyState(version="0.1.0")
     assert es._pulse.isHidden()
 
 
-def test_apply_stats_populates_tiles(qapp: QApplication) -> None:
+def test_apply_stats_no_repos_stays_onboarding(qapp: QApplication) -> None:
     es = EmptyState(version="0.1.0")
-    stats = RepoStats(
-        repo_count=3,
-        dirty_count=2,
-        dirty_names=["ccwork", "image_gen"],
-        commits_this_week=5,
-        daily_counts=[0, 1, 0, 2, 0, 1, 1],
-        today_index=3,
-        recent=RecentActivity(name="ccwork", subject="fix thing", ts=1_700_000_000),
+    es._apply_stats(_stats())  # repo_count == 0
+    assert es._pulse.isHidden()
+    assert not es._heading.isHidden()
+    assert all(not h.isHidden() for h in es._hints)
+
+
+def test_apply_stats_swaps_onboarding_for_dashboard(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    es._apply_stats(_stats(active=[_active()]))
+    assert not es._pulse.isHidden()
+    assert es._heading.isHidden()
+    assert es._subhead.isHidden()
+    assert all(h.isHidden() for h in es._hints)
+
+
+def test_apply_stats_populates_dashboard(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    stats = _stats(
+        active=[
+            _active("busy", "/busy", commits=20, prior_commits=5,
+                    new_files=3, files_changed=6, file_types=2, dirty=True),
+            _active("cooling", "/cool", commits=4, prior_commits=15),
+        ],
+        quiet=[RepoWeek(name="asleep", path="/z", lifetime_commits=300, dirty=True)],
+        weekly=[1, 2, 3, 4, 5, 6, 7, 24],
     )
     es._apply_stats(stats)
-    assert es._week_total.text() == "5"
-    assert es._repos_num.text() == "3"
-    assert es._dirty_num.text() == "2"
-    # uncommitted repos are listed by name
-    listed = [lbl.text() for lbl in es._dirty_name_labels]
-    assert listed == ["• ccwork", "• image_gen"]
-    assert es._chart._counts == [0, 1, 0, 2, 0, 1, 1]
-    assert es._chart._today_idx == 3
-    assert "fix thing" in es._recent.text()
+    assert es._week_total.text() == "24"
+    assert es._narrative.text()                       # narrative renders
+    assert "busy" in es._narrative.text()
+    assert es._trend_chart._totals == [1, 2, 3, 4, 5, 6, 7, 24]
+    assert "new files" in es._facts.text()
+    assert len(es._cards) == 2                        # one card per active repo
+    assert len(es._quiet_chips) == 1
+    assert "asleep" in es._quiet_chips[0].text()
+    assert "uncommitted" in es._quiet_chips[0].text()
+    assert es._ship.isHidden()                        # no release this week
+    assert "as of" in es._fresh_time.text()
     assert not es._pulse.isHidden()
 
 
-def test_apply_stats_rebuilds_dirty_list(qapp: QApplication) -> None:
-    """A second sweep must replace the prior names, not append."""
+def test_apply_stats_shows_release_callout(qapp: QApplication) -> None:
     es = EmptyState(version="0.1.0")
-    es._apply_stats(RepoStats(repo_count=2, dirty_count=1, dirty_names=["a"]))
-    es._apply_stats(RepoStats(repo_count=2, dirty_count=2, dirty_names=["b", "c"]))
-    assert [lbl.text() for lbl in es._dirty_name_labels] == ["• b", "• c"]
+    rel = _active("shipper", "/s", commits=2, release="v1.1.0",
+                  release_ts=GATHERED - 3600)
+    es._apply_stats(_stats(active=[rel]))
+    assert not es._ship.isHidden()
+    assert "shipper" in es._ship_what.text()
+    assert "v1.1.0" in es._ship_what.text()
+    assert es._ship_when.text() == "1h ago"
 
 
-def test_apply_stats_no_repos_stays_hidden(qapp: QApplication) -> None:
+def test_apply_stats_rebuilds_cards(qapp: QApplication) -> None:
+    """A second sweep must replace the prior cards/chips, not append."""
     es = EmptyState(version="0.1.0")
-    es._apply_stats(RepoStats())  # repo_count == 0
-    assert es._pulse.isHidden()
+    es._apply_stats(_stats(active=[_active("a", "/a"), _active("b", "/b")]))
+    es._apply_stats(_stats(active=[_active("c", "/c")],
+                           quiet=[RepoWeek(name="q", path="/q")]))
+    assert len(es._cards) == 1
+    assert len(es._quiet_chips) == 1
+
+
+def test_quiet_strip_hidden_when_all_active(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    es._apply_stats(_stats(active=[_active()]))
+    assert es._quiet_chips == []
+    assert es._quiet_title.isHidden()
+
+
+# ── chart widgets ──
+
+def test_radar_clamps_and_pads_values(qapp: QApplication) -> None:
+    from PySide6.QtGui import QColor
+    r = RadarChart(QColor("#268bd2"), QColor("#000"), QColor("#888"))
+    r.set_values([2.0, -1.0, 0.5])
+    assert r._values == (1.0, 0.0, 0.5, 0.0, 0.0, 0.0)
+    assert len(r._values) == len(RADAR_AXES)
+
+
+def test_trend_chart_sizes_to_bar_count(qapp: QApplication) -> None:
+    from PySide6.QtGui import QColor
+    t = TrendChart(QColor("#2aa198"), QColor("#000"))
+    t.set_data([1] * 8)
+    assert t.width() == 8 * TrendChart.BAR_W + 7 * TrendChart.GAP
 
 
 def test_tip_cycles_through_lines(qapp: QApplication) -> None:

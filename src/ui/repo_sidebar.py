@@ -116,6 +116,13 @@ class RepoSidebar(QWidget):
     # confirmation. The sidebar doesn't own a status bar; this keeps it
     # display-agnostic.
     path_copied = Signal(str)
+    # Every left-click on a valid row — unlike repo_selected, fires even when
+    # the row is already current. MainWindow uses it to leave the dashboard
+    # overlay by re-clicking the selected repo.
+    repo_clicked = Signal(Repo)
+    # Dashboard button clicked — MainWindow swaps the stack to the splash as
+    # an overlay, without touching selection or terminals.
+    dashboard_requested = Signal()
 
     def __init__(self, store: RepoStore, parent=None, settings=None) -> None:
         super().__init__(parent)
@@ -191,6 +198,7 @@ class RepoSidebar(QWidget):
                 getattr(settings.ui, "group_active_repos", False)
             )
         self._view.selectionModel().currentChanged.connect(self._on_current_changed)
+        self._view.clicked.connect(self._on_view_clicked)
         self._view.setContextMenuPolicy(Qt.CustomContextMenu)
         self._view.customContextMenuRequested.connect(self._on_context_menu)
         # Mouse tracking + event filter: catches hover-without-click so
@@ -204,6 +212,19 @@ class RepoSidebar(QWidget):
 
         self._add_btn = QPushButton("+ Add Repo", self)
         self._add_btn.clicked.connect(self.add_repo_via_dialog)
+
+        # Dashboard button: overlay-navigate to the splash without tearing
+        # down the current terminal. A normal layout widget above Add Repo —
+        # unlike _recent_btn, which is viewport-parented and glued to the
+        # tail of the repo stack.
+        self._dashboard_btn = QPushButton("⌂  Dashboard", self)
+        self._dashboard_btn.setObjectName("dashboardBtn")
+        self._dashboard_btn.setCursor(Qt.PointingHandCursor)
+        self._dashboard_btn.setToolTip(
+            "Show the dashboard — the current terminal keeps running"
+        )
+        self._dashboard_btn.clicked.connect(lambda: self.dashboard_requested.emit())
+        self._style_dashboard_btn()
 
         # "Recent" recall slot: a half-width, half-height faded row-clone with
         # rounded bottom corners that lives at the *bottom of the repo stack* —
@@ -224,6 +245,7 @@ class RepoSidebar(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._view, 1)
+        lay.addWidget(self._dashboard_btn, 0)
         lay.addWidget(self._add_btn, 0)
 
         # Keep the slot glued to the tail of the stack through every change
@@ -262,6 +284,12 @@ class RepoSidebar(QWidget):
         if row >= 0:
             idx = self._model.index(row)
             self._view.setCurrentIndex(idx)
+
+    def current_repo(self) -> Repo | None:
+        """The repo of the currently-selected row, or None when nothing is
+        selected. MainWindow's Esc-from-dashboard path asks for this."""
+        idx = self._view.currentIndex()
+        return self._model.repo_at(idx.row()) if idx.isValid() else None
 
     def refresh_branches(self) -> None:
         self._model.refresh_branches()
@@ -564,6 +592,14 @@ class RepoSidebar(QWidget):
             self._model.clear_status(repo.path)
             self.repo_selected.emit(repo)
 
+    def _on_view_clicked(self, index: QModelIndex) -> None:
+        """Re-emit every left-click as repo_clicked. Unlike currentChanged,
+        the view's clicked signal fires for a click on the already-current
+        row — the return path from the dashboard overlay."""
+        repo = self._model.repo_at(index.row()) if index.isValid() else None
+        if repo is not None:
+            self.repo_clicked.emit(repo)
+
     def add_repo_via_dialog(self) -> None:
         """Prompt the user for a directory and add it as a sidebar row.
 
@@ -587,6 +623,31 @@ class RepoSidebar(QWidget):
             self._view.setCurrentIndex(self._model.index(row))
         self.repo_added.emit(added)
         return added
+
+    def _style_dashboard_btn(self) -> None:
+        """Quiet ambient styling for the Dashboard button — same palette +
+        AMBIENT_COLOR recipe as the Recent slot, so it reads as sidebar
+        furniture rather than a call to action."""
+        from src.ui.badge_theme import AMBIENT_COLOR
+        pal = self.palette()
+        base = pal.base().color().name()
+        mid = pal.mid().color().name()
+        text = pal.text().color().name()
+        amb = AMBIENT_COLOR.name()
+        self._dashboard_btn.setStyleSheet(
+            f"""
+            QPushButton#dashboardBtn {{
+                background: {base};
+                color: {amb};
+                border: 1px solid {mid};
+                border-radius: 4px;
+                padding: 2px 8px;
+                text-align: left;
+                font-size: 11px;
+            }}
+            QPushButton#dashboardBtn:hover {{ color: {text}; }}
+            """
+        )
 
     # ── "Recent" recall slot ──
 

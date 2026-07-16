@@ -27,13 +27,17 @@ driven by Claude Code's Stop/Notification hooks.
 - **Recent recall** — a faded half-width slot rides the bottom of the repo
   stack. Click it for a drop-down list of every repo you've removed;
   pick one to add it straight back (badge and all).
-- **Splash dashboard** — when no repo is selected (a fresh launch, or
-  after a terminal closes) the main pane shows the ccwork logo, keyboard
-  hints, and a live "git pulse" built entirely from local git: this
-  week's commit total with a Monday-anchored daily bar chart, how many
-  repos you track, which ones have uncommitted changes, your most recent
-  commit, and a rotating tip. No network, no telemetry — just `git` over
-  the repos you already track.
+- **Splash dashboard** — when no repo is selected (a fresh launch, after
+  a terminal closes, or via the sidebar's **Dashboard** button) the main
+  pane shows a weekly retro built entirely from local git, rolling 7 days
+  with merges excluded: a plain-language narrative of the week, an 8-week
+  commit trend, a week-in-numbers row, a release celebration when a tag
+  shipped, per-repo cards with a six-spoke radar "fingerprint" plus churn
+  and file stats, and a quiet strip for idle repos. The Dashboard button
+  overlays the view without touching your terminals — Esc or re-clicking
+  the selected repo returns. It re-sweeps every minute while visible. No
+  network, no telemetry — just `git` over the repos you already track.
+  (With no repos yet it stays a simple logo + keyboard-hints screen.)
 - **Multiple sessions per repo** — `Ctrl+Shift+O` the same repo twice to spawn
   parallel Claude sessions on it. Duplicates get Roman-numeral suffixes
   (`myrepo (I)`, `myrepo (II)`, …); remove all but one and the suffix

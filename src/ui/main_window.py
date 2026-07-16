@@ -161,6 +161,11 @@ class MainWindow(QMainWindow):
         self._empty_placeholder.status_message.connect(
             lambda m: self.statusBar().showMessage(m, 2000))
         self._empty_placeholder.resume_requested.connect(self._on_resume_requested)
+        # Esc while the dashboard overlay is showing returns to the selected
+        # repo's terminal. The placeholder is a plain Qt widget (unlike the
+        # XEmbed'd xterm), so normal Qt key handling suffices — no XGrabKey.
+        self._empty_placeholder.setFocusPolicy(Qt.StrongFocus)
+        self._empty_placeholder.installEventFilter(self)
         # Sessions left "open" by a previous run that didn't shut down
         # cleanly become the splash crash-recovery banner.
         crashed = session_recovery.promote_crashes()
@@ -200,6 +205,8 @@ class MainWindow(QMainWindow):
 
         # ── wiring ──
         self._sidebar.repo_selected.connect(self._on_repo_selected)
+        self._sidebar.repo_clicked.connect(self._on_repo_clicked)
+        self._sidebar.dashboard_requested.connect(self._show_dashboard)
         self._sidebar.repo_added.connect(self._on_repo_added)
         self._sidebar.reload_requested.connect(self._reload_terminal)
         self._sidebar.repo_removed.connect(self._on_repo_removed)
@@ -725,6 +732,54 @@ class MainWindow(QMainWindow):
     def _select_repo(self, repo: Repo) -> None:
         """Convenience for keyboard-cycle: pick a specific repo by id."""
         self._sidebar.select_id(repo.id)
+
+    # ── dashboard overlay ──
+
+    def _show_dashboard(self) -> None:
+        """Swap the stack to the splash without touching the sidebar
+        selection or any terminal — overlay navigation, not teardown. Focus
+        moves to the placeholder so a follow-up Esc lands on it."""
+        self._stack.setCurrentWidget(self._empty_placeholder)
+        self._empty_placeholder.setFocus(Qt.OtherFocusReason)
+
+    def _on_repo_clicked(self, repo: Repo) -> None:
+        """Return path from the dashboard: a plain click on the already-
+        current row re-shows its terminal. In the ordinary selection-change
+        flow `_on_repo_selected` has already swapped the stack by the time
+        the view's clicked signal fires, so this no-ops."""
+        if self._stack.currentWidget() is not self._empty_placeholder:
+            return
+        host = self._terminals.get(repo.id)
+        if host is None:
+            return
+        self._stack.setCurrentWidget(host)
+        host.focus_child()
+
+    def _return_from_dashboard(self) -> bool:
+        """Esc on the dashboard: swap back to the selected repo's live
+        terminal. Returns True when a swap happened (no selection or no
+        terminal → False, and the splash stays put)."""
+        if self._stack.currentWidget() is not self._empty_placeholder:
+            return False
+        repo = self._sidebar.current_repo()
+        if repo is None:
+            return False
+        host = self._terminals.get(repo.id)
+        if host is None:
+            return False
+        self._stack.setCurrentWidget(host)
+        host.focus_child()
+        return True
+
+    def eventFilter(self, obj, event):  # type: ignore[override]
+        if (
+            obj is self._empty_placeholder
+            and event.type() == QEvent.KeyPress
+            and event.key() == Qt.Key_Escape
+            and self._return_from_dashboard()
+        ):
+            return True
+        return super().eventFilter(obj, event)
 
     def _on_resume_requested(self, path: str, session_id: str) -> None:
         """Crash-banner Launch: open a terminal for `path` and present

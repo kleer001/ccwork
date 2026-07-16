@@ -64,17 +64,31 @@ per repo, swapped on selection). Index 0 of the stack is `EmptyState`
 (`src/ui/empty_state.py`) — the splash shown on a cold start with nothing
 selected and whenever the current terminal exits. Auto-opening the last
 repo at launch is gated by `ui.restore_last_repo` (default on); when off,
-ccwork lands on the splash. Below the static logo + hint lines the splash
-paints a live "git pulse" bento: a hero tile with the week's commit total
-and a `BarChart` (Monday-anchored — `daily_counts` is always 7 wide with
-weekday letters and y-axis gridlines; days after `today_index` render
-blank so the chart never changes width), a repos count, the list of repos
-with uncommitted changes, the most-recent commit, and a rotating tip.
-Stats come from `src/core/repo_stats.py` (`gather_stats`, pure, shells out
-to git like `repo_store` and skips unreadable repos), gathered on a
-short-lived `_StatsWorker` QThread each time the splash is shown so git
-forks never block the GUI. Bento accents are sourced from `badge_theme`;
-card fills are translucent overlays so they read on any palette. Above
+ccwork lands on the splash. With no repos on the shelf the widget is a
+clean onboarding screen (logo + heading + hint lines + rotating tip);
+once repos exist it becomes the **weekly-retro dashboard** (reference
+spec: `mockups/dashboard.html`, WYSIWYG to the app), reachable any time
+via the sidebar's Dashboard button. Reading order: a deterministic
+narrative sentence first (`summarize` — template NLG keyed off ISO week
+number, no LLM), a freshness stamp, an 8-week trailing-commit `TrendChart`
+hero with the week total and a 4-wk-avg comparison, a demoted
+week-in-numbers facts row, a single green release-celebration callout,
+per-repo bento cards (a `RadarChart` six-spoke fingerprint — Vol / Churn /
+New / Breadth / Rework / Types, each axis normalized to the busiest
+active repo this window, rework is deletions' share of churn — plus a
+stat ladder, churn bar, and a tempo badge: ◆ tag / ▲ NEW / ▼ −N / ▲ +N /
+· steady), and a quiet strip of repos with no commits in 7 days sized by
+lifetime commits. Every number is a **rolling 7-day window, merges
+excluded**; a dip paints muted grey, never red, and green is reserved for
+the release moment. Stats come from `src/core/repo_stats.py`
+(`gather_stats`, pure, shells out to git like `repo_store` and skips
+unreadable repos), gathered on a short-lived `_StatsWorker` QThread each
+time the splash is shown and re-swept every `STATS_REFRESH_MS` (60 s)
+while visible — repos are live, so a frozen number reads as wrong within
+minutes. `repo_stats` also owns `RepoWeek` (the per-repo snapshot),
+`fingerprints` (the radar normalization), `churn_tag`, and `summarize`.
+Dashboard accents are sourced from `badge_theme`; card fills are
+translucent overlays so they read on any palette. Above
 the logo the splash can paint a **crash-recovery banner**: after an
 unclean shutdown it lists the Claude sessions that were open, each with a
 **Copy** button (session ID → clipboard) and a **Launch** button (opens a
@@ -148,6 +162,17 @@ notifications" preference (single source of truth:
   `itemClicked` → `_readd_recent` → `_add_path`, which re-adds the repo and
   drops it from `recent`. Styling is derived from the palette + `AMBIENT_COLOR`
   so it matches the row delegate in any theme.
+
+  Between the list and `+ Add Repo` sits the **Dashboard button**
+  (`_dashboard_btn`, a normal layout widget, same quiet palette +
+  `AMBIENT_COLOR` styling). It emits `dashboard_requested`; MainWindow's
+  `_show_dashboard` swaps the stack to the splash as an **overlay** —
+  sidebar selection and terminals untouched. Return paths: re-clicking the
+  selected row (`repo_clicked`, wired off the view's `clicked` signal
+  because `repo_selected` only fires on selection *change*) or Esc on the
+  splash (a MainWindow event filter on the placeholder — plain Qt key
+  handling, not XGrabKey) swap back to that repo's live terminal; with no
+  selection or no terminal, both are no-ops.
 
   `badge_theme.py` is **config-driven**: built-in defaults (the solarized
   palette) are overlaid at import with an optional
