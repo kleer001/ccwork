@@ -177,3 +177,48 @@ def test_server_accepts_trailing_line_without_newline(qapp: QCoreApplication, tm
 
     assert len(events) == 1
     srv.stop()
+
+
+def test_second_server_refuses_live_socket(qapp: QCoreApplication, tmp_path: Path) -> None:
+    """A second instance must not steal a live instance's socket — doing so
+    leaves the first listening on an unlinked inode, deaf to all events."""
+    sock = tmp_path / "ccwork.sock"
+    first = HookServer(socket_path=sock)
+    events: list[dict] = []
+    first.event_received.connect(events.append)
+    first.start()
+
+    second = HookServer(socket_path=sock)
+    errors: list[str] = []
+    second.error.connect(errors.append)
+    second.start()
+
+    assert errors and "already listening" in errors[0]
+    assert not second._server.isListening()
+    # the first instance still owns the path and still receives
+    _send(sock, {"event": EVENT_STOP, "cwd": "/tmp/x", "ts": 1.0})
+    _spin(qapp)
+    assert len(events) == 1
+    first.stop()
+
+
+def test_refused_server_stop_leaves_first_socket_alone(
+    qapp: QCoreApplication, tmp_path: Path
+) -> None:
+    """stop() after a refused start() must not unlink the live socket."""
+    sock = tmp_path / "ccwork.sock"
+    first = HookServer(socket_path=sock)
+    events: list[dict] = []
+    first.event_received.connect(events.append)
+    first.start()
+
+    second = HookServer(socket_path=sock)
+    second.start()   # refused — first is alive
+    second.stop()    # must not remove the file
+
+    assert sock.exists()
+    _send(sock, {"event": EVENT_STOP, "cwd": "/tmp/x", "ts": 1.0})
+    _spin(qapp)
+    assert len(events) == 1
+    first.stop()
+    assert not sock.exists()

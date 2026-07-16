@@ -88,12 +88,24 @@ class HookServer(QObject):
         return self._socket_path
 
     def start(self) -> None:
-        """Create parent dir, clean a stale socket, begin listening."""
+        """Create parent dir, clean a stale socket, begin listening.
+
+        Refuses to start if another live server holds the socket: the
+        path is a singleton, and blindly removing it would leave the
+        first instance listening on an unlinked inode — permanently
+        deaf to hook events with no visible symptom beyond frozen
+        sidebar state."""
         # Reset in case caller does start→stop→start cycles (tests).
         self._stopped = False
         self._socket_path.parent.mkdir(parents=True, exist_ok=True)
-        # QLocalServer won't listen on an existing path even if dead; remove it.
-        # removeServer is safe: it only deletes the named-pipe/socket file.
+        if self._socket_path.exists() and self._probe_live():
+            msg = (f"another ccwork is already listening on {self._socket_path}; "
+                   "hook events stay with the first instance")
+            log.error(msg)
+            self.error.emit(msg)
+            return
+        # QLocalServer won't listen on an existing path if dead; remove it.
+        # removeServer is safe here: the probe said nobody is listening.
         QLocalServer.removeServer(str(self._socket_path))
         if not self._server.listen(str(self._socket_path)):
             msg = f"failed to listen on {self._socket_path}: {self._server.errorString()}"
@@ -107,14 +119,29 @@ class HookServer(QObject):
             log.warning("could not chmod %s: %s", self._socket_path, e)
         self.started.emit(str(self._socket_path))
 
+    def _probe_live(self) -> bool:
+        """True if something is accepting connections on the socket path."""
+        probe = QLocalSocket()
+        probe.connectToServer(str(self._socket_path))
+        alive = probe.waitForConnected(200)
+        if alive:
+            probe.disconnectFromServer()
+        probe.close()
+        return alive
+
     def stop(self) -> None:
         # Set first so any slot that fires between close() and clear() knows
         # to short-circuit without touching (potentially freed) state.
         self._stopped = True
+        # Only the instance that actually listened owns the socket file —
+        # a refused start() must not unlink the live instance's socket.
+        owned = self._server.isListening()
         # close() also deletes child QLocalSockets through Qt's parent-owned
         # lifecycle, which disconnects all our slots safely.
         self._server.close()
         self._buffers.clear()
+        if not owned:
+            return
         try:
             self._socket_path.unlink()
         except FileNotFoundError:

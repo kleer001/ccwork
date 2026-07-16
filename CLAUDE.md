@@ -287,7 +287,13 @@ but no widgets):
 - `hook_server.py` — `QLocalServer` listening at
   `$XDG_RUNTIME_DIR/ccwork/ccwork.sock`. Each newline-terminated JSON line
   becomes a single `event_received(dict)` signal. Malformed lines are
-  logged and dropped; the GUI never raises on hook input.
+  logged and dropped; the GUI never raises on hook input. The socket path
+  is a **singleton**: `start()` probes an existing file and refuses to
+  start when another instance answers — stealing the path would leave the
+  first instance listening on an unlinked inode, permanently deaf, with
+  no symptom beyond frozen sidebar badges. Only a dead socket file is
+  cleaned up, and `stop()` unlinks the path only when this instance
+  actually owned the listen.
 - `xterm_osc.py` — applies bg/fg/cursor/font live by writing OSC escapes to
   the xterm's PTY slave (`/dev/pts/N`). Settings xterm reads only at
   startup (scrollback, scrollbar, `-xrm`) require respawn; `apply_live()`
