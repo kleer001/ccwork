@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ccwork dashboard — v2 (research-driven)</title>
+<style>
+  /* WYSIWYG to the running app: settings.toml bg #ffffff / fg #24292f, sans
+     chrome (Qt default), mono only for paths/commits. Research-driven palette
+     discipline: calm neutrals, ONE celebration accent (release green), state
+     color rare + multi-channel. A dip is muted grey, never red. */
+  :root {
+    --bg:#ffffff; --ink:#24292f; --muted:#5b6875; --faint:#8b96a0;
+    --line: rgba(0,0,0,0.08);
+    --card: rgba(0,0,0,0.038);
+    --chip: rgba(0,0,0,0.055);
+    --green:#859900;              /* the single celebration / positive accent */
+    --green-soft: rgba(133,153,0,0.10);
+    --add:#859900; --del:#c98a5e; /* churn encoding only (del muted, not alarm)*/
+    --trend:#2aa198;             /* this-week highlight in the sparkline       */
+    --newwork:#268bd2;           /* new-files / fresh-start cue, used sparingly */
+    --sans: system-ui,-apple-system,"Segoe UI","Noto Sans","DejaVu Sans",sans-serif;
+    --mono: ui-monospace,"DejaVu Sans Mono",Menlo,monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+    font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:900px; margin:0 auto; padding:36px 26px 64px; }
+  .num { font-variant-numeric:tabular-nums; }
+  .mono { font-family:var(--mono); }
+
+  /* ── 1. narrative header (the meaning reads first) ── */
+  .top { display:flex; justify-content:space-between; align-items:flex-start; gap:24px;
+    margin-bottom:22px; }
+  .top h1 { margin:0 0 8px; font-size:15px; font-weight:700; letter-spacing:1.4px;
+    text-transform:uppercase; color:var(--muted); }
+  .narrative { font-size:18px; line-height:1.5; max-width:56ch; font-weight:400; }
+  .narrative b { font-weight:700; }
+  .narrative .rel { color:var(--green); font-weight:700; }
+  .fresh { flex:0 0 auto; text-align:right; font-family:var(--mono); font-size:11.5px;
+    color:var(--faint); }
+  .fresh .live { color:var(--trend); }
+  .fresh .live::before { content:"● "; }
+
+  /* ── 2. trend hero (pattern, not a vanity number) ── */
+  .trend { display:flex; align-items:flex-end; gap:20px; padding:18px 20px;
+    background:var(--card); border-radius:14px; margin-bottom:12px; }
+  .spark { display:flex; align-items:flex-end; gap:6px; height:60px; }
+  .spark .b { width:20px; background:var(--line); border-radius:3px 3px 0 0; min-height:3px; }
+  .spark .b.now { background:var(--trend); }
+  .trend .read { padding-bottom:2px; }
+  .trend .read .big { font-size:30px; font-weight:700; line-height:1; }
+  .trend .read .cap { font-size:12px; color:var(--muted); margin-top:5px; }
+  .trend .read .cap .dn { color:var(--faint); }
+  .trend .read .cap .up { color:var(--green); }
+  .trend .axis { margin-left:auto; align-self:stretch; display:flex; flex-direction:column;
+    justify-content:space-between; font-family:var(--mono); font-size:10px; color:var(--faint);
+    text-align:right; padding-bottom:14px; }
+
+  /* ── 3. week-in-numbers (demoted, small) ── */
+  .facts { display:flex; gap:26px; flex-wrap:wrap; padding:2px 4px 0; margin-bottom:20px;
+    font-size:12.5px; color:var(--muted); }
+  .facts .f b { color:var(--ink); font-weight:700; font-variant-numeric:tabular-nums; }
+  .facts .f .pl { color:var(--add); } .facts .f .mn { color:var(--del); }
+
+  /* ── 4. celebration (the ONE bright moment) ── */
+  .ship { display:flex; align-items:center; gap:12px; padding:12px 16px; border-radius:12px;
+    background:var(--green-soft); border-left:3px solid var(--green); margin-bottom:26px; }
+  .ship .badge { font-family:var(--mono); font-size:12px; font-weight:700; color:var(--green);
+    letter-spacing:.5px; }
+  .ship .what { font-size:14px; } .ship .what b { font-weight:700; }
+  .ship .what .v { font-family:var(--mono); }
+  .ship .when { margin-left:auto; font-family:var(--mono); font-size:11.5px; color:var(--muted); }
+
+  .sechd { font-size:12px; font-weight:700; letter-spacing:1.2px; text-transform:uppercase;
+    color:var(--faint); margin:0 2px 12px; display:flex; gap:10px; align-items:baseline; }
+  .sechd .r { font-weight:400; letter-spacing:0; text-transform:none; font-size:11.5px; }
+
+  /* ── 5. per-repo bento (radar fingerprint + stat ladder) ── */
+  /* single fingerprint hue #268bd2, set in the SVG JS — the shape differentiates */
+  .bento { display:grid; grid-template-columns:repeat(2,1fr); gap:14px; }
+  .repo { background:var(--card); border-radius:14px; padding:15px 16px 13px;
+    display:flex; flex-direction:column; gap:13px; }
+  .repo .hd { display:flex; align-items:center; gap:10px; }
+  .repo .name { font-size:16.5px; font-weight:700; }
+
+  /* beefier tempo badge — the "oomph" */
+  .tempo { margin-left:auto; font-family:var(--mono); font-size:11.5px; font-weight:700;
+    letter-spacing:.4px; padding:4px 11px; border-radius:8px; background:var(--chip);
+    color:var(--muted); display:inline-flex; align-items:center; gap:5px; }
+  .tempo.new { color:#fff; background:var(--newwork); }
+  .tempo.cool { color:var(--muted); background:var(--chip); }
+  .tempo.ship { color:#fff; background:var(--green); }
+
+  .repo .body { display:flex; gap:14px; align-items:center; }
+  .radar { width:132px; height:132px; flex:0 0 auto; }
+  .stats { flex:1; min-width:0; display:flex; flex-direction:column; gap:9px; }
+
+  .headline { display:flex; align-items:baseline; gap:7px; }
+  .headline .v { font-size:27px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1; }
+  .headline .k { font-size:11px; letter-spacing:1px; text-transform:uppercase; color:var(--muted);
+    font-weight:600; }
+
+  .churn .track { height:8px; border-radius:4px; overflow:hidden; display:flex;
+    background:rgba(0,0,0,0.05); }
+  .churn .add { background:var(--add); } .churn .del { background:var(--del); }
+  .churn .lg { display:flex; gap:12px; margin-top:6px; font-family:var(--mono); font-size:11.5px; }
+  .churn .lg .p { color:var(--add); } .churn .lg .m { color:var(--del); }
+  .churn .lg b { font-weight:700; }
+
+  /* stat ladder — the "more stats" */
+  .ladder { display:grid; grid-template-columns:1fr 1fr; gap:4px 14px;
+    font-size:11.5px; color:var(--muted); font-family:var(--mono); }
+  .ladder .n { color:var(--ink); font-weight:700; }
+  .ladder .net { color:var(--add); }
+
+  .foot-chips { display:flex; gap:8px; align-items:center; }
+  .flag { font-family:var(--mono); font-size:10.5px; color:var(--faint); background:var(--chip);
+    padding:2px 8px; border-radius:5px; }
+  .flag.rel { color:var(--green); background:var(--green-soft); font-weight:700; }
+
+  /* ── 6. quiet ── */
+  .quiet { margin-top:30px; }
+  .qgrid { display:flex; flex-wrap:wrap; gap:8px; }
+  .q { font-family:var(--mono); font-size:11.5px; color:var(--muted); background:var(--card);
+    border-radius:8px; padding:6px 11px; }
+  .q b { color:var(--ink); font-weight:600; font-family:var(--sans); }
+  .q .u { color:var(--del); }
+
+  .pagefoot { margin-top:36px; padding-top:14px; border-top:1px solid var(--line);
+    font-size:11px; color:var(--faint); font-family:var(--mono); text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 1. NARRATIVE FIRST -->
+  <div class="top">
+    <div>
+      <h1>This week</h1>
+      <div class="narrative">
+        A growing week. <b>override</b> kicked off from zero — 72 commits, +11k lines —
+        and <span class="rel">claude-slash-bob shipped v1.1.0</span>.
+        <b>dog_in_hills</b> and <b>book_loom</b> eased off after big prior weeks.
+      </div>
+    </div>
+    <div class="fresh">
+      <div class="live">live</div>
+      <div>as of 2:57 pm</div>
+      <div>15 Jul 2026</div>
+    </div>
+  </div>
+
+  <!-- 2. TREND HERO (8 weeks, this week highlighted) -->
+  <div class="trend">
+    <div class="spark" title="commits per trailing week (no merges), 8 weeks">
+      <div class="b" style="height:3px"></div>
+      <div class="b" style="height:4px"></div>
+      <div class="b" style="height:16px"></div>
+      <div class="b" style="height:56px"></div>
+      <div class="b" style="height:35px"></div>
+      <div class="b" style="height:52px"></div>
+      <div class="b" style="height:42px"></div>
+      <div class="b now" style="height:35px"></div>
+    </div>
+    <div class="read">
+      <div class="big num">111</div>
+      <div class="cap">commits this week · <span class="dn">▼ under your 4-wk avg of 131</span></div>
+    </div>
+    <div class="axis"><span>8 weeks</span><span>now →</span></div>
+  </div>
+
+  <!-- 3. WEEK IN NUMBERS (demoted) -->
+  <div class="facts">
+    <div class="f"><span class="pl">+17.4k</span> / <span class="mn">−4.2k</span> lines</div>
+    <div class="f"><b>95</b> new files</div>
+    <div class="f"><b>4</b> of 10 repos active</div>
+    <div class="f"><b>1</b> release</div>
+  </div>
+
+  <!-- 4. CELEBRATION -->
+  <div class="ship">
+    <span class="badge">◆ SHIPPED</span>
+    <span class="what"><b>claude-slash-bob</b> <span class="v">v1.1.0</span> — bumped to the marketplace</span>
+    <span class="when">today</span>
+  </div>
+
+  <!-- 5. PER-REPO BENTO -->
+  <div class="sechd">Active this week <span class="r">— newest activity first · rolling 7 days, merges excluded</span></div>
+  <div class="bento">
+
+    <!-- override -->
+    <div class="repo">
+      <div class="hd"><span class="name">override</span><span class="tempo new">▲ NEW</span></div>
+      <div class="body">
+        <svg class="radar" data-fp="1.00,1.00,1.00,0.92,0.88,1.00"></svg>
+        <div class="stats">
+          <div class="headline"><span class="v num">72</span><span class="k">commits · 4d old</span></div>
+          <div class="churn">
+            <div class="track"><div class="add" style="width:75%"></div><div class="del" style="width:25%"></div></div>
+            <div class="lg"><span class="p">+<b>11,361</b></span><span class="m">−<b>3,724</b></span></div>
+          </div>
+          <div class="ladder">
+            <div>net <span class="net">+7,637</span></div><div><span class="n">57</span> new files</div>
+            <div><span class="n">61</span> changed</div><div><span class="n">7</span> file types</div>
+            <div>~<span class="n">210</span> lines/commit</div><div>growing</div>
+          </div>
+        </div>
+      </div>
+      <div class="foot-chips"><span class="flag">uncommitted</span></div>
+    </div>
+
+    <!-- dog_in_hills -->
+    <div class="repo">
+      <div class="hd"><span class="name">dog_in_hills</span><span class="tempo cool">▼ −32</span></div>
+      <div class="body">
+        <svg class="radar" data-fp="0.40,0.36,0.58,1.00,0.25,0.71"></svg>
+        <div class="stats">
+          <div class="headline"><span class="v num">29</span><span class="k">commits · was 61</span></div>
+          <div class="churn">
+            <div class="track"><div class="add" style="width:93%"></div><div class="del" style="width:7%"></div></div>
+            <div class="lg"><span class="p">+<b>5,032</b></span><span class="m">−<b>372</b></span></div>
+          </div>
+          <div class="ladder">
+            <div>net <span class="net">+4,660</span></div><div><span class="n">33</span> new files</div>
+            <div><span class="n">66</span> changed</div><div><span class="n">5</span> file types</div>
+            <div>~<span class="n">186</span> lines/commit</div><div>mostly new work</div>
+          </div>
+        </div>
+      </div>
+      <div class="foot-chips"><span class="flag">uncommitted</span></div>
+    </div>
+
+    <!-- book_loom -->
+    <div class="repo">
+      <div class="hd"><span class="name">book_loom</span><span class="tempo cool">▼ −16</span></div>
+      <div class="body">
+        <svg class="radar" data-fp="0.11,0.07,0.09,0.41,0.28,0.43"></svg>
+        <div class="stats">
+          <div class="headline"><span class="v num">8</span><span class="k">commits · was 24</span></div>
+          <div class="churn">
+            <div class="track"><div class="add" style="width:92%"></div><div class="del" style="width:8%"></div></div>
+            <div class="lg"><span class="p">+<b>924</b></span><span class="m">−<b>79</b></span></div>
+          </div>
+          <div class="ladder">
+            <div>net <span class="net">+845</span></div><div><span class="n">5</span> new files</div>
+            <div><span class="n">27</span> changed</div><div><span class="n">3</span> file types</div>
+            <div>~<span class="n">125</span> lines/commit</div><div>mostly new work</div>
+          </div>
+        </div>
+      </div>
+      <div class="foot-chips"><span class="flag">uncommitted</span></div>
+    </div>
+
+    <!-- claude-slash-bob -->
+    <div class="repo">
+      <div class="hd"><span class="name">claude-slash-bob</span><span class="tempo ship">◆ v1.1.0</span></div>
+      <div class="body">
+        <svg class="radar" data-fp="0.03,0.004,0.02,0.05,1.00,0.29"></svg>
+        <div class="stats">
+          <div class="headline"><span class="v num">2</span><span class="k">commits · a release</span></div>
+          <div class="churn">
+            <div class="track"><div class="add" style="width:72%"></div><div class="del" style="width:28%"></div></div>
+            <div class="lg"><span class="p">+<b>46</b></span><span class="m">−<b>18</b></span></div>
+          </div>
+          <div class="ladder">
+            <div>net <span class="net">+28</span></div><div><span class="n">0</span> new files</div>
+            <div><span class="n">3</span> changed</div><div><span class="n">2</span> file types</div>
+            <div>~<span class="n">32</span> lines/commit</div><div>tidy release</div>
+          </div>
+        </div>
+      </div>
+      <div class="foot-chips"><span class="flag rel">shipped v1.1.0</span></div>
+    </div>
+
+  </div>
+
+  <!-- 6. QUIET -->
+  <div class="quiet">
+    <div class="sechd">Quiet <span class="r">— no commits in 7 days · lifetime size</span></div>
+    <div class="qgrid">
+      <div class="q"><b>cyber_synth</b> 300 · idle</div>
+      <div class="q"><b>three_pm</b> 188 · idle</div>
+      <div class="q"><b>image_gen</b> 121 · <span class="u">uncommitted</span></div>
+      <div class="q"><b>ccwork</b> 104 · <span class="u">uncommitted</span></div>
+      <div class="q"><b>colonyZine</b> 32 · <span class="u">uncommitted</span></div>
+      <div class="q"><b>glory-of-the-motherland</b> 10 · idle</div>
+    </div>
+  </div>
+
+  <div class="pagefoot">real git snapshot · 2026-07-15 14:57 · no-merges · radar spokes normalized to the busiest repo this week · palette + fonts mirror settings.toml (#ffffff / #24292f)</div>
+
+</div>
+
+<script>
+  // Radar "fingerprint": 6 spokes, identical axes on every card so shapes
+  // compare. data-fp = 6 values 0..1 (Vol, Churn, New, Breadth, Rework, Types),
+  // each normalized to the busiest active repo this week. Single hue — the
+  // silhouette carries the meaning, not color.
+  const NS = "http://www.w3.org/2000/svg";
+  const AXES = ["Vol","Churn","New","Breadth","Rework","Types"];
+  const FP = "#268bd2";
+  const CX = 66, CY = 68, R = 42, FLOOR = 0.05;
+
+  function pt(i, r) {
+    const a = -Math.PI/2 + i * (Math.PI/3);      // start at top, clockwise
+    return [CX + Math.cos(a)*r, CY + Math.sin(a)*r];
+  }
+  function poly(pts) { return pts.map(p => p.join(",")).join(" "); }
+  function el(tag, attrs) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  document.querySelectorAll(".radar").forEach(svg => {
+    svg.setAttribute("viewBox", "0 0 132 138");
+    const vals = svg.dataset.fp.split(",").map(Number);
+    // grid rings (0.5, 1.0) + spokes
+    [0.5, 1.0].forEach(f => {
+      const ring = el("polygon", {
+        points: poly([0,1,2,3,4,5].map(i => pt(i, R*f))),
+        fill: "none", stroke: "rgba(0,0,0,0.10)", "stroke-width": 1 });
+      svg.appendChild(ring);
+    });
+    for (let i = 0; i < 6; i++) {
+      const [x,y] = pt(i, R);
+      svg.appendChild(el("line", { x1: CX, y1: CY, x2: x, y2: y,
+        stroke: "rgba(0,0,0,0.08)", "stroke-width": 1 }));
+      // axis labels
+      const [lx,ly] = pt(i, R + 11);
+      const t = el("text", { x: lx, y: ly + 3, "text-anchor": "middle",
+        "font-size": 8.5, "font-family": "ui-monospace,monospace", fill: "#8b96a0" });
+      t.textContent = AXES[i];
+      svg.appendChild(t);
+    }
+    // data polygon
+    const dpts = vals.map((v,i) => pt(i, R * (FLOOR + (1-FLOOR)*Math.max(0,Math.min(1,v)))));
+    svg.appendChild(el("polygon", { points: poly(dpts),
+      fill: FP, "fill-opacity": 0.16, stroke: FP, "stroke-width": 1.75,
+      "stroke-linejoin": "round" }));
+    dpts.forEach(p => svg.appendChild(el("circle",
+      { cx: p[0], cy: p[1], r: 1.9, fill: FP })));
+  });
+</script>
+</body>
+</html>
