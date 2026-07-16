@@ -81,6 +81,26 @@ def test_dashboard_button_emits_signal(qapp: QApplication, tmp_path: Path) -> No
     assert len(fired) == 1
 
 
+def test_dashboard_sits_beside_recent_at_stack_tail(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """Both tail slots are viewport-parented row-clones glued side by side
+    just under the last row: Recent left, Dashboard right, same baseline."""
+    from src.ui.repo_sidebar import RepoSidebar
+    store = _make_store(tmp_path, [Repo(path="/a", id="r-a"), Repo(path="/b", id="r-b")])
+    sidebar = RepoSidebar(store)
+    sidebar.resize(220, 400)
+    sidebar.show()
+    vp = sidebar._view.viewport()
+    assert sidebar._dashboard_btn.parent() is vp
+    assert sidebar._recent_btn.parent() is vp
+    last = sidebar._view.visualRect(sidebar.model.index(1))
+    assert sidebar._recent_btn.y() == last.bottom() + 1
+    assert sidebar._dashboard_btn.y() == sidebar._recent_btn.y()
+    assert sidebar._dashboard_btn.x() > sidebar._recent_btn.x() + sidebar._recent_btn.width() - 1
+    assert not sidebar._dashboard_btn.isHidden()
+
+
 def test_dashboard_swaps_to_placeholder_without_deselecting(win) -> None:
     win._sidebar._dashboard_btn.click()
     assert win._stack.currentWidget() is win._empty_placeholder

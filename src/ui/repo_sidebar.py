@@ -213,51 +213,52 @@ class RepoSidebar(QWidget):
         self._add_btn = QPushButton("+ Add Repo", self)
         self._add_btn.clicked.connect(self.add_repo_via_dialog)
 
-        # Dashboard button: overlay-navigate to the splash without tearing
-        # down the current terminal. A normal layout widget above Add Repo —
-        # unlike _recent_btn, which is viewport-parented and glued to the
-        # tail of the repo stack.
-        self._dashboard_btn = QPushButton("⌂  Dashboard", self)
-        self._dashboard_btn.setObjectName("dashboardBtn")
-        self._dashboard_btn.setCursor(Qt.PointingHandCursor)
-        self._dashboard_btn.setToolTip(
-            "Show the dashboard — the current terminal keeps running"
-        )
-        self._dashboard_btn.clicked.connect(lambda: self.dashboard_requested.emit())
-        self._style_dashboard_btn()
-
-        # "Recent" recall slot: a half-width, half-height faded row-clone with
-        # rounded bottom corners that lives at the *bottom of the repo stack* —
+        # Tail slots: two half-width, half-height faded row-clones with
+        # rounded bottom corners that live at the *bottom of the repo stack* —
         # parented to the list viewport and repositioned just below the last
-        # row, so it rides up and down as repos are added and removed. Click
-        # opens a scrollable list of every removed repo (uncapped) to re-add.
-        # Styled from the palette + AMBIENT_COLOR so it reads as quiet ambient
-        # presence, matching the row delegate.
+        # row, so they ride up and down as repos are added and removed.
+        # Styled from the palette + AMBIENT_COLOR so they read as quiet
+        # ambient presence, matching the row delegate.
+        #
+        # Left: "Recent" recall — click opens a scrollable list of every
+        # removed repo (uncapped) to re-add.
         self._recent_btn = QPushButton("⟲  Recent", self._view.viewport())
         self._recent_btn.setObjectName("recentSlot")
         self._recent_btn.setFixedHeight(18)
         self._recent_btn.setCursor(Qt.PointingHandCursor)
         self._recent_btn.clicked.connect(self._show_recent_popup)
         self._style_recent_slot()
-        self._recent_btn.hide()  # shown/placed by _position_recent_slot
+        self._recent_btn.hide()  # shown/placed by _position_tail_slots
         self._recent_popup: QWidget | None = None
+
+        # Right: "Dashboard" — overlay-navigate to the splash without
+        # tearing down the current terminal.
+        self._dashboard_btn = QPushButton("⌂  Dashboard", self._view.viewport())
+        self._dashboard_btn.setObjectName("dashboardBtn")
+        self._dashboard_btn.setFixedHeight(18)
+        self._dashboard_btn.setCursor(Qt.PointingHandCursor)
+        self._dashboard_btn.setToolTip(
+            "Show the dashboard — the current terminal keeps running"
+        )
+        self._dashboard_btn.clicked.connect(lambda: self.dashboard_requested.emit())
+        self._style_dashboard_btn()
+        self._dashboard_btn.hide()  # shown/placed by _position_tail_slots
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._view, 1)
-        lay.addWidget(self._dashboard_btn, 0)
         lay.addWidget(self._add_btn, 0)
 
-        # Keep the slot glued to the tail of the stack through every change
+        # Keep the slots glued to the tail of the stack through every change
         # that shifts the last row: insert/remove, reset, the bubble-walk
         # (rowsMoved), grouping height changes (dataChanged), and scrolling.
-        self._model.rowsInserted.connect(self._position_recent_slot)
-        self._model.rowsRemoved.connect(self._position_recent_slot)
-        self._model.modelReset.connect(self._position_recent_slot)
-        self._model.rowsMoved.connect(self._position_recent_slot)
-        self._model.layoutChanged.connect(self._position_recent_slot)
-        self._model.dataChanged.connect(self._position_recent_slot)
-        self._view.verticalScrollBar().valueChanged.connect(self._position_recent_slot)
+        self._model.rowsInserted.connect(self._position_tail_slots)
+        self._model.rowsRemoved.connect(self._position_tail_slots)
+        self._model.modelReset.connect(self._position_tail_slots)
+        self._model.rowsMoved.connect(self._position_tail_slots)
+        self._model.layoutChanged.connect(self._position_tail_slots)
+        self._model.dataChanged.connect(self._position_tail_slots)
+        self._view.verticalScrollBar().valueChanged.connect(self._position_tail_slots)
 
         # Allow the splitter to drag the sidebar narrow. The status badge is
         # always reserved when present; text elides to fit.
@@ -625,9 +626,8 @@ class RepoSidebar(QWidget):
         return added
 
     def _style_dashboard_btn(self) -> None:
-        """Quiet ambient styling for the Dashboard button — same palette +
-        AMBIENT_COLOR recipe as the Recent slot, so it reads as sidebar
-        furniture rather than a call to action."""
+        """Paint the Dashboard slot as a quiet faded row-clone — the same
+        recipe as the Recent slot, so the two read as one split tail."""
         from src.ui.badge_theme import AMBIENT_COLOR
         pal = self.palette()
         base = pal.base().color().name()
@@ -640,8 +640,9 @@ class RepoSidebar(QWidget):
                 background: {base};
                 color: {amb};
                 border: 1px solid {mid};
-                border-radius: 4px;
-                padding: 2px 8px;
+                border-top: none;
+                border-radius: 0 0 8px 8px;
+                padding: 0 8px;
                 text-align: left;
                 font-size: 11px;
             }}
@@ -676,37 +677,44 @@ class RepoSidebar(QWidget):
             """
         )
 
-    def _position_recent_slot(self, *args) -> None:
-        """Glue the slot to the bottom of the stack, just under the last row.
+    def _position_tail_slots(self, *args) -> None:
+        """Glue both slots to the bottom of the stack, just under the last row.
 
-        Parented to the viewport, so `visualRect` coordinates line up. Follows
-        the last row wherever it lands — including off the bottom when the list
-        is scrolled — so it reads as the tail of the stack, not a fixed footer.
+        Parented to the viewport, so `visualRect` coordinates line up. They
+        follow the last row wherever it lands — including off the bottom when
+        the list is scrolled — so they read as the tail of the stack, not a
+        fixed footer. Recent takes the left half, Dashboard the right.
         """
         vp = self._view.viewport()
         n = self._model.rowCount()
         if n > 0:
             r = self._view.visualRect(self._model.index(n - 1))
-            self._recent_btn.move(max(0, r.left()), r.bottom() + 1)
+            x, y = max(0, r.left()), r.bottom() + 1
         else:
-            self._recent_btn.move(0, 0)
-        self._recent_btn.setFixedWidth(max(60, vp.width() // 2))
+            x, y = 0, 0
+        gap = 2
+        half = max(30, (vp.width() - gap) // 2)
+        self._recent_btn.move(x, y)
+        self._recent_btn.setFixedWidth(half)
+        self._dashboard_btn.move(x + half + gap, y)
+        self._dashboard_btn.setFixedWidth(max(30, vp.width() - half - gap))
         count = len(self._store.recent)
         self._recent_btn.setEnabled(count > 0)
         self._recent_btn.setToolTip(
             f"{count} recently removed — click to re-add"
             if count else "No recently removed repos"
         )
-        self._recent_btn.show()
-        self._recent_btn.raise_()
+        for btn in (self._recent_btn, self._dashboard_btn):
+            btn.show()
+            btn.raise_()
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
-        self._position_recent_slot()
+        self._position_tail_slots()
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
-        self._position_recent_slot()
+        self._position_tail_slots()
 
     def _show_recent_popup(self) -> None:
         recent = list(self._store.recent)

@@ -146,26 +146,28 @@ notifications" preference (single source of truth:
   model / delegate / `ROLE_*` / `STATUS_*` names, so
   `from src.ui.repo_sidebar import …` keeps resolving for callers and tests.
 
-  Below the list, above the `+ Add Repo` button, the sidebar hosts the
-  **Recent recall slot** (`_recent_btn`) — a half-width, half-height faded
-  row-clone with rounded bottom corners that reads as a quiet tail of the
-  stack. It is **parented to the list viewport**, not pinned to a layout,
-  and `_position_recent_slot` glues it just below the last row's
-  `visualRect` on every change that shifts that row (insert / remove /
-  reset / bubble-walk `rowsMoved` / grouping `dataChanged` / scroll,
-  plus `resizeEvent` / `showEvent`), so it rides up and down with the
-  stack. Clicking it opens `_show_recent_popup`: a `Qt.Popup` `QListWidget`
-  of every `repo_store.recent` entry (two-line emoji + basename + path),
-  **dropping down** into the empty space below the slot (flips up only if
-  it would fall off-screen). Item widgets set `WA_TransparentForMouseEvents`
-  so the list receives `::item:hover` rollover *and* still fires
-  `itemClicked` → `_readd_recent` → `_add_path`, which re-adds the repo and
-  drops it from `recent`. Styling is derived from the palette + `AMBIENT_COLOR`
-  so it matches the row delegate in any theme.
+  Below the list, above the `+ Add Repo` button, the sidebar hosts two
+  **tail slots** — half-width, half-height faded row-clones with rounded
+  bottom corners that read as a quiet split tail of the stack: the
+  **Recent recall slot** (`_recent_btn`, left half) and the **Dashboard
+  slot** (`_dashboard_btn`, right half). Both are **parented to the list
+  viewport**, not pinned to a layout, and `_position_tail_slots` glues
+  them side by side just below the last row's `visualRect` on every
+  change that shifts that row (insert / remove / reset / bubble-walk
+  `rowsMoved` / grouping `dataChanged` / scroll, plus `resizeEvent` /
+  `showEvent`), so they ride up and down with the stack. Styling is
+  derived from the palette + `AMBIENT_COLOR` so it matches the row
+  delegate in any theme.
 
-  Between the list and `+ Add Repo` sits the **Dashboard button**
-  (`_dashboard_btn`, a normal layout widget, same quiet palette +
-  `AMBIENT_COLOR` styling). It emits `dashboard_requested`; MainWindow's
+  Clicking **Recent** opens `_show_recent_popup`: a `Qt.Popup`
+  `QListWidget` of every `repo_store.recent` entry (two-line emoji +
+  basename + path), **dropping down** into the empty space below the slot
+  (flips up only if it would fall off-screen). Item widgets set
+  `WA_TransparentForMouseEvents` so the list receives `::item:hover`
+  rollover *and* still fires `itemClicked` → `_readd_recent` →
+  `_add_path`, which re-adds the repo and drops it from `recent`.
+
+  Clicking **Dashboard** emits `dashboard_requested`; MainWindow's
   `_show_dashboard` swaps the stack to the splash as an **overlay** —
   sidebar selection and terminals untouched. Return paths: re-clicking the
   selected row (`repo_clicked`, wired off the view's `clicked` signal
