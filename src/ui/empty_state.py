@@ -4,7 +4,7 @@ Three code paths land here: a cold start with no repo selected, a
 terminal exiting while it was the currently-displayed one, and the
 sidebar's Dashboard button. With no repos the widget is a clean
 onboarding screen (logo + heading + hints). Once repos exist it becomes
-the weekly-retro dashboard mirrored on ``mockups/dashboard.html``:
+the weekly-retro dashboard mirrored on ``docs/design/dashboard.html``:
 
   1. narrative sentence first (deterministic template NLG) + freshness
   2. 8-week trend hero — commits per trailing week, this week highlighted

@@ -2,8 +2,8 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="logo/banner.svg">
-    <img alt="ccwork — Many repos. Real terminals. Live alerts." src="logo/banner_light.svg" width="640">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner.svg">
+    <img alt="ccwork — Many repos. Real terminals. Live alerts." src="assets/banner_light.svg" width="640">
   </picture>
 </p>
 
