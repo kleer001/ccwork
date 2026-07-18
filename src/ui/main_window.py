@@ -78,10 +78,10 @@ from src.ui.terminal_host import TerminalHost
 from src.ui.title_label import TitleLabel
 
 
-# Logo lives at <repo>/logo/v2-icon.svg. Resolve relative to this module
+# Logo lives at <repo>/assets/v2-icon.svg. Resolve relative to this module
 # the same way src/main.py does for the window icon, so an installed
 # package and an in-tree run both find it without a runtime config lookup.
-_LOGO_PATH = Path(__file__).resolve().parent.parent.parent / "logo" / "v2-icon.svg"
+_LOGO_PATH = Path(__file__).resolve().parent.parent.parent / "assets" / "v2-icon.svg"
 
 
 log = logging.getLogger(__name__)

@@ -2,8 +2,8 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="logo/banner.svg">
-    <img alt="ccwork — Many repos. Real terminals. Live alerts." src="logo/banner_light.svg" width="640">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner.svg">
+    <img alt="ccwork — Many repos. Real terminals. Live alerts." src="assets/banner_light.svg" width="640">
   </picture>
 </p>
 
@@ -17,6 +17,17 @@
 A Qt desktop GUI for running Claude Code across many repos. One window, a
 clickable sidebar of repos, real embedded terminals, and a live alerts panel
 driven by Claude Code's Stop/Notification hooks.
+
+<!--
+  DEMO GIF — highest-ROI addition to this README (see
+  docs/marketing/launch/demo-shotlist.md). Record the sidebar + embedded
+  terminals + status badges lighting up, save to docs/images/demo.gif
+  (~12 FPS, <5 MB), then uncomment:
+
+<p align="center">
+  <img alt="ccwork in action — multiple repos, live status badges" src="docs/images/demo.gif" width="720">
+</p>
+-->
 
 ## What it does
 
@@ -188,3 +199,18 @@ under `$HOME` (no sudo), backs up every file it touches to
 `~/.local/share/ccwork/backups/`, and supports `--uninstall` to revert.
 
 </details>
+
+## Contributing
+
+Contributions are welcome — bug reports, ideas, docs, and code. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for dev setup and how to run the
+tests, and check the
+[`good first issue`](https://github.com/kleer001/ccwork/labels/good%20first%20issue)
+label for a place to start. This repo ships a detailed
+[`CLAUDE.md`](CLAUDE.md), so it's friendly to AI-assisted contributions.
+Please review our [Code of Conduct](CODE_OF_CONDUCT.md); to report a
+vulnerability, see [`SECURITY.md`](SECURITY.md).
+
+## License
+
+[MIT](LICENSE) © kleer001

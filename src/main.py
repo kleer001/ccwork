@@ -65,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("ccwork")
     app.setApplicationDisplayName("ccwork")
 
-    icon_path = Path(__file__).resolve().parent.parent / "logo" / "v2-icon.svg"
+    icon_path = Path(__file__).resolve().parent.parent / "assets" / "v2-icon.svg"
     if icon_path.is_file():
         app.setWindowIcon(QIcon(str(icon_path)))
 

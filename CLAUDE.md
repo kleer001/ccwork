@@ -67,7 +67,7 @@ repo at launch is gated by `ui.restore_last_repo` (default on); when off,
 ccwork lands on the splash. With no repos on the shelf the widget is a
 clean onboarding screen (logo + heading + hint lines + rotating tip);
 once repos exist it becomes the **weekly-retro dashboard** (reference
-spec: `mockups/dashboard.html`, WYSIWYG to the app), reachable any time
+spec: `docs/design/dashboard.html`, WYSIWYG to the app), reachable any time
 via the sidebar's Dashboard button. Reading order: a deterministic
 narrative sentence first (`summarize` — template NLG keyed off ISO week
 number, no LLM), a freshness stamp, an 8-week trailing-commit `TrendChart`
