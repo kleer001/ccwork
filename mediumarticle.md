@@ -2,11 +2,36 @@
 
 ccwork is a Qt desktop app that runs several `claude` sessions side by side,
 one per repository, and paints the live state of each one — working, waiting
-for permission, done, running subagents — in a sidebar. ccwork started
-on exactly that substrate — a bash-layer wrapper around a terminal multiplexer
-(tmux/Zellij) that renamed panes, animated a spinner, and relayed hooks to
-`notify-send`. It hit a ceiling and got rewritten as a desktop app. The reasons
-are structural, not stylistic.
+for permission, done, running subagents — in a sidebar. It started
+on exactly the substrate in the title — a bash-layer wrapper around a terminal
+multiplexer (tmux/Zellij) that renamed panes, animated a spinner, and relayed
+hooks to `notify-send`. It hit a ceiling and got rewritten as a desktop app. The
+reasons are structural, not stylistic.
+
+## What the substrate couldn't give
+
+Two lists sum up why the multiplexer had to go.
+
+The focus model broke the things that had to update while you weren't looking:
+
+- Renaming a tab renames whichever tab is *currently focused*, not the tab where
+  the calling process lives.
+- No environment variable a background process can read to learn which tab it's
+  attached to — so the spinner and the Stop/Notification hooks renamed whatever
+  tab you'd switched to.
+
+And the substrate simply didn't offer the chrome the tool needed:
+
+- No clickable list of repos.
+- No real mouse in the panes.
+- No stable header showing which repo you're in.
+- No persistent alert history — only transient OS toasts that vanish.
+- No live theming — no way to push font or color-scheme changes to running
+  terminals.
+- No per-repo unread badges.
+
+Every one of these is at the mercy of somebody else's focus model. The rest of
+this piece is the same points in detail.
 
 ## The reasons
 
