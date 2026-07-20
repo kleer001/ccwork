@@ -2,12 +2,27 @@
 
 ccwork is a Qt desktop app that runs several `claude` sessions side by side,
 one per repository, and paints the live state of each one — working, waiting
-for permission, done, running subagents — in a sidebar. The obvious first
-instinct for a tool that "shows a bunch of terminals at once" is a terminal
-multiplexer: tmux, GNU screen, Zellij, or the wezterm mux. That instinct is
-wrong here, and the reasons are structural, not stylistic.
+for permission, done, running subagents — in a sidebar. ccwork started
+on exactly that substrate — a bash-layer wrapper around a terminal multiplexer
+(tmux/Zellij) that renamed panes, animated a spinner, and relayed hooks to
+`notify-send`. It hit a ceiling and got rewritten as a desktop app. The reasons
+are structural, not stylistic.
 
 ## The reasons
+
+**You can't reliably rename a tab mid-flight.**
+
+The original idea was small: while Claude was thinking, animate the tab name with
+a braille spinner, and rename the tab from the hooks when a turn finished. It
+worked while you sat in front of it and fell apart the moment you switched tabs.
+The multiplexer's rename command renames whichever tab is *currently focused*,
+not the tab where the calling process lives, and there's no environment variable
+a background process can read to learn which tab it's attached to. Start Claude
+in tab 3, switch to tab 7 to read email, and the spinner cheerfully renames tab 7
+ten times a second. The notification hooks had the same bug — they fire after
+you've already moved on, so they always race against focus. The spinner and the
+rename both had to be pulled out. In ccwork the spinner is drawn directly in the
+sidebar row that owns it, on a surface the app controls end to end.
 
 **A multiplexer multiplexes text. This app needs a window.**
 
