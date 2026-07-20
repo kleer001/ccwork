@@ -1,29 +1,136 @@
-# The bug that turned my session manager into a desktop app
+# Don't try to make this in a terminal multiplexer like Tmux or Zellij
 
-I started ccwork as a one-evening project. A small notification, a renamed terminal tab, and a script to glue them together. That was the whole product. The README took longer to write than the code.
+ccwork is a Qt desktop app that runs several `claude` sessions side by side,
+one per repository, and paints the live state of each one — working, waiting
+for permission, done, running subagents — in a sidebar. ccwork started
+on exactly that substrate — a bash-layer wrapper around a terminal multiplexer
+(tmux/Zellij) that renamed panes, animated a spinner, and relayed hooks to
+`notify-send`. It hit a ceiling and got rewritten as a desktop app. The reasons
+are structural, not stylistic.
 
-For a few days it did the job. I added a wrapper around the `claude` command that picked up where the last conversation had left off, an installer that could cleanly undo itself, and — because no tool ships without one — a comparison table against the competition. The first draft of that table came out snarky. The second replaced the snark with links to specific bugs in the competing projects. The third rewrote the whole thing in positive framing, crediting the other tools for what they did well. It's a useful exercise. You learn what your tool is actually for when you're forced to articulate what it isn't.
+## The reasons
 
-Then I tried to add a spinner.
+**You can't reliably rename a tab mid-flight.**
 
-The idea was small. While Claude was thinking, animate the tab name with a braille spinner cycling through 10 frames, 10 times a second. The wrapper would fork a background loop that asked the terminal multiplexer to rename the tab on a timer.
+The original idea was small: while Claude was thinking, animate the tab name with
+a braille spinner, and rename the tab from the hooks when a turn finished. It
+worked while you sat in front of it and fell apart the moment you switched tabs.
+The multiplexer's rename command renames whichever tab is *currently focused*,
+not the tab where the calling process lives, and there's no environment variable
+a background process can read to learn which tab it's attached to. Start Claude
+in tab 3, switch to tab 7 to read email, and the spinner cheerfully renames tab 7
+ten times a second. The notification hooks had the same bug — they fire after
+you've already moved on, so they always race against focus. The spinner and the
+rename both had to be pulled out. In ccwork the spinner is drawn directly in the
+sidebar row that owns it, on a surface the app controls end to end.
 
-It looked great when I was sitting in front of it. As soon as I switched to another tab to read my email, the spinner started overwriting *that* tab's name instead.
+**A multiplexer multiplexes text. This app needs a window.**
 
-Here's what I didn't know. The rename command in this multiplexer renames whichever tab is currently focused, not the tab where the calling process lives. And there was no environment variable I could read to tell my background process which tab it was attached to. If I started Claude in tab 3 and switched to tab 7, my spinner cheerfully renamed tab 7 ten times a second.
+The terminals in ccwork are real `xterm` processes, embedded into the GUI via
+XEmbed with `xterm -into <winId>`. The Qt widget owns a native X window, xterm
+is reparented into it, and the two are resized in lockstep so the PTY gets
+`SIGWINCH`. There is no Wayland equivalent, which is why the app forces
+`QT_QPA_PLATFORM=xcb` and is Linux + X11/XWayland only. A multiplexer gives you
+panes inside one terminal grid; it does not give you a window you can draw
+pixels into next to those panes. Everything below depends on having that
+window.
 
-I pulled the spinner out. Then I pulled the same rename out of the notification hooks, because they had the same bug — those hooks fire after I've already moved on, so they always race against focus.
+**The status surface is graphical, per-repo, and animated.**
 
-That was when I admitted the multiplexer was the wrong substrate. There was no clickable list of repos. No stable header showing which repo I was in. No persistent alert history — just transient OS toasts that vanished as soon as you blinked. And every piece of UI I wanted to add was at the mercy of somebody else's focus model.
+Each sidebar row carries state a status line can't express: an animated braille
+working spinner (one of five variants, chosen per repo so it's stable across
+launches), a red attention dot when a session hits a permission prompt, a green
+done dot after a turn ends, a left-edge subagent "twinkle" that pulses while
+background agents run, and an ambient glyph that switches from a bare-terminal
+mark to a "Claude is here" mark on session start. These are colored, layered
+(two right-edge badge slots plus a left-edge stripe), and they animate on
+independent clocks. A tmux status line is one row of text.
 
-So I rewrote it as a desktop app.
+**State comes from Claude Code hooks over a socket, not from scraping output.**
 
-The new ccwork is a window with a sidebar of repos on the left and an embedded terminal on the right. Each repo gets its own real terminal, the same one I'd been using all along, but the desktop app owns the frame around it: the sidebar with branch names and unread badges, the alerts panel, the preferences dialog. When Claude finishes a turn or pings for input, a small helper script forwards the event to the app over a local socket, and the right repo lights up. Color schemes and font changes can be picked in a dialog and pushed live to every running terminal without restarting anything. By the end of that work session there were 82 passing tests.
+ccwork doesn't guess what a session is doing by reading its scrollback. Claude
+Code hooks (`UserPromptSubmit`, `Stop`, `Notification`, `PreToolUse`,
+`SubagentStop`, `SessionStart`, `SessionEnd`) are wired to a sink that writes
+one JSON line per event to a Unix socket, which a `QLocalServer` inside the GUI
+turns into signals that drive the row state. That event-to-state machine —
+which session is live, which is working, how many subagents are in flight — has
+no natural home in a multiplexer. It needs a process that owns the socket, the
+window, and the model behind the rows.
 
-The first stretch after the pivot was a parade of small embedding bugs. Live font changes silently disappeared because the terminal had a setting, off by default, that refuses font changes from the outside. The desktop chrome ignored my chosen color scheme because the underlying widget toolkit was quietly inheriting the system style. Keyboard zoom shortcuts didn't reach the app at all — the embedded terminal grabs input before anything else gets a look — and the fix was to ask the windowing system to route those specific key combinations to the outer window first, before the terminal could swallow them. The same trick wired up tab cycling and a right-click menu.
+**Keyboard handling fights the terminal, and wins at the X-server level.**
 
-Then the cleanup. The README, which had drifted into a reference manual, was trimmed to an install section and a collapsed expandable block for the manual flow. A one-line install script became the front door. The automated test suite had been failing on every commit, and the cause turned out to be a Python version that had moved past what the GUI library shipped prebuilt binaries for, plus a few system libraries the offscreen test mode quietly depends on. I deleted a session-persistence path I'd added during the pivot but never actually wired into anything, along with two helper modules whose only consumers were code I'd just deleted.
+Because the embedded xterm is not a Qt widget, when it holds X input focus Qt's
+normal shortcut chain never sees a keypress. The fix is a passive `XGrabKey` on
+the app's own X window plus one native event filter, intercepting combos at the
+X-server level before xterm can consume them — scoped to ccwork's focus chain
+so the shortcuts don't leak into other applications. This is the opposite of how
+a multiplexer works, where the mux is the thing eating your keys.
 
-And the spinner came back. This time it's a small braille animation drawn directly in the sidebar, redrawn 10 times a second, but only when at least one repo is actually working. Same animation. Different surface — one I owned end to end.
+**The rest is GUI, full stop.**
 
-That's the lesson I'd take from ccwork, if I were the kind of writer who liked to end on a lesson: when your interface keeps fighting the layer underneath it, the layer underneath is the bug.
+A weekly-retro dashboard with an 8-week commit trend chart and per-repo radar
+fingerprints. A crash-recovery banner that lists the Claude sessions open when
+the app died, each with Copy and Launch buttons. An emoji badge picker. A recent
+-repo recall popup. Desktop notifications. None of these are text; all of them
+need the window.
+
+## The dogfooding, layer by layer
+
+The features didn't land as a plan. They landed in waves, each one added while
+using the tool, then hardened when the use exposed a problem.
+
+**Keybindings, and then keybindings scoped.** The first wave replaced Qt's
+`QAction` shortcuts with the root-window `XGrabKey` approach so hotkeys would
+fire even while xterm held focus. Using it immediately surfaced the bug: a root
+grab is system-global, so `Ctrl+Shift+P` and `Ctrl+Tab` were cycling repos and
+popping dialogs while the user was in Firefox. The follow-up moved the grab from
+the X root to the app's own window, scoping the shortcuts to ccwork's focus
+chain — and that scoping became the load-bearing regression guard the live test
+suite exists to protect.
+
+**Window ergonomics.** Persisted and restored window size, position, and
+maximize state. A working-count suffix in the title bar. Per-turn elapsed time
+in the working-row tooltip. Row-jump feedback in the status bar. An empty-state
+placeholder with a logo and hints. An F1 keyboard cheatsheet. Small things, each
+one added because the daily use made its absence obvious.
+
+**Refactors under load.** As features stacked, `main_window.py` and
+`repo_sidebar.py` grew. The sidebar was split into four modules — model,
+delegate, theme, widget — the 1813-line file broken up without changing
+behavior. The main window had its bell button, terminal menu, and key bindings
+extracted. Persist, grab, and test-fixture boilerplate was deduplicated. This is
+the maintenance layer that made the later features cheap.
+
+**Terminal correctness.** Opting xterm out of X11 session management. Warning
+before `Ctrl+C` reaches the foreground process, and copying selections to the
+clipboard on highlight. Distinguishing a missing repo directory from a detached
+HEAD, with a "Rebind to…" action to repoint the row.
+
+**The badge and subagent layer.** Badge glyphs, colors, and labels moved into a
+config-driven theme module overridable by a `badges.toml`. The subagent twinkle
+was wired to fire on `Task`/`Agent` dispatch and to keep painting until each
+`SubagentStop` arrived. The spinner and twinkle got clear-on-exit handling so a
+terminal closing didn't leave them animating forever.
+
+**The splash became a dashboard.** First a live git-pulse bento — a week's
+commit total, a bar chart, repos with uncommitted changes, the most recent
+commit — with stats gathered off the GUI thread so git forks never blocked the
+UI. Then that was replaced with a full weekly-retro dashboard: a narrative
+sentence, an 8-week trend hero, per-repo radar fingerprints normalized to the
+busiest repo, a release callout, all on rolling 7-day windows re-swept every 60
+seconds because the board claims to be live.
+
+**Recovery and resilience.** A crash-recovery banner that remembers which Claude
+conversations were open when the app died and offers them back with Copy and
+Launch buttons — handing the resume command to the shell via history rather than
+blind-typing into a half-booted PTY. A fix so one session's `SessionEnd` doesn't
+wipe a sibling session's live working spinner on the same repo. A refusal to
+steal the hook socket from an already-running instance, which would otherwise
+leave the first instance permanently deaf.
+
+**The tail of the stack.** A recent-repo recall slot and a Dashboard slot at the
+bottom of the sidebar, then the v0.2.0 release.
+
+Every one of these is either a graphical surface, a hook-driven state change, an
+X-server-level input grab, or a window the app draws into. A multiplexer gives
+you none of the four.
