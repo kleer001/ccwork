@@ -50,6 +50,8 @@ from PySide6.QtWidgets import (
 from src.core import repo_store
 from src.core.hook_server import (
     EVENT_NOTIFICATION,
+    EVENT_SESSION_END,
+    EVENT_SESSION_START,
     EVENT_STOP,
     EVENT_USER_PROMPT_SUBMIT,
 )
@@ -60,6 +62,7 @@ from src.core.repo_store import Repo, RepoStore
 from src.ui.badge_theme import STATUS_ATTENTION, STATUS_DONE
 from src.ui.repo_delegate import RepoDelegate
 from src.ui.repo_model import (
+    ROLE_ACTIVE_GROUP,
     ROLE_BRANCH,
     ROLE_HAS_TERMINAL,
     ROLE_LAST_FOCUSED,
@@ -383,6 +386,7 @@ class RepoSidebar(QWidget):
     def clear_session(self, path: str) -> None:
         self._model.clear_session(path)
         self._refresh_spinner_timer()
+        self._maybe_walk()
 
     def apply_hook_event(
         self, event: str, path: str, payload: dict | None = None
@@ -407,6 +411,10 @@ class RepoSidebar(QWidget):
         # the sidebar under the user's eye.
         if event in (EVENT_USER_PROMPT_SUBMIT, EVENT_STOP, EVENT_NOTIFICATION):
             self._maybe_schedule_reorder()
+        # Session start/end change group membership *and* the sort tier, so
+        # they walk directly rather than through the turn-activity debounce.
+        elif event in (EVENT_SESSION_START, EVENT_SESSION_END):
+            self._maybe_walk()
 
     def _refresh_spinner_timer(self) -> None:
         """Start the spinner ticker when any row needs animation; stop otherwise.

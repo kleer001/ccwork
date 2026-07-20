@@ -46,7 +46,6 @@ def test_defaults_reproduce_solarized_palette(tmp_path: Path) -> None:
     assert t.status_attention.color == QColor(220, 50, 47)
     assert t.status_attention.value == STATUS_ATTENTION
     assert t.session_glyph == "⠿"
-    assert t.terminal_glyph == "▌"
     assert t.subagent_frames == (
         "✲", "✵", "✷", "✱", "❂", "✹", "✺", "✸", "❉", "❊", "❋",
         "❊", "❉", "✸", "✺", "✹", "❂", "✱", "✷", "✵",

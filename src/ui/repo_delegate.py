@@ -23,10 +23,10 @@ from src.ui.badge_theme import (
     SESSION_ACTIVE_GLYPH,
     STATUS_ATTENTION,
     SUBAGENT_FRAMES,
-    TERMINAL_ONLY_GLYPH,
     spinner_for_id,
 )
 from src.ui.repo_model import (
+    ROLE_ACTIVE_GROUP,
     ROLE_BRANCH,
     ROLE_HAS_TERMINAL,
     ROLE_LAST_FOCUSED,
@@ -99,10 +99,10 @@ class RepoDelegate(QStyledItemDelegate):
         """Is `index` the first inactive row directly below an active one?"""
         if not self.group_enabled or not index.isValid() or index.row() == 0:
             return False
-        if bool(index.data(ROLE_HAS_TERMINAL)):
+        if bool(index.data(ROLE_ACTIVE_GROUP)):
             return False
         prev = index.model().index(index.row() - 1)
-        return bool(prev.data(ROLE_HAS_TERMINAL))
+        return bool(prev.data(ROLE_ACTIVE_GROUP))
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         h = self.ROW_HEIGHT
@@ -178,11 +178,10 @@ class RepoDelegate(QStyledItemDelegate):
         path_missing: bool = bool(index.data(ROLE_PATH_MISSING))
         subagents: int = int(index.data(ROLE_SUBAGENTS) or 0)
         session_active: bool = bool(index.data(ROLE_SESSION_ACTIVE))
-        # Ambient badges fire iff the row has a terminal. Without a
-        # terminal there's nothing to be "in" or "exited from".
-        ambient_glyph = ""
-        if has_terminal:
-            ambient_glyph = SESSION_ACTIVE_GLYPH if session_active else TERMINAL_ONLY_GLYPH
+        # The ambient badge marks a live Claude session, nothing else. A
+        # terminal left at a bare bash prompt gets no glyph at all — it's
+        # not pending work, and a badge there reads as an unfinished task.
+        ambient_glyph = SESSION_ACTIVE_GLYPH if (has_terminal and session_active) else ""
 
         # Last-focused bookmark: thin left-edge stripe instead of a right-edge
         # dot, so the badge column stays reserved for genuine Claude alerts.

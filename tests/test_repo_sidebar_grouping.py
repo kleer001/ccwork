@@ -1,4 +1,4 @@
-"""apply_terminal_grouping floats active-terminal repos to the top.
+"""apply_terminal_grouping floats live-Claude-session repos to the top.
 
 Composes with the activity-based auto-arrange: grouping is the primary
 key, recency the secondary one, so an inactive repo with very recent
@@ -16,6 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
+from src.core.hook_server import EVENT_SESSION_END, EVENT_STOP
 from src.core.repo_store import Repo, RepoStore
 from src.core.settings import Settings, UISettings
 from src.ui.repo_sidebar import STATUS_DONE, RepoListModel, RepoSidebar
@@ -36,6 +37,14 @@ def _ids(model: RepoListModel) -> list[str]:
     return [r.id for r in model._store.repos]
 
 
+def _go_live(model, repo_id: str, path: str) -> None:
+    """Put a row in the active group: a terminal *and* a live Claude session.
+    A terminal parked at a bare bash prompt does not float.
+    """
+    model.apply_hook_event("SessionStart", path, {"session_id": f"s{repo_id}"})
+    model.set_terminal_active(repo_id, True)
+
+
 def test_grouping_floats_active_repos_to_top(
     qapp: QApplication, tmp_path: Path
 ) -> None:
@@ -43,9 +52,9 @@ def test_grouping_floats_active_repos_to_top(
     model = RepoListModel(store)
     a, b, c, d = _ids(model)
 
-    # B and D have a live terminal; A and C don't.
-    model.set_terminal_active(b, True)
-    model.set_terminal_active(d, True)
+    # B and D are running Claude; A and C aren't.
+    _go_live(model, b, "/b")
+    _go_live(model, d, "/d")
 
     assert model.apply_terminal_grouping() is True
     # Within each group, original order is preserved.
@@ -58,7 +67,7 @@ def test_grouping_returns_false_when_already_grouped(
     store = _store_with(["/a", "/b"], tmp_path / "repos.json")
     model = RepoListModel(store)
     a, _b = _ids(model)
-    model.set_terminal_active(a, True)
+    _go_live(model, a, "/a")
 
     # First call rearranges (or no-ops if already correct); second is a no-op.
     model.apply_terminal_grouping()
@@ -74,9 +83,9 @@ def test_grouping_dominates_auto_arrange(
     model = RepoListModel(store)
     a, b = _ids(model)
 
-    # A has fresh activity but no terminal. B has a terminal but no activity.
+    # A has fresh activity but no session. B has a live session, no activity.
     model.set_status("/a", STATUS_DONE)
-    model.set_terminal_active(b, True)
+    _go_live(model, b, "/b")
 
     # Activity-only sort would float A. Grouping applied afterward overrides.
     model.apply_auto_arrange()
@@ -84,9 +93,13 @@ def test_grouping_dominates_auto_arrange(
     assert _ids(model) == [b, a]
 
 
-def _sidebar_with(paths: list[str], cfg_path: Path, *, group: bool) -> RepoSidebar:
+def _sidebar_with(
+    paths: list[str], cfg_path: Path, *, group: bool, arrange: bool = False
+) -> RepoSidebar:
     store = RepoStore(config_path=cfg_path)
-    settings = Settings(ui=UISettings(group_active_repos=group))
+    settings = Settings(
+        ui=UISettings(group_active_repos=group, auto_arrange_repos=arrange)
+    )
     sb = RepoSidebar(store, settings=settings)
     sb._model.beginResetModel()
     store.repos = [Repo(path=p) for p in paths]
@@ -107,10 +120,10 @@ def test_set_terminal_active_does_not_reshuffle_immediately(
     )
     ids = [r.id for r in sb._model._store.repos]
 
-    # Simulate clicking /d: select it, then mark its terminal active.
+    # Simulate clicking /d: select it, then bring up a Claude session.
     sb._view.setCurrentIndex(sb._model.index(3))
     pre = [r.path for r in sb._model._store.repos]
-    sb.set_terminal_active(ids[3], True)
+    _go_live(sb, ids[3], "/d")
     post = [r.path for r in sb._model._store.repos]
     assert pre == post, "set_terminal_active must defer the reshuffle"
     # And the selection is still /d at row 3.
@@ -132,7 +145,7 @@ def test_pending_regroup_fires_after_sidebar_quiet(
     # User clicks /d; terminal spawns; reshuffle is deferred (selection
     # change just bumped the activity timestamp).
     sb._view.setCurrentIndex(sb._model.index(3))
-    sb.set_terminal_active(ids[3], True)
+    _go_live(sb, ids[3], "/d")
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/d"]
     assert sb._arrange_pending is True
 
@@ -162,7 +175,7 @@ def test_grouping_animation_walks_one_swap_per_step(
 
     # /e becomes active; nothing reshuffles yet.
     sb._view.setCurrentIndex(sb._model.index(4))
-    sb.set_terminal_active(ids[4], True)
+    _go_live(sb, ids[4], "/e")
     sb._view.setCurrentIndex(sb._model.index(0))
     sb._last_sidebar_activity = 0.0
     sb._check_pending_walk()  # quiet → fires the deferred walk
@@ -192,7 +205,7 @@ def test_grouping_animation_picks_up_new_active_mid_walk(
 
     # /e active → sidebar quiet → first step taken.
     sb._view.setCurrentIndex(sb._model.index(4))
-    sb.set_terminal_active(ids[4], True)
+    _go_live(sb, ids[4], "/e")
     sb._view.setCurrentIndex(sb._model.index(0))
     sb._last_sidebar_activity = 0.0
     sb._check_pending_walk()
@@ -201,7 +214,7 @@ def test_grouping_animation_picks_up_new_active_mid_walk(
     # Mid-walk: /c also becomes active. Target now wants both /c and /e on top.
     # Tie-breaker is current row index (stable within the active group), so
     # /c (currently row 2) sorts above /e (currently row 3) and bubbles first.
-    sb.set_terminal_active(ids[2], True)
+    _go_live(sb, ids[2], "/c")
     sb._step_arrange()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/c", "/b", "/e", "/d"]
     sb._step_arrange()
@@ -312,3 +325,22 @@ def test_step_interval_eases_in_and_out(
     assert intervals[-2] == arrange_step_max_ms  # gap after second-to-last swap
     middle = intervals[1:-2]
     assert all(arrange_step_min_ms <= i < arrange_step_max_ms for i in middle)
+
+
+def test_session_end_walks_the_row_to_the_bottom(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """End to end through the sidebar: quitting Claude sinks the row past
+    every other repo instead of leaving it parked at the top."""
+    sb = _sidebar_with(
+        ["/a", "/b", "/c"], tmp_path / "repos.json", group=True, arrange=True
+    )
+    ids = [r.id for r in sb._model._store.repos]
+    _go_live(sb, ids[0], "/a")
+    sb.apply_hook_event(EVENT_STOP, "/a")
+
+    sb._last_sidebar_activity = 0.0
+    sb.apply_hook_event(EVENT_SESSION_END, "/a", {"session_id": f"s{ids[0]}"})
+    while sb._step_arrange():
+        pass
+    assert [r.path for r in sb._model._store.repos] == ["/b", "/c", "/a"]

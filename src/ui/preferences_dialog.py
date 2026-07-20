@@ -334,11 +334,12 @@ class PreferencesDialog(QDialog):
         form.addRow("", self._auto_arrange)
 
         self._group_active = QCheckBox(
-            "Group active terminals at the top of the sidebar", w,
+            "Group active sessions at the top of the sidebar", w,
         )
         self._group_active.setChecked(ui.group_active_repos)
         self._group_active.setToolTip(
-            "Repos with a live xterm float to the top of the list."
+            "Repos running a live Claude session float to the top of the "
+            "list. A terminal left at a bash prompt sinks to the bottom."
         )
         form.addRow("", self._group_active)
 

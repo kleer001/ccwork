@@ -191,16 +191,22 @@ notifications" preference (single source of truth:
   a right-edge column for a status badge (colored dot or glyph) that
   auto-hides only when fewer than ~4 chars of row text would remain — this
   is what lets the splitter drag down to ~6 chars wide without garbling.
-  When `ui.group_active_repos` is on (default), rows with a live terminal
-  float to the top via `RepoListModel.apply_terminal_grouping()`, and the
-  delegate paints a `GROUP_GAP_H` strip above the first inactive row
-  (`_is_group_boundary` driven by `ROLE_HAS_TERMINAL`). `setUniformItemSizes`
-  is therefore off — the boundary row's `sizeHint` is taller. Grouping
-  composes with auto-arrange: it's applied after the activity sort, so
-  "has terminal" wins over recency.
-  **Reshuffle is quiet-gated *and* animated:** both reshuffle paths —
-  terminal-grouping on `set_terminal_active` and the activity-driven
-  auto-arrange (fired after a 2 s debounce on Claude hook traffic) —
+  When `ui.group_active_repos` is on (default), rows running a **live
+  Claude session** float to the top via
+  `RepoListModel.apply_terminal_grouping()`, and the delegate paints a
+  `GROUP_GAP_H` strip above the first inactive row (`_is_group_boundary`
+  driven by `ROLE_ACTIVE_GROUP`, the composed
+  has-terminal-**and**-session-active predicate `_in_active_group`).
+  `setUniformItemSizes` is therefore off — the boundary row's `sizeHint`
+  is taller. Grouping composes with auto-arrange: it's applied after the
+  activity sort, so "live session" wins over recency. A terminal parked
+  at a bare bash prompt is *not* in the active group — it sinks with the
+  idle rows.
+  **Reshuffle is quiet-gated *and* animated:** every reshuffle path —
+  grouping on `set_terminal_active`, `SessionStart` / `SessionEnd` /
+  `clear_session` (which change group membership *and* the sort tier,
+  so they walk directly), and the activity-driven auto-arrange (fired
+  after a 2 s debounce on Claude hook traffic) —
   funnel through `_maybe_walk()`, which sets `_arrange_pending=True` and
   calls `_check_pending_walk()`. The walk fires only when the sidebar
   has had no input — mouse hover, click, key, scroll, or selection
@@ -367,9 +373,10 @@ event → state mutation table. The model knows seven Claude events:
     the main turn, not only after it.
   • `SubagentStop` — decrements `_subagents[path]`, clamped at 0.
     Fires for every subagent regardless of fg/bg.
-  • `SessionStart` — flips `_session_active[path] = True`. The ambient
-    badge in the right-edge column switches from ▌ (bare terminal) to
-    ⠿ (Claude is here) when no higher-priority alert is showing.
+  • `SessionStart` — flips `_session_active[path] = True`. Lights the
+    ambient ⠿ badge when no higher-priority alert is showing, joins the
+    row to the floated active group, and lifts any `_session_ended`
+    sink stamp.
   • `SessionEnd` — drops this session's id from `_live_sessions[path]`
     (a per-path set of live Claude `session_id`s, populated on
     `SessionStart`). Only when that set goes empty — i.e. the **last**
@@ -378,8 +385,10 @@ event → state mutation table. The model knows seven Claude events:
     `_turn_started`. Several `claude` processes can share one repo dir
     (state is path-keyed), so a `SessionEnd` from one must **not** wipe a
     sibling's live working spinner — without the set, a dead session's
-    exit reverted an actively-working row to the ▌ ambient badge
-    mid-turn. A `SessionEnd` whose id was never tracked (resumed session,
+    exit stripped an actively-working row of its spinner mid-turn. The
+    last `SessionEnd` on a path also pops `_last_activity` and stamps
+    `_session_ended[path]`, sinking the row to the bottom of the stack.
+    A `SessionEnd` whose id was never tracked (resumed session,
     sink started mid-session) with no other live session on the path
     still cascades, matching the pre-tracking behavior. The cascade is
     done inline in `_set_session_active(active=False)` rather than via the
@@ -416,12 +425,13 @@ the subagent twinkle.
      per-id via `spinner_for_id`, paints while the main turn is live.
   3. `STATUS_DONE` (green dot) — paints after `Stop` until the next
      `UserPromptSubmit` clears it.
-  4. Ambient terminal-state — only when the row has a live terminal
-     and no higher badge applies. `SESSION_ACTIVE_GLYPH` (⠿, dense
-     braille) when `_session_active[path]` is True; otherwise
-     `TERMINAL_ONLY_GLYPH` (▌, left-half-block text cursor). Both in
-     `AMBIENT_COLOR` (solarized base01) so they read as quiet ambient
-     presence, not alerts.
+  4. Ambient session presence — `SESSION_ACTIVE_GLYPH` (⠿, dense
+     braille) in `AMBIENT_COLOR` (solarized base01), only when the row
+     has a live terminal *and* `_session_active[path]` is True and no
+     higher badge applies. A terminal at a bare bash prompt gets **no
+     glyph at all** — it isn't pending work, and a badge there reads as
+     an unfinished task. The state is still discoverable on hover
+     (`TERMINAL_ONLY_LABEL` in the tooltip).
 
 **Inboard slot** — subagent twinkle. Paints `SUBAGENT_FRAMES`
 (same-center asterisk-stars ordered light→heavy→light in solarized
@@ -469,15 +479,24 @@ events never touch it; user navigation never touches `_status`.
   a user navigation must never mutate `_status` or `_working`. If you add
   a new cue, decide first which side it belongs on, then give it its own
   field + role + mutator.
-- **Auto-arrange sort is keyed off `_last_activity`**, stamped only by
-  the three Claude events (via `set_status` for DONE/ATTENTION,
-  `set_working` on the off→on edge for UserPromptSubmit, plus
-  `touch_activity` for the explicit case where UPS arrives while
-  working is already True). Setting `_last_focused` does not stamp.
+- **Auto-arrange sort is keyed off `_last_activity`**, stamped via
+  `_stamp_activity` by the three Claude events (`set_status` for
+  DONE/ATTENTION, `set_working` on the off→on edge for
+  UserPromptSubmit, plus `touch_activity` for the explicit case where
+  UPS arrives while working is already True). Setting `_last_focused`
+  does not stamp. `RepoListModel._activity_key` tiers the result:
+  repos with activity first (most recent first), then repos that never
+  ran anything, then repos whose Claude session **ended** — keyed on
+  `_session_ended[path]`, oldest exit first, so the repo you just quit
+  lands at the very bottom of the stack. Ending a session pops
+  `_last_activity` and stamps `_session_ended`; the next activity (or a
+  fresh `SessionStart`) reverses it. Rationale: a finished session isn't
+  pending work, and a row left near the top with a badge on it reads as
+  unfinished business.
 - **The two right-edge badge slots are reserved for main-turn state
   and subagent activity.** The outboard slot holds the working spinner,
   `STATUS_DONE`, `STATUS_ATTENTION`, or the ambient `SESSION_ACTIVE_GLYPH`
-  / `TERMINAL_ONLY_GLYPH` (priority order above); the inboard slot holds
+  (priority order above); the inboard slot holds
   the animated `SUBAGENT_FRAMES` twinkle whenever `_subagents[path] > 0`,
   alongside whatever's outboard. The last-focused bookmark renders as a
   thin left-edge stripe in a distinct paint pass.

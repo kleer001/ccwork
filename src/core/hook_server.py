@@ -41,8 +41,8 @@ EVENT_PRE_TOOL_USE = "PreToolUse"
 EVENT_SUBAGENT_STOP = "SubagentStop"
 # Fires when a Claude session starts (user invoked `claude` in the terminal).
 # Drives the "is there a live Claude session in this terminal?" axis, which
-# in turn picks between the dense-braille "in claude" indicator and the
-# text-cursor "bare terminal" indicator.
+# lights the dense-braille "in claude" indicator and floats the row into the
+# active group.
 EVENT_SESSION_START = "SessionStart"
 # Fires when a Claude session ends (/exit, Ctrl+D, etc.). Clears the
 # session-active flag and any leftover per-session state (alerts, working,

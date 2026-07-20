@@ -24,7 +24,6 @@ Example `badges.toml`::
     ambient_color   = "hsv(194, 63, 117)"
     last_focused    = "slateblue"
     session_glyph   = "⠿"
-    terminal_glyph  = "▌"
     subagent_frames = ["✲", "✵", "✷", "✱", "❂", "✹", "✺", "✸", "❉", "❊", "❋"]
 
     [statuses.done]
@@ -87,8 +86,8 @@ TERMINAL_ONLY_LABEL = "Terminal open (no Claude session)"
 # smooth pulse without the glyph jittering off-center — the eye reads "a
 # subagent is doing work". Paints one slot inboard of the main-turn spinner
 # and advances at a third of its rate (see SUBAGENT_SLOWDOWN in
-# repo_delegate). session_glyph ⠿ (dense braille, "Claude is here") vs
-# terminal_glyph ▌ (text-cursor block, "bare bash"). spinner_variants: five
+# repo_delegate). session_glyph ⠿ (dense braille) marks a live Claude
+# session; a bare bash terminal gets no badge. spinner_variants: five
 # braille cycles; each repo gets one deterministically (see spinner_for_id).
 _DEFAULTS: dict = {
     "spinner_color": "#268bd2",
@@ -96,7 +95,6 @@ _DEFAULTS: dict = {
     "ambient_color": "#586e75",
     "last_focused": "#6c71c4",
     "session_glyph": "⠿",
-    "terminal_glyph": "▌",
     "subagent_frames": ["✲", "✵", "✷", "✱", "❂", "✹", "✺", "✸", "❉", "❊", "❋", "❊", "❉", "✸", "✺", "✹", "❂", "✱", "✷", "✵"],
     "spinner_variants": [
         ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
@@ -124,7 +122,6 @@ class BadgeTheme:
     ambient_color: QColor
     last_focused: QColor
     session_glyph: str
-    terminal_glyph: str
     subagent_frames: tuple[str, ...]
     spinner_variants: tuple[tuple[str, ...], ...]
     status_done: StatusDefinition
@@ -289,7 +286,6 @@ def load_badge_theme(path: Path | None = None) -> BadgeTheme:
         ambient_color=_parse_color(cfg["ambient_color"], where="ambient_color"),
         last_focused=_parse_color(cfg["last_focused"], where="last_focused"),
         session_glyph=_require_glyph(cfg["session_glyph"], where="session_glyph"),
-        terminal_glyph=_require_glyph(cfg["terminal_glyph"], where="terminal_glyph"),
         subagent_frames=_require_frames(cfg["subagent_frames"], where="subagent_frames"),
         spinner_variants=_require_variants(cfg["spinner_variants"], where="spinner_variants"),
         status_done=_status(cfg, STATUS_DONE),
@@ -306,7 +302,6 @@ SUBAGENT_COLOR = _THEME.subagent_color
 AMBIENT_COLOR = _THEME.ambient_color
 LAST_FOCUSED_BASE = _THEME.last_focused
 SESSION_ACTIVE_GLYPH = _THEME.session_glyph
-TERMINAL_ONLY_GLYPH = _THEME.terminal_glyph
 SUBAGENT_FRAMES = _THEME.subagent_frames
 SPINNER_VARIANTS = _THEME.spinner_variants
 

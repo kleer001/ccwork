@@ -75,6 +75,7 @@ ROLE_LAST_FOCUSED = Qt.UserRole + 6   # bool — user's previous selection (book
 ROLE_PATH_MISSING = Qt.UserRole + 7   # bool — repo.path doesn't exist on disk (renamed/deleted)
 ROLE_SUBAGENTS    = Qt.UserRole + 8   # int — subagents (fg or bg) currently running
 ROLE_SESSION_ACTIVE = Qt.UserRole + 9 # bool — a live Claude session exists in this terminal
+ROLE_ACTIVE_GROUP = Qt.UserRole + 10  # bool — row belongs to the floated "in progress" group
 
 
 def _norm(path: str) -> str:
@@ -179,8 +180,8 @@ class RepoListModel(QAbstractListModel):
         # parallel work.
         self._subagents: dict[str, int] = {}
         # Per-path live-session flag. True between SessionStart and
-        # SessionEnd. Drives the ambient terminal-state badge (⠿ when a
-        # session is live, ▌ when only a bare bash terminal exists).
+        # SessionEnd. Drives the ambient ⠿ badge and membership in the
+        # active group (a bare bash terminal is neither).
         # Path-keyed unnormalized to match the other Claude-state dicts.
         self._session_active: dict[str, bool] = {}
         # Per-path set of live Claude session ids (between SessionStart and
@@ -191,6 +192,12 @@ class RepoListModel(QAbstractListModel):
         # on a path ends; a SessionEnd from one session must not wipe the
         # live working spinner of a sibling session on the same path.
         self._live_sessions: dict[str, set[str]] = {}
+        # Per-path monotonic stamp of the moment the last Claude session on
+        # the path ended. Sinks the row past every other repo on the sort
+        # axis: a finished session isn't pending work, and a row left sitting
+        # near the top reads as unfinished business. Cleared by the next
+        # activity on the path (and by a fresh SessionStart).
+        self._session_ended: dict[str, float] = {}
 
     # ── Qt model API ──
 
@@ -223,6 +230,8 @@ class RepoListModel(QAbstractListModel):
             return self._subagents.get(repo.path, 0)
         if role == ROLE_SESSION_ACTIVE:
             return self._session_active.get(repo.path, False)
+        if role == ROLE_ACTIVE_GROUP:
+            return self._in_active_group(repo)
         if role == Qt.ToolTipRole:
             # Prepend a human-readable status line so hovering a row tells
             # the user what the badge means without having to memorize the
@@ -318,7 +327,7 @@ class RepoListModel(QAbstractListModel):
         else:
             self._status.pop(path, None)
         if status in (STATUS_DONE, STATUS_ATTENTION):
-            self._last_activity[path] = time.monotonic()
+            self._stamp_activity(path)
         self._emit_changed_for_path(path, [ROLE_STATUS])
 
     def clear_status(self, path: str) -> None:
@@ -331,7 +340,16 @@ class RepoListModel(QAbstractListModel):
         working was already True (the old code used a False→True toggle on
         set_working as a back-channel; this is the explicit version).
         """
+        self._stamp_activity(path)
+
+    def _stamp_activity(self, path: str) -> None:
+        """Record "something Claude-driven just happened here".
+
+        Also lifts any session-ended sink stamp — the path is live again,
+        so it belongs back on the recency axis rather than at the bottom.
+        """
         self._last_activity[path] = time.monotonic()
+        self._session_ended.pop(path, None)
 
     def mark_turn_start(self, path: str) -> None:
         """Stamp the start of a Claude turn for tooltip elapsed-time display.
@@ -374,6 +392,16 @@ class RepoListModel(QAbstractListModel):
     def is_session_active(self, path: str) -> bool:
         return self._session_active.get(path, False)
 
+    def _in_active_group(self, repo: Repo) -> bool:
+        """Rows the grouping preference floats to the top: a live terminal
+        that is *also* hosting a live Claude session.
+
+        A terminal sitting at a bare bash prompt — Claude quit, shell still
+        open — is not work in progress, so it sinks with the idle rows
+        instead of holding a top slot.
+        """
+        return repo.id in self._active_ids and self._session_active.get(repo.path, False)
+
     def clear_session(self, path: str) -> None:
         """Tear down every per-session signal for `path`.
 
@@ -396,16 +424,24 @@ class RepoListModel(QAbstractListModel):
         On SessionEnd we also clear `_status`, `_working`, and `_subagents`
         for `path` — the session is over, so its per-session signals (the
         DONE/ATTENTION dot, a stuck working spinner, leftover subagents
-        whose SubagentStop didn't arrive) are stale and would otherwise
-        obscure the new "bare terminal" indicator.
+        whose SubagentStop didn't arrive) are stale, and a row still
+        carrying them reads as work you haven't finished.
         """
         old = self._session_active.get(path, False)
         roles: list[int] = []
         if old != active:
             self._session_active[path] = active
             roles.append(ROLE_SESSION_ACTIVE)
+            roles.append(ROLE_ACTIVE_GROUP)
             roles.append(Qt.ToolTipRole)
+        if active:
+            self._session_ended.pop(path, None)
         if not active:
+            # Drop the recency stamp and record the exit instead, so the row
+            # sinks to the bottom of the stack rather than lingering at the
+            # top of the recency sort as if a turn were still pending.
+            self._last_activity.pop(path, None)
+            self._session_ended[path] = time.monotonic()
             # Cascade-clear per-session signals. Doing it directly on the
             # dicts (not via the public mutators) keeps everything inside
             # one dataChanged emission below — set_working / set_status
@@ -455,7 +491,7 @@ class RepoListModel(QAbstractListModel):
             return
         if working:
             self._working.add(key)
-            self._last_activity[path] = time.monotonic()
+            self._stamp_activity(path)
         else:
             self._working.discard(key)
         self._emit_changed_for_path(path, [ROLE_WORKING])
@@ -506,16 +542,17 @@ class RepoListModel(QAbstractListModel):
           • SubagentStop — decrement _subagents (clamped at 0). Fires for
             every subagent regardless of fg/bg; the clamp absorbs any
             stray decrements without a paired dispatch.
-          • SessionStart — flip _session_active[path] = True. The badge
-            column switches from ▌ (bare terminal) to ⠿ (Claude is here)
-            once no higher-priority alert is masking either.
+          • SessionStart — flip _session_active[path] = True. The ⠿
+            ambient badge lights once no higher-priority alert masks it,
+            and the row joins the floated active group.
           • SessionEnd — drop this session's id from _live_sessions[path].
             Only when it was the LAST live session on the path do we flip
             _session_active = False AND cascade-clear _status / _working /
             _subagents / _turn_started. Several `claude` processes can
             share one repo dir, so a SessionEnd from one must not wipe a
             sibling's live working spinner — the bug where an active row
-            reverted to the ▌ "bare terminal" badge mid-turn.
+            lost its spinner mid-turn. The last SessionEnd also sinks the
+            row to the bottom of the stack.
         """
         if event == EVENT_USER_PROMPT_SUBMIT:
             self.clear_status(path)
@@ -610,36 +647,49 @@ class RepoListModel(QAbstractListModel):
         row = self.index_of_id(repo_id)
         if row >= 0:
             idx = self.index(row)
-            self.dataChanged.emit(idx, idx, [ROLE_HAS_TERMINAL])
+            self.dataChanged.emit(idx, idx, [ROLE_HAS_TERMINAL, ROLE_ACTIVE_GROUP])
 
     def last_activity(self, path: str) -> float:
         return self._last_activity.get(path, 0.0)
 
+    def _activity_key(self, item) -> tuple:
+        """Recency ordering key for `(index, repo)`, in three tiers:
+
+        0. Claude activity on record — most recent first.
+        1. Nothing has happened here this session.
+        2. A Claude session ended here — oldest exit first, so the repo you
+           just quit lands at the very bottom of the stack.
+
+        Ties break on current position, keeping the sort stable.
+        """
+        i, r = item
+        ts = self._last_activity.get(r.path, 0.0)
+        if ts > 0:
+            return (0, -ts, i)
+        ended = self._session_ended.get(r.path)
+        if ended is not None:
+            return (2, ended, i)
+        return (1, 0.0, i)
+
+    def _group_key(self, item) -> tuple:
+        i, r = item
+        return (0 if self._in_active_group(r) else 1, i)
+
     def apply_auto_arrange(self) -> bool:
         """Reorder _store.repos by Claude-activity recency desc.
 
-        Repos with no recorded activity sort to the bottom in their
-        current relative order (stable). Returns True if the order
-        changed. Selection survives via persistent indices.
+        Returns True if the order changed. Selection survives via
+        persistent indices. See `_activity_key` for the tiering.
         """
-        def sort_key(item):
-            i, r = item
-            ts = self._last_activity.get(r.path, 0.0)
-            return (-ts if ts > 0 else float("inf"), i)
-        return self._reorder_by(sort_key)
+        return self._reorder_by(self._activity_key)
 
     def apply_terminal_grouping(self) -> bool:
-        """Float repos with a live terminal to the top of the list.
+        """Float repos with a live Claude session to the top of the list.
 
         Stable within each group: relative order is preserved, so this
         composes cleanly after apply_auto_arrange.
         """
-        active = self._active_ids
-
-        def sort_key(item):
-            i, r = item
-            return (0 if r.id in active else 1, i)
-        return self._reorder_by(sort_key)
+        return self._reorder_by(self._group_key)
 
     def target_order_ids(
         self, *, auto_arrange: bool, group_active: bool
@@ -653,21 +703,11 @@ class RepoListModel(QAbstractListModel):
         order (target == current, no animation work).
         """
         repos = list(self._store.repos)
-        if auto_arrange:
-            def k_act(item):
-                i, r = item
-                ts = self._last_activity.get(r.path, 0.0)
-                return (-ts if ts > 0 else float("inf"), i)
-            indexed = list(enumerate(repos))
-            indexed.sort(key=k_act)
-            repos = [r for _, r in indexed]
-        if group_active:
-            active = self._active_ids
-            def k_grp(item):
-                i, r = item
-                return (0 if r.id in active else 1, i)
-            indexed = list(enumerate(repos))
-            indexed.sort(key=k_grp)
+        for enabled, key in ((auto_arrange, self._activity_key),
+                             (group_active, self._group_key)):
+            if not enabled:
+                continue
+            indexed = sorted(enumerate(repos), key=key)
             repos = [r for _, r in indexed]
         return [r.id for r in repos]
 
@@ -776,6 +816,7 @@ class RepoListModel(QAbstractListModel):
             self._status.pop(path, None)
             self._working.discard(_norm(path))
             self._last_activity.pop(path, None)
+            self._session_ended.pop(path, None)
             self._turn_started.pop(path, None)
             self._live_sessions.pop(path, None)
             if self._last_focused == _norm(path):
