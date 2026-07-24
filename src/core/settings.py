@@ -100,12 +100,11 @@ class XtermSettings:
     def to_xterm_args(self) -> list[str]:
         """Translate this settings block into xterm CLI flags."""
         args: list[str] = [
-            # Opt out of X11 session management. Otherwise the SM records each
-            # xterm's argv (including `-into <wid>`) at logout and re-runs it
-            # at next login — the stale wid no longer exists, so xterm falls
-            # back to a toplevel window and "floating" xterms appear on
-            # startup. ccwork owns xterm lifecycle via QProcess, so the SM
-            # has no business tracking these.
+            # Skip xterm's own session-manager save/die callbacks. This alone
+            # is NOT enough to keep the SM from restoring floating xterms on
+            # login — Xt still registers whenever SESSION_MANAGER is set — so
+            # the real opt-out is unsetting SESSION_MANAGER in the child env
+            # (see TerminalHost.start). Kept as belt-and-suspenders.
             "+sm",
             "-fa", self.font_family,
             "-fs", str(self.font_size),

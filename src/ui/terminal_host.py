@@ -106,6 +106,16 @@ class TerminalHost(QWidget):
             # Merge with current environment so PATH/HOME/etc. remain usable.
             merged = os.environ.copy()
             merged.update(self._env)
+            # Detach the xterm from the X session manager. Otherwise KDE's
+            # ksmserver (GNOME's equivalent behaves the same) connects to the
+            # xterm, assigns it a session id, and saves its full argv —
+            # including the now-stale `-into <wid>` — then re-runs it as a
+            # floating toplevel window on the next login/reboot. xterm's `+sm`
+            # only skips its own save/die callbacks; Xt still registers with
+            # the SM whenever SESSION_MANAGER is set, so unsetting the var here
+            # is the actual opt-out. ccwork owns the xterm lifecycle via
+            # QProcess, so the SM has no business tracking these.
+            merged.pop("SESSION_MANAGER", None)
             from PySide6.QtCore import QProcessEnvironment
             qenv = QProcessEnvironment()
             for k, v in merged.items():
