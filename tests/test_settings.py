@@ -155,7 +155,7 @@ def test_ui_settings_defaults() -> None:
     assert u.desktop_notifications is True
     assert u.auto_arrange_repos is False
     assert u.group_active_repos is True
-    assert u.warn_on_ctrl_c is True
+    assert u.warn_on_ctrl_z is True
 
 
 def test_ui_settings_round_trip(tmp_path: Path) -> None:
@@ -165,7 +165,7 @@ def test_ui_settings_round_trip(tmp_path: Path) -> None:
         restore_last_repo=False, desktop_notifications=False,
         auto_arrange_repos=True,
         group_active_repos=False,
-        warn_on_ctrl_c=False,
+        warn_on_ctrl_z=False,
     ))
     S.save_settings(orig, p)
     loaded = S.load_settings(p)
@@ -175,7 +175,7 @@ def test_ui_settings_round_trip(tmp_path: Path) -> None:
     assert loaded.ui.desktop_notifications is False
     assert loaded.ui.auto_arrange_repos is True
     assert loaded.ui.group_active_repos is False
-    assert loaded.ui.warn_on_ctrl_c is False
+    assert loaded.ui.warn_on_ctrl_z is False
 
 
 def test_ui_settings_invalid_side_falls_back_to_default(tmp_path: Path) -> None:

@@ -67,7 +67,7 @@ from src.core.terminal_session import build_session
 from src.core import x11
 from src.core.x11 import XDisplay
 from src.ui.bell_button import BellButton
-from src.ui.ctrl_c_warning import show_ctrl_c_warning
+from src.ui.ctrl_z_warning import show_ctrl_z_warning
 from src.ui.empty_state import EmptyState
 from src.ui.preferences_dialog import PreferencesDialog
 from src.ui.qt_theme import apply_theme
@@ -114,11 +114,11 @@ class MainWindow(QMainWindow):
         self._key_grab_window: int = 0
         self._key_bindings: list[tuple[int, int]] = []
         # Tracked separately from `_key_bindings` so it can be installed /
-        # removed at runtime as the user toggles ``ui.warn_on_ctrl_c``.
-        self._ctrl_c_grabbed: bool = False
+        # removed at runtime as the user toggles ``ui.warn_on_ctrl_z``.
+        self._ctrl_z_grabbed: bool = False
         # Re-entrancy guard: while the modal warning is up, a second
-        # Ctrl+C must not stack another dialog.
-        self._ctrl_c_dialog_open: bool = False
+        # Ctrl+Z must not stack another dialog.
+        self._ctrl_z_dialog_open: bool = False
 
         # ── top strip: centered repo · branch + right-side icon cluster ──
         self._title = TitleLabel(self)
@@ -312,56 +312,56 @@ class MainWindow(QMainWindow):
         log.info("global keys: %d shortcuts on MainWindow=0x%x",
                  len(bindings), self._key_grab_window)
 
-        # Conditional Ctrl+C interception — installed only while the user
-        # wants the warning, so when it's off Ctrl+C reaches xterm with
+        # Conditional Ctrl+Z interception — installed only while the user
+        # wants the warning, so when it's off Ctrl+Z reaches xterm with
         # zero indirection. Toggled live from `_on_settings_changed`.
-        if self._settings.ui.warn_on_ctrl_c:
-            self._install_ctrl_c_grab()
+        if self._settings.ui.warn_on_ctrl_z:
+            self._install_ctrl_z_grab()
 
-    def _install_ctrl_c_grab(self) -> None:
-        """Install the passive grab + filter entry for plain Ctrl+C. No-op
+    def _install_ctrl_z_grab(self) -> None:
+        """Install the passive grab + filter entry for plain Ctrl+Z. No-op
         if already installed or if the X grab infrastructure isn't up."""
-        if self._ctrl_c_grabbed or self._key_xdisplay is None or self._key_filter is None:
+        if self._ctrl_z_grabbed or self._key_xdisplay is None or self._key_filter is None:
             return
-        self._key_xdisplay.grab_key(self._key_grab_window, x11.XK_c, x11.ControlMask)
-        self._key_filter.register(x11.XK_c, x11.ControlMask, self._on_ctrl_c_pressed)
+        self._key_xdisplay.grab_key(self._key_grab_window, x11.XK_z, x11.ControlMask)
+        self._key_filter.register(x11.XK_z, x11.ControlMask, self._on_ctrl_z_pressed)
         self._key_xdisplay.flush()
-        self._ctrl_c_grabbed = True
-        log.info("Ctrl+C warning grab installed")
+        self._ctrl_z_grabbed = True
+        log.info("Ctrl+Z warning grab installed")
 
-    def _uninstall_ctrl_c_grab(self) -> None:
-        """Release the Ctrl+C grab so the keystroke flows straight to xterm."""
-        if not self._ctrl_c_grabbed or self._key_xdisplay is None or self._key_filter is None:
+    def _uninstall_ctrl_z_grab(self) -> None:
+        """Release the Ctrl+Z grab so the keystroke flows straight to xterm."""
+        if not self._ctrl_z_grabbed or self._key_xdisplay is None or self._key_filter is None:
             return
         try:
-            self._key_xdisplay.ungrab_key(self._key_grab_window, x11.XK_c, x11.ControlMask)
+            self._key_xdisplay.ungrab_key(self._key_grab_window, x11.XK_z, x11.ControlMask)
             self._key_xdisplay.flush()
         except Exception:
-            log.exception("Ctrl+C ungrab failed")
-        self._key_filter.unregister(x11.XK_c, x11.ControlMask)
-        self._ctrl_c_grabbed = False
-        log.info("Ctrl+C warning grab removed")
+            log.exception("Ctrl+Z ungrab failed")
+        self._key_filter.unregister(x11.XK_z, x11.ControlMask)
+        self._ctrl_z_grabbed = False
+        log.info("Ctrl+Z warning grab removed")
 
-    def _on_ctrl_c_pressed(self) -> None:
-        """Show the warning dialog, then inject 0x03 if confirmed. Silently
-        no-ops when no terminal is visible (Ctrl+C in the empty placeholder
-        has nothing to interrupt) or when a previous dialog is still open."""
-        if self._ctrl_c_dialog_open:
+    def _on_ctrl_z_pressed(self) -> None:
+        """Show the warning dialog, then inject 0x1a if confirmed. Silently
+        no-ops when no terminal is visible (Ctrl+Z in the empty placeholder
+        has nothing to suspend) or when a previous dialog is still open."""
+        if self._ctrl_z_dialog_open:
             return
         host = self._current_terminal_host()
         if host is None or not host.is_running():
             return
-        self._ctrl_c_dialog_open = True
+        self._ctrl_z_dialog_open = True
         try:
-            result = show_ctrl_c_warning(self)
+            result = show_ctrl_z_warning(self)
         finally:
-            self._ctrl_c_dialog_open = False
+            self._ctrl_z_dialog_open = False
         if result.send_signal:
-            host.send_interrupt()
+            host.send_suspend()
         if not result.keep_warning:
-            self._settings.ui.warn_on_ctrl_c = False
-            self._uninstall_ctrl_c_grab()
-            self._save_settings_safely("Ctrl+C warning disabled")
+            self._settings.ui.warn_on_ctrl_z = False
+            self._uninstall_ctrl_z_grab()
+            self._save_settings_safely("Ctrl+Z warning disabled")
 
     def _current_terminal_host(self) -> TerminalHost | None:
         """Return the TerminalHost currently shown in the stack, if any."""
@@ -373,7 +373,7 @@ class MainWindow(QMainWindow):
         to call multiple times and on a never-installed instance."""
         if self._key_xdisplay is None:
             return
-        self._uninstall_ctrl_c_grab()
+        self._uninstall_ctrl_z_grab()
         try:
             for keysym, mods in self._key_bindings:
                 self._key_xdisplay.ungrab_key(self._key_grab_window, keysym, mods)
@@ -529,11 +529,11 @@ class MainWindow(QMainWindow):
             self._alerts_btn.setChecked(settings.ui.desktop_notifications)
         self._refresh_alerts_button()
 
-        # Sync the Ctrl+C interception with the (possibly toggled) pref.
-        if settings.ui.warn_on_ctrl_c:
-            self._install_ctrl_c_grab()
+        # Sync the Ctrl+Z interception with the (possibly toggled) pref.
+        if settings.ui.warn_on_ctrl_z:
+            self._install_ctrl_z_grab()
         else:
-            self._uninstall_ctrl_c_grab()
+            self._uninstall_ctrl_z_grab()
 
         # Repaint the Qt chrome with the same palette as the terminal.
         app = QApplication.instance()

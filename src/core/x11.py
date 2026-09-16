@@ -49,6 +49,7 @@ XK_c = 0x0063
 XK_o = 0x006f
 XK_p = 0x0070
 XK_q = 0x0071
+XK_z = 0x007a
 XK_Tab = 0xff09         # Tab
 XK_F1 = 0xffbe          # F1   (primary keyboard-shortcuts trigger)
 

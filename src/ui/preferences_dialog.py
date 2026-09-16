@@ -343,14 +343,14 @@ class PreferencesDialog(QDialog):
         )
         form.addRow("", self._group_active)
 
-        self._warn_ctrl_c = QCheckBox("Warn before sending Ctrl+C to the terminal", w)
-        self._warn_ctrl_c.setChecked(ui.warn_on_ctrl_c)
-        self._warn_ctrl_c.setToolTip(
-            "Ctrl+C in a shell sends SIGINT and kills the running process "
-            "(usually Claude). When on, a confirmation dialog appears first. "
-            "Use Ctrl+Shift+C to copy from xterm."
+        self._warn_ctrl_z = QCheckBox("Warn before sending Ctrl+Z to the terminal", w)
+        self._warn_ctrl_z.setChecked(ui.warn_on_ctrl_z)
+        self._warn_ctrl_z.setToolTip(
+            "Ctrl+Z in a shell sends SIGTSTP and suspends the running process "
+            "(usually Claude), dropping to a bash prompt. When on, a "
+            "confirmation dialog appears first."
         )
-        form.addRow("", self._warn_ctrl_c)
+        form.addRow("", self._warn_ctrl_z)
 
         help_lbl = QLabel(
             "Tip: drag the splitter to resize the sidebar — the width persists.",
@@ -453,7 +453,7 @@ class PreferencesDialog(QDialog):
         self._desktop_notifs.setChecked(du.desktop_notifications)
         self._auto_arrange.setChecked(du.auto_arrange_repos)
         self._group_active.setChecked(du.group_active_repos)
-        self._warn_ctrl_c.setChecked(du.warn_on_ctrl_c)
+        self._warn_ctrl_z.setChecked(du.warn_on_ctrl_z)
         self._font.setCurrentText(d.font_family)
         self._font_size.setValue(d.font_size)
         self._scrollback.setValue(d.scrollback)
@@ -497,7 +497,7 @@ class PreferencesDialog(QDialog):
             status_badge_style=str(self._badge_style.currentData() or "dot"),
             auto_arrange_repos=bool(self._auto_arrange.isChecked()),
             group_active_repos=bool(self._group_active.isChecked()),
-            warn_on_ctrl_c=bool(self._warn_ctrl_c.isChecked()),
+            warn_on_ctrl_z=bool(self._warn_ctrl_z.isChecked()),
         )
 
         try:

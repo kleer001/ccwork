@@ -266,11 +266,11 @@ class TerminalHost(QWidget):
             return False
         return xterm_osc.write_to_pty(pty, text)
 
-    def send_interrupt(self) -> bool:
-        """Write the ETX byte (0x03) to the PTY so the tty driver delivers
-        SIGINT to the foreground process group — used when the user confirms
-        the intercepted Ctrl+C warning dialog."""
-        return self.paste_text("\x03")
+    def send_suspend(self) -> bool:
+        """Write the SUB byte (0x1a) to the PTY so the tty driver delivers
+        SIGTSTP to the foreground process group — used when the user confirms
+        the intercepted Ctrl+Z warning dialog."""
+        return self.paste_text("\x1a")
 
     # ── input shortcuts (Ctrl+wheel zoom, right-click menu) ──
 
