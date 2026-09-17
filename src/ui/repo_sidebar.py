@@ -706,7 +706,7 @@ class RepoSidebar(QWidget):
         self._recent_btn.setFixedWidth(half)
         self._dashboard_btn.move(x + half + gap, y)
         self._dashboard_btn.setFixedWidth(max(30, vp.width() - half - gap))
-        count = len(self._store.recent)
+        count = len(self._visible_recent())
         self._recent_btn.setEnabled(count > 0)
         self._recent_btn.setToolTip(
             f"{count} recently removed — click to re-add"
@@ -724,8 +724,21 @@ class RepoSidebar(QWidget):
         super().showEvent(event)
         self._position_tail_slots()
 
+    def _visible_recent(self) -> list[dict]:
+        """`recent` entries worth offering: paths not back on the shelf, deduped."""
+        on_shelf = {os.path.realpath(r.path) for r in self._store.repos}
+        seen: set[str] = set()
+        out: list[dict] = []
+        for e in self._store.recent:
+            resolved = os.path.realpath(e.get("path", ""))
+            if resolved in on_shelf or resolved in seen:
+                continue
+            seen.add(resolved)
+            out.append(e)
+        return out
+
     def _show_recent_popup(self) -> None:
-        recent = list(self._store.recent)
+        recent = self._visible_recent()
         if not recent:
             return
         popup = QWidget(self, Qt.Popup)
