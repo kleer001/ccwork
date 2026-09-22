@@ -212,3 +212,6 @@ bin/ccwork
 
 # Claude Code session breadcrumbs
 BREADCRUMB.md
+
+# Scratch / disposable staging (keep work you mind losing in a real dir)
+tmp/
