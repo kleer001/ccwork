@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import copy
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QColor, QFont
@@ -520,11 +520,12 @@ class PreferencesDialog(QDialog):
             extra_args=extras,
         )
         self._settings.xterm = new_x
-        # sidebar_width is set live by splitter drag — preserve whatever the
-        # user last dragged it to.
-        self._settings.ui = UISettings(
+        # Replace only the fields this dialog edits. Everything else —
+        # sidebar_width (set live by splitter drag) and the TOML-only
+        # [ui.layout] / [ui.animation] knobs — keeps its current value.
+        self._settings.ui = replace(
+            self._settings.ui,
             sidebar_side=self._sidebar_side.currentText(),
-            sidebar_width=int(self._settings.ui.sidebar_width),
             restore_last_repo=bool(self._restore_last.isChecked()),
             desktop_notifications=bool(self._desktop_notifs.isChecked()),
             status_badge_style=str(self._badge_style.currentData() or "dot"),

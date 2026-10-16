@@ -177,3 +177,22 @@ def test_ui_tab_show_status_text_round_trip_via_save(
         assert load_settings().ui.show_status_text is False
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_save_keeps_toml_only_layout_and_animation(qapp, tmp_path, monkeypatch) -> None:
+    """The dialog edits a subset of [ui]; hand-edited [ui.layout] and
+    [ui.animation] values must survive a Save."""
+    from src.core import settings as S
+    from src.ui.preferences_dialog import PreferencesDialog
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    settings = S.Settings()
+    settings.ui.layout.row_height = 90
+    settings.ui.animation.spinner_interval_ms = 250
+    settings.ui.sidebar_width = 333
+    dlg = PreferencesDialog(settings)
+    dlg._on_save()
+
+    assert settings.ui.layout.row_height == 90
+    assert settings.ui.animation.spinner_interval_ms == 250
+    assert settings.ui.sidebar_width == 333
