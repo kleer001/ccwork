@@ -33,7 +33,10 @@ After the widget choice stabilizes:
 
 ## Specs
 
-[`docs/specs/`](docs/specs/) is empty. Waves 1–3 (working-elapsed-time,
-window-geometry-restore, row-context-path-actions, working-count-in-title,
-row-jump-status-message, empty-state-placeholder, keyboard-cheatsheet)
-all shipped. New feature work lands here as fresh spec files.
+Planned, not built. Build `row-routing.md` first, because the next three need its row id.
+
+- [`row-routing.md`](docs/specs/row-routing.md) — route hook events to the terminal's row, and rebind a row when its terminal starts Claude in another repo.
+- [`row-titles-and-layout.md`](docs/specs/row-titles-and-layout.md) — the three-line row, the title synced with Claude's session title, `ccwork-rename`, and the status text.
+- [`hook-events.md`](docs/specs/hook-events.md) — StopFailure, PermissionRequest, SubagentStart, compaction, and a badge for each stop reason.
+- [`claude-exit.md`](docs/specs/claude-exit.md) — a `ClaudeExited` event from `bin/claude`.
+- [`idle-row-expiry.md`](docs/specs/idle-row-expiry.md) — remove rows that have been idle for N days.
