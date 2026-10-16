@@ -253,24 +253,45 @@ class TerminalHost(QWidget):
             return False
         return self._process.state() != QProcess.NotRunning
 
-    def paste_text(self, text: str) -> bool:
-        """Write `text` directly to the child shell's PTY — used by the
-        context menu's Paste action. Returns True on success."""
-        if not text or self._process is None:
+    # ccwork owns neither the PTY master (xterm does) nor TIOCSTI (off by
+    # default since Linux 6.2), so input reaches the shell the way a user's
+    # does: as X key events into the focused xterm, through XTEST.
+
+    def paste_clipboard(self) -> bool:
+        """Paste the CLIPBOARD into the terminal: focus the xterm and press
+        its Ctrl+Shift+V binding (insert-selection(CLIPBOARD) in
+        `XtermSettings.to_xterm_args`), so bracketed paste applies."""
+        if not self._focus_for_input():
             return False
-        pid = int(self._process.processId())
-        if pid <= 0:
+        self._xdisplay.press_combo((x11.XK_Control_L, x11.XK_Shift_L), x11.XK_v)
+        return True
+
+    def type_text(self, text: str) -> bool:
+        """Type printable-ASCII `text` at the terminal's prompt without
+        pressing Enter — used to pre-type `claude --resume <id>`."""
+        if not self._focus_for_input():
             return False
-        pty = xterm_osc.find_child_pty(pid)
-        if pty is None:
-            return False
-        return xterm_osc.write_to_pty(pty, text)
+        self._xdisplay.type_ascii(text)
+        return True
 
     def send_suspend(self) -> bool:
-        """Write the SUB byte (0x1a) to the PTY so the tty driver delivers
-        SIGTSTP to the foreground process group — used when the user confirms
+        """Deliver SIGTSTP to the terminal's foreground process group, as
+        the tty driver does for a real Ctrl+Z — used when the user confirms
         the intercepted Ctrl+Z warning dialog."""
-        return self.paste_text("\x1a")
+        if self._process is None:
+            return False
+        pgid = xterm_osc.foreground_pgid(int(self._process.processId()))
+        if pgid is None:
+            return False
+        os.killpg(pgid, signal.SIGTSTP)
+        return True
+
+    def _focus_for_input(self) -> bool:
+        if not self._xterm_win or self._xdisplay is None:
+            return False
+        self.focus_child()
+        self._xdisplay.sync()
+        return True
 
     # ── input shortcuts (Ctrl+wheel zoom, right-click menu) ──
 

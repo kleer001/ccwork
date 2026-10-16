@@ -28,6 +28,7 @@ CCWORK_LOG=DEBUG ./bin/ccwork
 .venv/bin/python tests/live/check_keys_dispatch.py
 .venv/bin/python tests/live/check_f1_cheatsheet.py
 .venv/bin/python tests/live/check_window_geometry.py
+.venv/bin/python tests/live/check_terminal_input.py   # own Xvfb; typing, paste, Ctrl+Z
 .venv/bin/python tests/live/probe_xgrabkey.py        # diagnostic only
 ```
 
@@ -102,7 +103,8 @@ snapshot), and `resume_requested(path, session_id)` (handled by
 `CCWORK_RESUME_CMD` in its env — `bin/ccwork-bashrc` presents that command
 after shell init and seeds it into history so ↑+Enter runs it, avoiding
 the PTY race that blind-typing hit; a *live* terminal already at a prompt
-is instead pre-typed via `paste_text`) rather than reaching for a status
+is instead pre-typed via `type_text`, XTEST keystrokes into the focused
+xterm) rather than reaching for a status
 bar or terminal itself. There is no menu bar — Preferences /
 Add Repo / Quit / F1 / row-jumps / cycle / zoom are bound via a passive
 `XGrabKey` on MainWindow's own X window plus a single
@@ -120,9 +122,15 @@ Qt's normal shortcut chain never sees the press. The XGrabKey path
 intercepts presses at the X-server level before xterm can consume them.
 Plain `Ctrl+Z` is **conditionally** grabbed via the same mechanism while
 `ui.warn_on_ctrl_z` is True: the handler shows
-`ctrl_z_warning.show_ctrl_z_warning` and only on confirm writes `0x1a`
-into the current `TerminalHost`'s PTY (so SIGTSTP still reaches the
-foreground process group and suspends it). The grab is installed/removed
+`ctrl_z_warning.show_ctrl_z_warning` and only on confirm calls
+`TerminalHost.send_suspend`, which sends SIGTSTP to the terminal's
+foreground process group (`xterm_osc.foreground_pgid`, the shell's
+`tpgid`) — what the tty driver does for a real Ctrl+Z. **ccwork has no
+input path through the PTY:** a write to `/dev/pts/N` is terminal
+*output* (xterm owns the master, and TIOCSTI is off by default), so
+text input goes through XTEST key events into the focused xterm
+(`paste_clipboard` presses xterm's Ctrl+Shift+V binding, `type_text`
+types ASCII) and signals go straight to the process group. The grab is installed/removed
 at runtime as the user toggles the pref, so when off Ctrl+Z reaches xterm
 with zero indirection.
 The top bar holds, right-to-left: the gear (Preferences), the 🔔 unread

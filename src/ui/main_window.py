@@ -686,11 +686,10 @@ class MainWindow(QMainWindow):
         menu.exec(global_pos)
 
     def _paste_clipboard_to(self, repo: Repo) -> None:
-        from PySide6.QtWidgets import QApplication
         host = self._terminals.get(repo.id)
         if host is None:
             return
-        host.paste_text(QApplication.clipboard().text())
+        host.paste_clipboard()
 
     # ── helpers ──
 
@@ -833,7 +832,7 @@ class MainWindow(QMainWindow):
             # newline) so the user reviews it and presses Enter. No startup
             # race here, so no banner is needed.
             self._sidebar.select_id(repo.id)
-            existing.paste_text(cmd)
+            existing.type_text(cmd)
             return
 
         # Fresh spawn: hand the command to the shell via the environment so

@@ -65,6 +65,25 @@ def find_child_pty(xterm_pid: int) -> Path | None:
     return None
 
 
+def foreground_pgid(xterm_pid: int) -> int | None:
+    """Process group in the foreground of the xterm's terminal (the `tpgid`
+    of its child shell), or None when the shell is gone.
+
+    Signals for the job running in the terminal go here: a byte written to
+    the PTY slave is terminal *output*, so it never reaches the line
+    discipline that turns ^Z into SIGTSTP.
+    """
+    try:
+        children = Path(f"/proc/{xterm_pid}/task/{xterm_pid}/children").read_text().split()
+        stat = Path(f"/proc/{children[0]}/stat").read_text()
+    except (IndexError, OSError):
+        return None
+    # Fields after the parenthesized command name: state ppid pgrp session
+    # tty_nr tpgid … (proc(5) fields 3–8). The name may contain spaces.
+    tpgid = int(stat.rsplit(")", 1)[1].split()[5])
+    return tpgid if tpgid > 0 else None
+
+
 def write_to_pty(pty_path: Path, payload: str) -> bool:
     """Write `payload` to the PTY slave. Returns True on success.
 

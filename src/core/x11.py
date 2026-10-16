@@ -1,7 +1,8 @@
 """Thin ctypes wrapper over libX11 for window geometry operations.
 
 We only need: open display, query child windows of a window, resize a window,
-flush. All other X calls go through Qt.
+flush, key grabs, and XTEST key injection (libXtst) for typing into the
+embedded xterm. All other X calls go through Qt.
 
 If libX11 is unavailable (`load()` raises), callers should treat this as a
 fatal environment error — embedding xterm is Linux/X11-only by design.
@@ -52,6 +53,9 @@ XK_q = 0x0071
 XK_z = 0x007a
 XK_Tab = 0xff09         # Tab
 XK_F1 = 0xffbe          # F1   (primary keyboard-shortcuts trigger)
+XK_v = 0x0076
+XK_Shift_L = 0xffe1
+XK_Control_L = 0xffe3
 
 
 _x11: Optional[ctypes.CDLL] = None
@@ -102,9 +106,25 @@ def _lib() -> ctypes.CDLL:
     lib.XSetInputFocus.restype = c_int
     lib.XDefaultRootWindow.argtypes = [Display]
     lib.XDefaultRootWindow.restype = Window
+    lib.XkbKeycodeToKeysym.argtypes = [Display, KeyCode, c_uint, c_uint]
+    lib.XkbKeycodeToKeysym.restype = KeySym
 
     _x11 = lib
     return lib
+
+
+_xtst: Optional[ctypes.CDLL] = None
+
+
+def _tst() -> ctypes.CDLL:
+    """libXtst, for XTestFakeKeyEvent. Loaded on first use."""
+    global _xtst
+    if _xtst is None:
+        lib = ctypes.CDLL("libXtst.so.6")
+        lib.XTestFakeKeyEvent.argtypes = [Display, c_uint, c_int, c_ulong]
+        lib.XTestFakeKeyEvent.restype = c_int
+        _xtst = lib
+    return _xtst
 
 
 # The four lock-key variants we must grab alongside ControlMask so the grab
@@ -267,6 +287,46 @@ class XDisplay:
         self._lib.XSetInputFocus(
             self._dpy, Window(win), c_int(RevertToParent), c_ulong(CurrentTime)
         )
+        self._lib.XFlush(self._dpy)
+
+    def _fake_key(self, keycode: int, press: bool) -> None:
+        _tst().XTestFakeKeyEvent(self._dpy, c_uint(keycode), c_int(int(press)), c_ulong(0))
+
+    def press_combo(self, modifier_keysyms: tuple[int, ...], keysym: int) -> None:
+        """Inject a key chord (e.g. Ctrl+Shift+V) through XTEST. It reaches
+        whichever window holds X input focus, like a real keypress."""
+        mods = [int(self.keysym_to_keycode(m)) for m in modifier_keysyms]
+        key = int(self.keysym_to_keycode(keysym))
+        for kc in mods:
+            self._fake_key(kc, True)
+        self._fake_key(key, True)
+        self._fake_key(key, False)
+        for kc in reversed(mods):
+            self._fake_key(kc, False)
+        self._lib.XFlush(self._dpy)
+
+    def type_ascii(self, text: str) -> None:
+        """Type printable ASCII through XTEST into the focused window. Uses
+        Shift for characters on a key's second level. Raises ValueError for a
+        character the keyboard map cannot produce."""
+        shift = int(self.keysym_to_keycode(XK_Shift_L))
+        for ch in text:
+            keysym = ord(ch)   # printable ASCII keysyms equal the ASCII code
+            if not 0x20 <= keysym <= 0x7e:
+                raise ValueError(f"type_ascii: {ch!r} is not printable ASCII")
+            kc = int(self.keysym_to_keycode(keysym))
+            if kc == 0:
+                raise ValueError(f"type_ascii: no key produces {ch!r}")
+            if self._lib.XkbKeycodeToKeysym(self._dpy, KeyCode(kc), 0, 0) == keysym:
+                self._fake_key(kc, True)
+                self._fake_key(kc, False)
+            elif self._lib.XkbKeycodeToKeysym(self._dpy, KeyCode(kc), 0, 1) == keysym:
+                self._fake_key(shift, True)
+                self._fake_key(kc, True)
+                self._fake_key(kc, False)
+                self._fake_key(shift, False)
+            else:
+                raise ValueError(f"type_ascii: {ch!r} needs a modifier other than Shift")
         self._lib.XFlush(self._dpy)
 
     def default_root_window(self) -> int:
