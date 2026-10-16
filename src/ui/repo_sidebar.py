@@ -606,9 +606,10 @@ class RepoSidebar(QWidget):
         prev_repo = self._model.repo_at(previous.row()) if previous.isValid() else None
         if prev_repo is not None:
             self._model.set_last_focused(prev_repo.path)
+        # Selecting a row does not clear its badge: a badge stays until the
+        # event that ends it (see RepoListModel.apply_hook_event).
         repo = self._model.repo_at(current.row()) if current.isValid() else None
         if repo is not None:
-            self._model.clear_status(repo.id)
             self.repo_selected.emit(repo)
 
     def _on_view_clicked(self, index: QModelIndex) -> None:

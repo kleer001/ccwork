@@ -131,3 +131,18 @@ def test_set_last_focused_none_clears_bookmark(
     assert model.index(0).data(ROLE_LAST_FOCUSED) is True
     model.set_last_focused(None)
     assert model.index(0).data(ROLE_LAST_FOCUSED) is False
+
+
+def test_selecting_a_row_keeps_its_badge(qapp: QApplication, tmp_path: Path) -> None:
+    """A badge ends only on its own clear event, never on a click."""
+    from src.ui.repo_sidebar import RepoSidebar
+
+    store = _store_with(["/a", "/b"], tmp_path / "repos.json")
+    store.save()   # RepoSidebar reloads the store from disk
+    sidebar = RepoSidebar(store)
+    model = sidebar.model
+    model.set_status(_id(model, "/b"), STATUS_DONE)
+
+    sidebar._view.setCurrentIndex(model.index(1))
+
+    assert model.index(1).data(ROLE_STATUS) == STATUS_DONE
