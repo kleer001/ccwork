@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 import uuid
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -65,16 +66,27 @@ class Repo:
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     instance: int = 0
     emoji: str = ""
+    # Editable task title, mirrored with the Claude session title. Per row
+    # id like the emoji; `recent` does not keep it.
+    title: str = ""
+    # Epoch seconds of the last Claude event or click on this row. Feeds the
+    # optional idle-row expiry. A row loaded without one counts from now.
+    last_used: float = field(default_factory=time.time)
 
     @property
     def name(self) -> str:
         return os.path.basename(self.path.rstrip("/")) or self.path
 
     @property
+    def instance_name(self) -> str:
+        """Basename plus the Roman-numeral suffix, without the emoji."""
+        suffix = f" ({to_roman(self.instance)})" if self.instance > 0 else ""
+        return f"{self.name}{suffix}"
+
+    @property
     def display_name(self) -> str:
         prefix = f"{self.emoji} " if self.emoji else ""
-        suffix = f" ({to_roman(self.instance)})" if self.instance > 0 else ""
-        return f"{prefix}{self.name}{suffix}"
+        return f"{prefix}{self.instance_name}"
 
 
 @dataclass
@@ -138,7 +150,14 @@ class RepoStore:
             emoji = r.get("emoji", "")
             if not isinstance(emoji, str):
                 emoji = ""
-            out.append(Repo(path=str(r["path"]), id=rid, instance=inst, emoji=emoji))
+            title = r.get("title", "")
+            if not isinstance(title, str):
+                title = ""
+            repo = Repo(path=str(r["path"]), id=rid, instance=inst, emoji=emoji, title=title)
+            last_used = r.get("last_used")
+            if isinstance(last_used, (int, float)) and not isinstance(last_used, bool):
+                repo.last_used = float(last_used)
+            out.append(repo)
         self.repos = out
 
         recent_raw = data.get("recent", [])
@@ -261,6 +280,19 @@ class RepoStore:
                     self._push_recent(resolved, emoji)
                 return True
         return False
+
+    # Coarse grain for `last_used`: the expiry counts days, so one write an
+    # hour per row is plenty and keeps hook traffic off the disk.
+    LAST_USED_GRAIN_S = 3600
+
+    def mark_used(self, repo_id: str, now: float | None = None) -> None:
+        """Stamp a row as used. Saves only when the stamp moves by more than
+        LAST_USED_GRAIN_S."""
+        repo = self.find_by_id(repo_id)
+        now = time.time() if now is None else now
+        if repo is not None and now - repo.last_used > self.LAST_USED_GRAIN_S:
+            repo.last_used = now
+            self.save()
 
     def rebind(self, repo_id: str, new_path: str) -> bool:
         """Repoint one row at `new_path`, keeping its id, emoji and position.

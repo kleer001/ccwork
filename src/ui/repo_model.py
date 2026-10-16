@@ -20,7 +20,9 @@ from PySide6.QtCore import (
 )
 
 from src.core import repo_store
+from src.core.hook_server import remove_row_title, write_row_title
 from src.core.hook_server import (
+    EVENT_CLAUDE_EXITED,
     EVENT_NOTIFICATION,
     EVENT_PERMISSION_REQUEST,
     EVENT_POST_COMPACT,
@@ -35,6 +37,7 @@ from src.core.hook_server import (
 )
 from src.core.repo_store import Repo, RepoStore
 from src.ui.badge_theme import (
+    CLAUDE_OPEN_TEXT,
     COMPACTING_LABEL,
     ERROR_WORDS,
     LAST_FOCUSED_LABEL,
@@ -49,6 +52,7 @@ from src.ui.badge_theme import (
     TERMINAL_ONLY_LABEL,
     USAGE_LIMIT_WORDS,
     WORKING_LABEL,
+    WORKING_TEXT,
 )
 
 
@@ -68,6 +72,7 @@ _CLAUDE_STATE_EVENTS = frozenset(
         EVENT_POST_COMPACT,
         EVENT_SESSION_START,
         EVENT_SESSION_END,
+        EVENT_CLAUDE_EXITED,
     }
 )
 
@@ -99,6 +104,8 @@ ROLE_SESSION_ACTIVE = Qt.UserRole + 9 # bool — a live Claude session exists in
 ROLE_ACTIVE_GROUP = Qt.UserRole + 10  # bool — row belongs to the floated "in progress" group
 ROLE_COMPACTING   = Qt.UserRole + 11  # bool — Claude is compacting its context
 ROLE_STATUS_WORD  = Qt.UserRole + 12  # str — the badge's word ("Rate limited", …), "" with no badge
+ROLE_TITLE        = Qt.UserRole + 13  # str — the row's editable title, "" when unset
+ROLE_STATUS_TEXT  = Qt.UserRole + 14  # str — line-3 status text ("Working · 2m", …)
 
 
 def _norm(path: str) -> str:
@@ -123,6 +130,18 @@ def _tool_summary(payload: dict) -> str:
         if isinstance(value, str) and value:
             return f"{name}: {value.splitlines()[0][:80]}"
     return name
+
+
+def _format_minutes(seconds: float) -> str:
+    """Coarse elapsed time for the row's status line: "40s", "2m", "1h 5m".
+    Minute steps keep the line still while the spinner animates."""
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m"
+    h, rem = divmod(s, 3600)
+    return f"{h}h {rem // 60}m"
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -175,6 +194,10 @@ class RepoListModel(QAbstractListModel):
         # "Tool: summary" of the call waiting for approval, from
         # PermissionRequest. Cleared with the permission badge.
         self._pending_tool: dict[str, str] = {}
+        # Last title the row and its Claude session agreed on, per row. A
+        # row title that differs from it was changed on the ccwork side
+        # and is pushed to Claude; see sync_session_title.
+        self._title_synced: dict[str, str] = {}
         self._working: set[str] = set()
         # Repo ids whose TerminalHost has been spawned in the current ccwork
         # session. Drives the visual difference between "touched" rows (bold
@@ -254,6 +277,10 @@ class RepoListModel(QAbstractListModel):
             return repo.id in self._compacting
         if role == ROLE_STATUS_WORD:
             return self.status_word(repo.id)
+        if role == ROLE_TITLE:
+            return repo.title
+        if role == ROLE_STATUS_TEXT:
+            return self._status_text(repo)
         if role == ROLE_SESSION_ACTIVE:
             return self._session_active.get(repo.id, False)
         if role == ROLE_ACTIVE_GROUP:
@@ -376,6 +403,64 @@ class RepoListModel(QAbstractListModel):
         if not status:
             return ""
         return self._status_word.get(repo_id) or STATUS_LABELS[status]
+
+    def _status_text(self, repo: Repo) -> str:
+        """Line-3 text: the badge word, else the live state, else ""."""
+        word = self.status_word(repo.id)
+        if word:
+            return word
+        if repo.id in self._compacting:
+            return COMPACTING_LABEL
+        if repo.id in self._working:
+            started = self._turn_started.get(repo.id)
+            if started is None:
+                return WORKING_TEXT
+            return f"{WORKING_TEXT} · {_format_minutes(time.monotonic() - started)}"
+        if repo.id in self._active_ids and self._session_active.get(repo.id, False):
+            return CLAUDE_OPEN_TEXT
+        return ""
+
+    def set_title(self, repo_id: str, title: str) -> None:
+        """Set or clear (`""`) one row's title from the ccwork side — the
+        sidebar menu or `ccwork-rename`. Leaves the synced title alone, so
+        the hook sink pushes the new title to Claude at the next prompt."""
+        repo = self._store.find_by_id(repo_id)
+        title = " ".join(title.split())
+        if repo is None or repo.title == title:
+            return
+        self._title_synced.setdefault(repo_id, repo.title)
+        repo.title = title
+        self._store.save()
+        self._publish_title(repo)
+        self._emit_changed_for_id(repo_id, [ROLE_TITLE])
+
+    def sync_session_title(self, repo_id: str, session_title: str | None) -> None:
+        """Reconcile the row title with the session's custom title, as seen
+        in a SessionStart / UserPromptSubmit payload.
+
+        A session title that differs from a row title still in sync was
+        renamed on the Claude side (`/rename`), so the row adopts it.
+        Otherwise the sink has just pushed the row title to Claude, and the
+        two now agree. A missing session title never clears the row title.
+        """
+        repo = self._store.find_by_id(repo_id)
+        if repo is None:
+            return
+        synced = self._title_synced.get(repo_id, repo.title)
+        if session_title and session_title != repo.title and repo.title == synced:
+            repo.title = " ".join(session_title.split())
+            self._store.save()
+            self._emit_changed_for_id(repo_id, [ROLE_TITLE])
+        self._title_synced[repo_id] = repo.title
+        self._publish_title(repo)
+
+    def publish_titles(self) -> None:
+        """Write every row's title file — at startup, before any hook runs."""
+        for repo in self._store.repos:
+            self._publish_title(repo)
+
+    def _publish_title(self, repo: Repo) -> None:
+        write_row_title(repo.id, repo.title, self._title_synced.get(repo.id, repo.title))
 
     def _clear_status_if(self, repo_id: str, status: str) -> None:
         """Clear the badge only while it is `status` — an end event for one
@@ -623,6 +708,8 @@ class RepoListModel(QAbstractListModel):
             per-session signal. A nested `claude` in the same terminal must
             not wipe the outer session's spinner. The last SessionEnd also
             sinks the row to the bottom of the stack.
+          • ClaudeExited — `bin/claude` saw the claude process return:
+            the same full teardown as clear_session.
         """
         payload = payload if isinstance(payload, dict) else {}
         if event == EVENT_USER_PROMPT_SUBMIT:
@@ -687,6 +774,8 @@ class RepoListModel(QAbstractListModel):
             if not self._live_sessions.get(repo_id):
                 self._live_sessions.pop(repo_id, None)
                 self._set_session_active(repo_id, False)
+        elif event == EVENT_CLAUDE_EXITED:
+            self.clear_session(repo_id)
 
     def set_emoji(self, repo_id: str, emoji: str) -> None:
         """Set or clear the optional leading emoji for one row.
@@ -910,12 +999,14 @@ class RepoListModel(QAbstractListModel):
                 self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
 
         for state in (self._status, self._status_word, self._pending_tool,
+                      self._title_synced,
                       self._last_activity, self._session_ended,
                       self._turn_started, self._live_sessions, self._subagents,
                       self._session_active):
             state.pop(repo.id, None)
         self._working.discard(repo.id)
         self._compacting.discard(repo.id)
+        remove_row_title(repo.id)
         # Path-keyed caches stay only while at least one row still uses the
         # path — drop them once the last duplicate is gone.
         if not self._store.repos_for_path(path):

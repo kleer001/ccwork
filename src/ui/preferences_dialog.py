@@ -352,6 +352,36 @@ class PreferencesDialog(QDialog):
         )
         form.addRow("", self._warn_ctrl_z)
 
+        self._show_status_text = QCheckBox("Show status text in sidebar rows", w)
+        self._show_status_text.setChecked(ui.show_status_text)
+        self._show_status_text.setToolTip(
+            "Line 3 of each row says what Claude is doing: the badge's word "
+            "(\"Needs permission\", \"Rate limited\", …), \"Working · 2m\", or "
+            "\"Claude open\". Off leaves the line blank."
+        )
+        form.addRow("", self._show_status_text)
+
+        expire_row = QWidget(w)
+        expire_box = QHBoxLayout(expire_row)
+        expire_box.setContentsMargins(0, 0, 0, 0)
+        self._expire_idle = QCheckBox("Remove idle repos from the sidebar after", expire_row)
+        self._expire_idle.setChecked(ui.expire_idle_repos)
+        self._expire_idle.setToolTip(
+            "A repo with no Claude activity and no click for this many days "
+            "moves to the Recent list, where one click brings it back. "
+            "Repos with an open terminal never expire."
+        )
+        self._expire_days = QSpinBox(expire_row)
+        self._expire_days.setRange(1, 3650)
+        self._expire_days.setSuffix(" days")
+        self._expire_days.setValue(ui.expire_idle_days)
+        self._expire_days.setEnabled(ui.expire_idle_repos)
+        self._expire_idle.toggled.connect(self._expire_days.setEnabled)
+        expire_box.addWidget(self._expire_idle)
+        expire_box.addWidget(self._expire_days)
+        expire_box.addStretch(1)
+        form.addRow("", expire_row)
+
         help_lbl = QLabel(
             "Tip: drag the splitter to resize the sidebar — the width persists.",
             w,
@@ -454,6 +484,9 @@ class PreferencesDialog(QDialog):
         self._auto_arrange.setChecked(du.auto_arrange_repos)
         self._group_active.setChecked(du.group_active_repos)
         self._warn_ctrl_z.setChecked(du.warn_on_ctrl_z)
+        self._show_status_text.setChecked(du.show_status_text)
+        self._expire_idle.setChecked(du.expire_idle_repos)
+        self._expire_days.setValue(du.expire_idle_days)
         self._font.setCurrentText(d.font_family)
         self._font_size.setValue(d.font_size)
         self._scrollback.setValue(d.scrollback)
@@ -498,6 +531,9 @@ class PreferencesDialog(QDialog):
             auto_arrange_repos=bool(self._auto_arrange.isChecked()),
             group_active_repos=bool(self._group_active.isChecked()),
             warn_on_ctrl_z=bool(self._warn_ctrl_z.isChecked()),
+            show_status_text=bool(self._show_status_text.isChecked()),
+            expire_idle_repos=bool(self._expire_idle.isChecked()),
+            expire_idle_days=int(self._expire_days.value()),
         )
 
         try:

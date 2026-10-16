@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# ccwork-rename — set the title (and optionally the badge emoji) of the
+# ccwork sidebar row this terminal belongs to.
+#
+#   ccwork-rename "fix login bug"           set the title
+#   ccwork-rename --badge 🐛 "fix login"    set the title and the badge
+#   ccwork-rename --badge 🐛                set only the badge
+#   ccwork-rename ""                        clear the title
+#   ccwork-rename --badge ""                clear the badge
+#
+# Sends one RowRenamed event to the ccwork socket. Unlike the hook sink,
+# this is a command you run on purpose, so it fails loudly outside ccwork.
+
+set -u
+
+_usage() {
+    printf 'usage: ccwork-rename [--badge <emoji>] [<title>]\n' >&2
+    exit 1
+}
+
+if [ "${CCWORK_GUI:-0}" != "1" ] || [ -z "${CCWORK_ROW_ID:-}" ]; then
+    printf 'ccwork-rename: not inside a ccwork terminal (CCWORK_GUI / CCWORK_ROW_ID unset)\n' >&2
+    exit 1
+fi
+
+_json_escape() {
+    local s=$1
+    s=${s//\\/\\\\}
+    s=${s//\"/\\\"}
+    s=${s//$'\n'/\\n}
+    s=${s//$'\r'/\\r}
+    s=${s//$'\t'/\\t}
+    printf '%s' "$s"
+}
+
+_fields=""
+if [ "${1:-}" = "--badge" ]; then
+    [ $# -ge 2 ] || _usage
+    _fields=",\"emoji\":\"$(_json_escape "$2")\""
+    shift 2
+fi
+if [ $# -eq 1 ]; then
+    _fields="$_fields,\"title\":\"$(_json_escape "$1")\""
+elif [ $# -gt 1 ] || [ -z "$_fields" ]; then
+    _usage
+fi
+
+_sock="${XDG_RUNTIME_DIR:-$HOME/.cache}/ccwork/ccwork.sock"
+if [ ! -S "$_sock" ]; then
+    printf 'ccwork-rename: ccwork socket not found at %s\n' "$_sock" >&2
+    exit 1
+fi
+
+_line="{\"event\":\"RowRenamed\",\"row\":\"$CCWORK_ROW_ID\",\"ts\":$(date +%s)$_fields}"
+if command -v socat >/dev/null 2>&1; then
+    printf '%s\n' "$_line" | timeout 1 socat - "UNIX-CONNECT:$_sock" >/dev/null
+elif command -v nc >/dev/null 2>&1; then
+    printf '%s\n' "$_line" | timeout 1 nc -UN "$_sock" >/dev/null \
+        || printf '%s\n' "$_line" | timeout 1 nc -U "$_sock" >/dev/null
+else
+    printf 'ccwork-rename: needs socat or nc to reach the ccwork socket\n' >&2
+    exit 1
+fi

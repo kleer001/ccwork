@@ -55,6 +55,35 @@ _cwd_esc=$(_json_escape "$_cwd")
 _event_esc=$(_json_escape "$_event")
 _row_esc=$(_json_escape "${CCWORK_ROW_ID:-}")
 
+# ── Row title ↔ Claude session title ─────────────────────────────────────
+# ccwork publishes each row's title in titles/<row id>: line 1 is the row
+# title, line 2 the last title the row and the session agreed on. Read it
+# BEFORE sending the event — ccwork rewrites it while handling the event.
+# Push the row title to Claude when the row changed it since the last
+# agreement, or when the session has no custom title yet. Otherwise a
+# differing session_title is a /rename, and ccwork adopts it on its side.
+_hook_out=""
+if [ "$_event" = "SessionStart" ] || [ "$_event" = "UserPromptSubmit" ]; then
+    _title="" _synced=""
+    _title_file="$_sock_dir/titles/${CCWORK_ROW_ID:-none}"
+    if [ -r "$_title_file" ]; then
+        { IFS= read -r _title; IFS= read -r _synced; } < "$_title_file"
+    fi
+    _session_title=$(printf '%s' "$_payload" | sed -n 's/.*"session_title"[[:space:]]*:[[:space:]]*"\(\([^"\\]\|\\.\)*\)".*/\1/p')
+    _title_esc=$(_json_escape "$_title")
+    _fields=""
+    if [ -n "$_title" ] && [ "$_title_esc" != "$_session_title" ] \
+       && { [ "$_title" != "$_synced" ] || [ -z "$_session_title" ]; }; then
+        _fields=",\"sessionTitle\":\"$_title_esc\""
+    fi
+    if [ "$_event" = "SessionStart" ]; then
+        _fields="$_fields,\"additionalContext\":\"You run in a ccwork sidebar row. When the task is clear, run \\\"ccwork-rename '<short topic>'\\\" to title the row. Add --badge <emoji> to set the row icon.\""
+    fi
+    if [ -n "$_fields" ]; then
+        _hook_out="{\"hookSpecificOutput\":{\"hookEventName\":\"$_event_esc\"$_fields}}"
+    fi
+fi
+
 _line="{\"event\":\"$_event_esc\",\"row\":\"$_row_esc\",\"cwd\":\"$_cwd_esc\",\"ts\":$_ts,\"payload\":$_payload}"
 
 # Best-effort send. Short timeout so a dead socket doesn't stall Claude Code.
@@ -107,5 +136,7 @@ if [ "$_notify_disabled" = "0" ] && command -v notify-send >/dev/null 2>&1; then
         notify-send -u critical "Claude [$_repo]" "$_msg" >/dev/null 2>&1 || true
     fi
 fi
+
+[ -n "$_hook_out" ] && printf '%s\n' "$_hook_out"
 
 exit 0

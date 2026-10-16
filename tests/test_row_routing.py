@@ -22,6 +22,7 @@ from src.core.hook_server import (
     EVENT_STOP,
     EVENT_USER_PROMPT_SUBMIT,
 )
+from src.core.hook_server import row_title_path
 from src.core.repo_store import Repo, RepoStore
 from src.core.settings import Settings
 from src.ui.main_window import MainWindow
@@ -222,3 +223,125 @@ def test_bell_follows_new_badges_only(window: MainWindow, repo_dir: Path) -> Non
     asking["payload"] = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
     _emit(window, asking)
     assert window._bell_btn._unseen is True
+
+
+# ── RowRenamed: sent by bin/ccwork-rename, which sends only the fields it changes ──
+
+
+def _rename(row: str | None, **fields) -> dict:
+    obj: dict = {"event": "RowRenamed", "ts": 0, **fields}
+    if row is not None:
+        obj["row"] = row
+    return obj
+
+
+def _reload(tmp_path: Path) -> RepoStore:
+    store = RepoStore(config_path=tmp_path / "repos.json")
+    store.load()
+    return store
+
+
+def test_row_renamed_title_only_leaves_emoji(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repo_dir: Path
+) -> None:
+    win, store = _make_window(qapp, tmp_path, monkeypatch, [str(repo_dir)])
+    try:
+        store.repos[0].emoji = "🌱"
+        store.save()
+        rid = store.repos[0].id
+
+        _emit(win, _rename(rid, title="fix login bug"))
+
+        assert store.find_by_id(rid).title == "fix login bug"
+        assert store.find_by_id(rid).emoji == "🌱"
+        assert _reload(tmp_path).repos[0].title == "fix login bug"
+        assert row_title_path(rid).read_text().startswith("fix login bug\n")
+    finally:
+        win.close()
+
+
+def test_row_renamed_emoji_only_leaves_title(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repo_dir: Path
+) -> None:
+    win, store = _make_window(qapp, tmp_path, monkeypatch, [str(repo_dir)])
+    try:
+        store.repos[0].title = "keep me"
+        store.save()
+        rid = store.repos[0].id
+
+        _emit(win, _rename(rid, emoji="🐛"))
+
+        assert store.find_by_id(rid).emoji == "🐛"
+        assert store.find_by_id(rid).title == "keep me"
+    finally:
+        win.close()
+
+
+def test_row_renamed_title_and_emoji_together(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repo_dir: Path
+) -> None:
+    win, store = _make_window(qapp, tmp_path, monkeypatch, [str(repo_dir)])
+    try:
+        rid = store.repos[0].id
+
+        _emit(win, _rename(rid, title="fix login bug", emoji="🐛"))
+
+        assert store.find_by_id(rid).title == "fix login bug"
+        assert store.find_by_id(rid).emoji == "🐛"
+        reloaded = _reload(tmp_path).repos[0]
+        assert (reloaded.title, reloaded.emoji) == ("fix login bug", "🐛")
+    finally:
+        win.close()
+
+
+def test_row_renamed_empty_title_clears_title(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repo_dir: Path
+) -> None:
+    win, store = _make_window(qapp, tmp_path, monkeypatch, [str(repo_dir)])
+    try:
+        store.repos[0].title = "old"
+        store.save()
+        rid = store.repos[0].id
+
+        _emit(win, _rename(rid, title=""))
+
+        assert store.find_by_id(rid).title == ""
+        assert _reload(tmp_path).repos[0].title == ""
+    finally:
+        win.close()
+
+
+def test_row_renamed_empty_emoji_clears_badge(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repo_dir: Path
+) -> None:
+    win, store = _make_window(qapp, tmp_path, monkeypatch, [str(repo_dir)])
+    try:
+        store.repos[0].emoji = "🌱"
+        store.save()
+        rid = store.repos[0].id
+
+        _emit(win, _rename(rid, emoji=""))
+
+        assert store.find_by_id(rid).emoji == ""
+    finally:
+        win.close()
+
+
+@pytest.mark.parametrize("row", ["no-such-row", None])
+def test_row_renamed_unknown_or_missing_row_is_dropped_with_warning(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    repo_dir: Path, caplog: pytest.LogCaptureFixture, row,
+) -> None:
+    win, store = _make_window(qapp, tmp_path, monkeypatch, [str(repo_dir)])
+    try:
+        rid = store.repos[0].id
+        with caplog.at_level(logging.WARNING, logger="src.ui.main_window"):
+            _emit(win, _rename(row, title="stray"))
+
+        assert store.find_by_id(rid).title == ""
+        assert any(
+            r.levelno == logging.WARNING and "RowRenamed" in r.getMessage()
+            for r in caplog.records
+        )
+    finally:
+        win.close()

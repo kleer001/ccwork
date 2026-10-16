@@ -189,6 +189,25 @@ notifications" preference (single source of truth:
   unknown key) fails loudly at startup via `load_badge_theme`. The module
   docstring carries the full example schema.
 
+  Each row paints three lines (`repo_delegate.py`): line 1 is the emoji
+  plus the editable **title** (`ROLE_TITLE`, blank when unset); line 2 is
+  `instance_name | branch` (`_repo_line` elides the branch first, then
+  the name); line 3 is the **status text** (`ROLE_STATUS_TEXT`): the
+  badge word, else `Working · 2m`, `Compacting` or `Claude open`, else
+  empty. `ui.show_status_text` (Preferences, default on) blanks line 3
+  without changing the row height. `ui.layout.row_height` is a floor —
+  `sizeHint` always fits three lines of the current font.
+
+  The title is mirrored with the Claude session title. `RepoListModel`
+  publishes each row's title to `$XDG_RUNTIME_DIR/ccwork/titles/<row id>`
+  (two lines: the title, then the last title both sides agreed on).
+  `bin/ccwork-hook-sink` reads it on `SessionStart` / `UserPromptSubmit`
+  and returns `sessionTitle` when the row changed since the last
+  agreement (or the session has no custom title); otherwise a differing
+  payload `session_title` is a `/rename`, which `sync_session_title`
+  adopts. Right-click → *Set title…* / *Clear title*, and `ccwork-rename`
+  from inside the terminal, write the same `Repo.title`; last write wins.
+
   The delegate reserves
   a right-edge column for a status badge (colored dot or glyph) that
   auto-hides only when fewer than ~4 chars of row text would remain — this
@@ -271,6 +290,15 @@ but no widgets):
   on the next duplicate add. `emoji` is a per-id (not per-path) leading
   prefix on `display_name` — surfaced in the UI as the row "badge"
   (right-click → *Set badge…*), opt-in, empty string means "no badge".
+  `title` is the per-id task title shown on line 1 of the row (see the
+  UI layer); `recent` does not keep it. `last_used` (epoch seconds) is
+  stamped by `mark_used` on every routed hook event and every row click,
+  saved at most once an hour per row. With `ui.expire_idle_repos` on
+  (Preferences; off by default, `ui.expire_idle_days` default 30),
+  `MainWindow._expire_idle_rows` runs at startup and hourly and moves
+  rows idle that long into `recent` via the normal remove path. A row
+  with a terminal never expires; a repo loaded without `last_used`
+  counts from the load time.
   The badge dialog is in `repo_sidebar.py`: `BADGE_GALLERY` is the
   25-glyph quick-pick list; `_find_emoji_picker()` probes
   `EMOJI_PICKER_CANDIDATES` for an external one-shot picker. The
@@ -344,9 +372,19 @@ but no widgets):
   ccwork GUI it drains stdin and exits 0, so plain `claude` use isn't
   affected. Failure to reach the socket is silent by design (hooks must
   never break the user's session).
+- `bin/ccwork-rename [--badge <emoji>] [<title>]` — sets the title and/or
+  emoji of the row whose terminal runs it, via a `RowRenamed` event that
+  carries only the given fields. It fails loudly (exit 1) outside a
+  ccwork terminal. On `SessionStart` the sink tells Claude about it
+  through `additionalContext`.
 - `bin/claude` — `PATH`-shadow wrapper for `claude`. Pings the ccwork
   socket with a `RepoAdded` event (carrying `CCWORK_ROW_ID`) for git
-  roots, then execs the real `claude` with the user's args untouched.
+  roots, then runs the real `claude` with the user's args untouched as a
+  **child**, keeps its exit code, and sends `ClaudeExited` when it
+  returns — however it ended, `/exit` included. Ctrl+C / Ctrl+Z reach
+  claude through the terminal's foreground process group. Outside the
+  GUI, or when `CCWORK_CLAUDE_DEPTH` is already set (a `claude` started
+  from inside a session), it `exec`s the real binary and sends nothing.
   MainWindow ignores a `RepoAdded` that names a row — the SessionStart
   rebind moves that row instead — and auto-adds only for a `RepoAdded`
   with no row.
@@ -425,8 +463,9 @@ clear rules: `docs/specs/hook-events.md`):
     public mutators so the whole transition lands in a single dataChanged
     emission. Claude Code does **not** deliver a `SessionEnd` hook for
     the `/exit` slash command (only for Ctrl+D —
-    anthropics/claude-code#17885), so the same cascade is run as a
-    fallback from `MainWindow._on_terminal_finished` via
+    anthropics/claude-code#17885), so the same cascade runs on the
+    `ClaudeExited` event that `bin/claude` sends when the claude process
+    returns, and from `MainWindow._on_terminal_finished` via
     `RepoListModel.clear_session(repo_id)` when the row's xterm process
     exits. `clear_session` drops the *whole* `_live_sessions[repo_id]` set (the
     xterm is gone, so every session it hosted is dead) before the

@@ -23,9 +23,12 @@ desktop_notifications = true
 status_badge_style = "dot"
 auto_arrange_repos = false
 group_active_repos = true
+show_status_text = true
+expire_idle_repos = false
+expire_idle_days = 30
 
 [ui.layout]
-row_height = 52
+row_height = 66
 padding_x = 10
 group_gap_h = 10
 glyph_w = 14
@@ -171,7 +174,9 @@ class LayoutSettings:
 
     Tweak these to make rows denser, badges chunkier, or stripes thicker.
     """
-    row_height: int = 52
+    # Minimum row height. A row always grows to fit its three text lines
+    # in the current font, so a small value cannot clip them.
+    row_height: int = 66
     padding_x: int = 10
     # Vertical gap painted above the first inactive row when grouping is on.
     group_gap_h: int = 10
@@ -228,6 +233,15 @@ class UISettings:
     # dialog's "Show this warning next time" checkbox and from the
     # Preferences UI.
     warn_on_ctrl_z: bool = True
+    # Line 3 of each sidebar row: the badge word or the live state
+    # ("Working · 2m", "Claude open"). Off leaves line 3 blank; the row
+    # keeps its height.
+    show_status_text: bool = True
+    # Remove a row from the sidebar (into Recent) once it has had no Claude
+    # event and no click for expire_idle_days. Rows with a live terminal
+    # never expire.
+    expire_idle_repos: bool = False
+    expire_idle_days: int = 30
     layout: LayoutSettings = field(default_factory=LayoutSettings)
     animation: AnimationSettings = field(default_factory=AnimationSettings)
 
@@ -325,6 +339,9 @@ def _coerce_ui(raw: dict | None) -> UISettings:
         auto_arrange_repos=bool(raw.get("auto_arrange_repos", d.auto_arrange_repos)),
         group_active_repos=bool(raw.get("group_active_repos", d.group_active_repos)),
         warn_on_ctrl_z=bool(raw.get("warn_on_ctrl_z", d.warn_on_ctrl_z)),
+        show_status_text=bool(raw.get("show_status_text", d.show_status_text)),
+        expire_idle_repos=bool(raw.get("expire_idle_repos", d.expire_idle_repos)),
+        expire_idle_days=max(1, int(raw.get("expire_idle_days", d.expire_idle_days))),
         layout=_coerce_layout(raw.get("layout") if isinstance(raw.get("layout"), dict) else None),
         animation=_coerce_animation(raw.get("animation") if isinstance(raw.get("animation"), dict) else None),
     )
@@ -441,6 +458,9 @@ def _ui_to_toml(ui: UISettings) -> dict[str, Any]:
         "auto_arrange_repos": ui.auto_arrange_repos,
         "group_active_repos": ui.group_active_repos,
         "warn_on_ctrl_z": ui.warn_on_ctrl_z,
+        "show_status_text": ui.show_status_text,
+        "expire_idle_repos": ui.expire_idle_repos,
+        "expire_idle_days": ui.expire_idle_days,
         "layout": asdict(ui.layout),
         "animation": asdict(ui.animation),
     }

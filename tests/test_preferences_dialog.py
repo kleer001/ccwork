@@ -157,3 +157,23 @@ def test_ui_tab_initialized_from_settings(qapp: QApplication) -> None:
     assert dlg._desktop_notifs.isChecked() is False
     assert dlg._auto_arrange.isChecked() is True
     assert dlg._group_active.isChecked() is False
+
+
+def test_ui_tab_show_status_text_initialized_from_settings(qapp: QApplication) -> None:
+    dlg = PD.PreferencesDialog(Settings(ui=UISettings(show_status_text=False)))
+    assert dlg._show_status_text.isChecked() is False
+
+
+def test_ui_tab_show_status_text_round_trip_via_save(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tmp = tempfile.mkdtemp()
+    try:
+        monkeypatch.setenv("XDG_CONFIG_HOME", tmp)
+        dlg = PD.PreferencesDialog(Settings())
+        assert dlg._show_status_text.isChecked() is True
+        dlg._show_status_text.setChecked(False)
+        dlg._on_save()
+        assert load_settings().ui.show_status_text is False
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

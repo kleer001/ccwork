@@ -20,13 +20,24 @@ driven by Claude Code hooks.
 
 ## What it does
 
-- **Sidebar of repos** — name + current git branch + a status badge. The
+- **Sidebar of repos** — each row has three lines: a task title, then
+  `repo | branch`, then what Claude is doing ("Needs permission",
+  "Working · 2m", "Claude open"). The title is shared with the Claude
+  session title: `/rename` in Claude updates the row, and right-click →
+  *Set title…* updates Claude at your next prompt. Claude can also name
+  its own row by running `ccwork-rename "<topic>"` (add `--badge 🐛` to
+  set the row icon). The status line can be turned off in Preferences.
+  Each row also has a status badge. The
   badge color says why Claude stopped: red needs permission, orange needs
   an answer, magenta is an API or account error, yellow is a usage limit,
   green is done. A violet mark shows while Claude compacts its context.
   Click a repo to bring up its terminal; right-click for reload / remove.
   Repos you haven't opened yet this session render in regular italic;
   once a terminal exists they flip to bold upright.
+- **Idle repos clean themselves up (optional)** — turn on *Remove idle
+  repos from the sidebar after N days* in Preferences, and a repo with no
+  Claude activity and no click for that long moves to the Recent list.
+  Repos with an open terminal stay.
 - **Recent recall** — a faded half-width slot rides the bottom of the repo
   stack. Click it for a drop-down list of every repo you've removed;
   pick one to add it straight back (badge and all).

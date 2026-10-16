@@ -220,7 +220,7 @@ def test_layout_defaults_match_legacy_hardcodes() -> None:
     """Defaults must match the previous class-constants in RepoDelegate so
     nothing visually changes when no TOML is present."""
     L = S.LayoutSettings()
-    assert L.row_height == 52
+    assert L.row_height == 66
     assert L.padding_x == 10
     assert L.group_gap_h == 10
     assert L.glyph_w == 14
@@ -366,3 +366,16 @@ def test_corrupt_window_geometry_loads_clean(tmp_path: Path) -> None:
     )
     loaded = S.load_settings(p)
     assert loaded.window.geometry == "not-valid-base64!!!"
+
+
+def test_show_status_text_defaults_on() -> None:
+    assert S.UISettings().show_status_text is True
+
+
+def test_show_status_text_round_trip(tmp_path: Path) -> None:
+    p = tmp_path / "s.toml"
+    S.save_settings(S.Settings(ui=S.UISettings(show_status_text=False)), p)
+    assert S.load_settings(p).ui.show_status_text is False
+
+    S.save_settings(S.Settings(ui=S.UISettings(show_status_text=True)), p)
+    assert S.load_settings(p).ui.show_status_text is True

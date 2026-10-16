@@ -38,3 +38,10 @@ def qapp() -> QApplication:
 def stub_hook_server() -> StubHookServer:
     """Fresh `StubHookServer` per test — no state to share."""
     return StubHookServer()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_runtime_dir(tmp_path_factory, monkeypatch) -> None:
+    """Point XDG_RUNTIME_DIR at a temp dir for every test, so the row-title
+    files ccwork publishes for the hook sink never land in the real one."""
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path_factory.mktemp("runtime")))

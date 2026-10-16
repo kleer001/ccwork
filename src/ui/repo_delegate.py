@@ -1,6 +1,7 @@
 """Item delegate that paints each repo row: name + branch + edge badges.
 
-Two-line rows with two reserved right-edge badge slots:
+Three-line rows (title / "repo | branch" / status text) with two reserved
+right-edge badge slots:
   • OUTBOARD (rightmost): main-turn indicators — alert dots / compaction
     glyph / working spinner / DONE dot / ambient terminal state.
   • INBOARD (one slot to its left, only when subagents > 0): the
@@ -14,7 +15,7 @@ colors come from `badge_theme`. Row roles are defined in `repo_model`.
 from __future__ import annotations
 
 from PySide6.QtCore import QModelIndex, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 
 from src.core.repo_store import Repo
@@ -35,7 +36,9 @@ from src.ui.repo_model import (
     ROLE_REPO,
     ROLE_SESSION_ACTIVE,
     ROLE_STATUS,
+    ROLE_STATUS_TEXT,
     ROLE_SUBAGENTS,
+    ROLE_TITLE,
     ROLE_WORKING,
 )
 
@@ -55,9 +58,26 @@ SUBAGENT_SLOWDOWN = 3
 # enlarged relative to the row font so they read as marks, not body text.
 GLYPH_FONT_SCALE = 1.4
 
+# Separator between the repo name and the branch on line 2.
+REPO_LINE_SEP = " | "
+
+
+def _repo_line(fm, name: str, branch: str, width: int) -> str:
+    """Fit "name | branch" into `width` px. The branch elides first; once
+    no branch character fits, the name alone elides."""
+    full = f"{name}{REPO_LINE_SEP}{branch}" if branch else name
+    if fm.horizontalAdvance(full) <= width or not branch:
+        return fm.elidedText(full, Qt.ElideRight, width)
+    head = f"{name}{REPO_LINE_SEP}"
+    room = width - fm.horizontalAdvance(head)
+    tail = fm.elidedText(branch, Qt.ElideRight, room) if room > 0 else ""
+    if tail and tail != "…":
+        return head + tail
+    return fm.elidedText(name, Qt.ElideRight, width)
+
 
 class RepoDelegate(QStyledItemDelegate):
-    """Two-line row: name (bold) + branch (subtitle), unread badge right-aligned.
+    """Three-line row: title (bold), "repo | branch", status text; badges right-aligned.
 
     All numeric layout knobs (row_height, padding_x, group_gap_h, glyph_w,
     glyph_gap, active_stripe_w, last_focused_stripe_w) come from
@@ -84,6 +104,8 @@ class RepoDelegate(QStyledItemDelegate):
         self.spinner_frame = 0
         # "dot" or "glyph". Toggled live by RepoSidebar.set_badge_style.
         self.badge_style = "dot"
+        # Mirrors ui.show_status_text. RepoSidebar keeps it in sync.
+        self.show_status_text = True
         # Mirrors ui.group_active_repos. RepoSidebar keeps it in sync.
         self.group_enabled = False
         # Layout knobs from settings; defaults match the historical hardcodes
@@ -108,7 +130,9 @@ class RepoDelegate(QStyledItemDelegate):
         return bool(prev.data(ROLE_ACTIVE_GROUP))
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
-        h = self.ROW_HEIGHT
+        # Three text lines plus the 4 px top and bottom inset in paint().
+        # ROW_HEIGHT is a floor, so a small configured value cannot clip.
+        h = max(self.ROW_HEIGHT, 3 * QFontMetrics(option.font).height() + 8)
         if self._is_group_boundary(index):
             h += self.GROUP_GAP_H
         return QSize(option.rect.width(), h)
@@ -182,6 +206,8 @@ class RepoDelegate(QStyledItemDelegate):
         subagents: int = int(index.data(ROLE_SUBAGENTS) or 0)
         session_active: bool = bool(index.data(ROLE_SESSION_ACTIVE))
         compacting: bool = bool(index.data(ROLE_COMPACTING))
+        title_text: str = index.data(ROLE_TITLE) or ""
+        status_text: str = index.data(ROLE_STATUS_TEXT) or ""
         # The ambient badge marks a live Claude session, nothing else. A
         # terminal left at a bare bash prompt gets no glyph at all — it's
         # not pending work, and a badge there reads as an unfinished task.
@@ -244,36 +270,54 @@ class RepoDelegate(QStyledItemDelegate):
         right_cols = (1 if show_right_glyph else 0) + (1 if show_subagent else 0)
         text_w = max(0, rect.width() - right_cols * glyph_room)
 
-        # Repo name (bold) on line 1. Elide at the right so we don't bleed
+        line_h = rect.height() // 3
+
+        # Line 1: emoji + editable title (bold). Blank when no title is set,
+        # apart from the emoji. Elides at the right so it doesn't bleed
         # under the glyph column.
         painter.setFont(name_font)
         painter.setPen(QPen(text_color))
-        name_rect = QRect(rect.left(), rect.top(), text_w, rect.height() // 2)
-        name_text = painter.fontMetrics().elidedText(
-            repo.display_name if repo else "", Qt.ElideRight, text_w,
+        title = " ".join(p for p in ((repo.emoji, title_text) if repo else ()) if p)
+        painter.drawText(
+            QRect(rect.left(), rect.top(), text_w, line_h),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            painter.fontMetrics().elidedText(title, Qt.ElideRight, text_w),
         )
-        painter.drawText(name_rect, Qt.AlignLeft | Qt.AlignVCenter, name_text)
 
-        # Branch subtitle on line 2.
         sub_font = QFont(option.font)
         sub_font.setPointSizeF(option.font.pointSizeF() * 0.9)
         painter.setFont(sub_font)
         painter.setPen(QPen(text_color.lighter(130) if text_color.lightness() < 128 else text_color.darker(140)))
-        # Three-way pick: a missing path masks the detached/branch question
-        # because git can't tell us anything about a dir that isn't there.
+        fm = painter.fontMetrics()
+
+        # Line 2: "name (II) | branch". Three-way pick for the branch part:
+        # a missing path masks the detached/branch question because git
+        # can't tell us anything about a dir that isn't there.
         # current_branch() returns None for both detached HEAD and missing
         # path, so we lean on the separate path_missing axis to disambiguate.
         if not repo:
-            sub_text_raw = ""
-        elif path_missing:
-            sub_text_raw = "(path missing)"
-        elif branch:
-            sub_text_raw = branch
+            name, branch_text = "", ""
         else:
-            sub_text_raw = "(detached)"
-        sub_rect = QRect(rect.left(), rect.top() + rect.height() // 2, text_w, rect.height() // 2)
-        sub_text = painter.fontMetrics().elidedText(sub_text_raw, Qt.ElideRight, text_w)
-        painter.drawText(sub_rect, Qt.AlignLeft | Qt.AlignVCenter, sub_text)
+            name = repo.instance_name
+            if path_missing:
+                branch_text = "(path missing)"
+            elif branch:
+                branch_text = branch
+            else:
+                branch_text = "(detached)"
+        painter.drawText(
+            QRect(rect.left(), rect.top() + line_h, text_w, line_h),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            _repo_line(fm, name, branch_text, text_w),
+        )
+
+        # Line 3: status text — the badge word or the live state.
+        if self.show_status_text and status_text:
+            painter.drawText(
+                QRect(rect.left(), rect.top() + 2 * line_h, text_w, line_h),
+                Qt.AlignLeft | Qt.AlignVCenter,
+                fm.elidedText(status_text, Qt.ElideRight, text_w),
+            )
 
         # Subagent twinkle — paints whenever subagents > 0, independent of
         # the main turn's working state. Sits one slot inboard of the

@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListView,
@@ -49,6 +50,7 @@ from PySide6.QtWidgets import (
 
 from src.core import repo_store
 from src.core.hook_server import (
+    EVENT_CLAUDE_EXITED,
     EVENT_NOTIFICATION,
     EVENT_PERMISSION_REQUEST,
     EVENT_SESSION_END,
@@ -204,6 +206,7 @@ class RepoSidebar(QWidget):
             self._delegate.group_enabled = bool(
                 getattr(settings.ui, "group_active_repos", False)
             )
+            self._delegate.show_status_text = settings.ui.show_status_text
         self._view.selectionModel().currentChanged.connect(self._on_current_changed)
         self._view.clicked.connect(self._on_view_clicked)
         self._view.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -316,6 +319,9 @@ class RepoSidebar(QWidget):
     def set_settings(self, settings) -> None:
         """Swap in a fresh Settings reference (called after Preferences edits)."""
         self._settings = settings
+        if self._delegate.show_status_text != settings.ui.show_status_text:
+            self._delegate.show_status_text = settings.ui.show_status_text
+            self._view.viewport().update()
         new_group = bool(getattr(settings.ui, "group_active_repos", False))
         if self._delegate.group_enabled != new_group:
             self._delegate.group_enabled = new_group
@@ -417,7 +423,7 @@ class RepoSidebar(QWidget):
             self._maybe_schedule_reorder()
         # Session start/end change group membership *and* the sort tier, so
         # they walk directly rather than through the turn-activity debounce.
-        elif event in (EVENT_SESSION_START, EVENT_SESSION_END):
+        elif event in (EVENT_SESSION_START, EVENT_SESSION_END, EVENT_CLAUDE_EXITED):
             self._maybe_walk()
 
     def _refresh_spinner_timer(self) -> None:
@@ -894,6 +900,21 @@ class RepoSidebar(QWidget):
         menu.addAction(rebind_act)
 
         menu.addSeparator()
+        set_title_act = QAction("Set title…", menu)
+        set_title_act.setToolTip(
+            "Name the task on this row. The title is shared with the row's "
+            "Claude session title (/rename)."
+        )
+        set_title_act.triggered.connect(lambda _=False, r=repo: self._prompt_title(r))
+        menu.addAction(set_title_act)
+
+        if repo.title:
+            clear_title_act = QAction("Clear title", menu)
+            clear_title_act.triggered.connect(
+                lambda _=False, r=repo: self._model.set_title(r.id, "")
+            )
+            menu.addAction(clear_title_act)
+
         set_badge_act = QAction("Set badge…", menu)
         set_badge_act.setToolTip("Prefix the row with a glyph (emoji or any single character).")
         set_badge_act.triggered.connect(lambda _=False, r=repo: self._prompt_badge(r))
@@ -955,6 +976,14 @@ class RepoSidebar(QWidget):
         if changed:
             self._maybe_walk()
         return changed
+
+    def _prompt_title(self, repo: Repo) -> None:
+        title, ok = QInputDialog.getText(
+            self, "Set title", f"Title for {repo.display_name} (empty clears it):",
+            text=repo.title,
+        )
+        if ok:
+            self._model.set_title(repo.id, title)
 
     def _prompt_badge(self, repo: Repo) -> None:
         dlg = QDialog(self)

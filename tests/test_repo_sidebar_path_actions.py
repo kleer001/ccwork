@@ -109,7 +109,8 @@ def test_context_menu_path_actions_appear_between_clone_and_badge(
     qapp: QApplication, tmp_path: Path
 ) -> None:
     """Order matters per spec: Reload → Clone → Open in FM → Copy path →
-    Rebind to… → sep → Set badge → Clear badge → sep → Remove. Lock the
+    Rebind to… → sep → Set title → Set badge → Clear badge → sep → Remove.
+    (Clear title shows only when a title is set.) Lock the
     ordering so a future menu addition doesn't disrupt the path-group
     cluster."""
     sidebar, repo = _sidebar_with(str(tmp_path / "r"), tmp_path / "repos.json")
@@ -123,13 +124,14 @@ def test_context_menu_path_actions_appear_between_clone_and_badge(
         "Open in file manager",
         "Copy path",
         "Rebind to…",
+        "Set title…",
         "Set badge…",
         "Clear badge",
         "Remove from sidebar",
     ]
     # And there must be NO separator between Clone and Open in file manager
     # (the path-action group reads as one cluster with Clone). Two separators
-    # total: one before Set badge, one before Remove.
+    # total: one before Set title, one before Remove.
     sep_positions = [i for i, a in enumerate(menu.actions()) if a.isSeparator()]
     assert len(sep_positions) == 2
 

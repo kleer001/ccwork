@@ -522,3 +522,69 @@ def test_git_toplevel_outside_git_is_none(tmp_path: Path) -> None:
     plain = tmp_path / "plain"
     plain.mkdir()
     assert repo_store.git_toplevel(plain) is None
+
+
+# ── row title and instance_name ──
+
+
+def test_title_round_trips_through_repos_json(store_path: Path) -> None:
+    s = RepoStore(config_path=store_path)
+    repo = s.add("/tmp/garden")
+    repo.title = "fix login bug"
+    s.save()
+
+    raw = json.loads(store_path.read_text())
+    assert raw["repos"][0]["title"] == "fix login bug"
+
+    reloaded = RepoStore(config_path=store_path)
+    reloaded.load()
+    assert reloaded.repos[0].title == "fix login bug"
+
+
+def test_missing_or_non_string_title_loads_as_empty(store_path: Path) -> None:
+    store_path.write_text(json.dumps({
+        "version": 1,
+        "repos": [
+            {"path": "/tmp/a", "id": "a1", "instance": 0},
+            {"path": "/tmp/b", "id": "b2", "instance": 0, "title": 42},
+        ],
+        "recent": [],
+    }))
+    s = RepoStore(config_path=store_path)
+    s.load()
+    assert [r.title for r in s.repos] == ["", ""]
+
+
+def test_recent_drops_title_and_re_add_restores_only_emoji(store_path: Path) -> None:
+    s = RepoStore(config_path=store_path)
+    repo = s.add("/tmp/garden")
+    repo.emoji = "🌱"
+    repo.title = "fix login bug"
+    rid = repo.id
+
+    assert s.remove_by_id(rid) is True
+    assert s.recent == [{"path": os.path.realpath("/tmp/garden"), "emoji": "🌱"}]
+    assert "title" not in s.recent[0]
+
+    s.save()
+    reloaded = RepoStore(config_path=store_path)
+    reloaded.load()
+    assert "title" not in reloaded.recent[0]
+
+    back = reloaded.add("/tmp/garden")
+    assert back.emoji == "🌱"
+    assert back.title == ""
+
+
+def test_instance_name_has_suffix_but_no_emoji() -> None:
+    bare = Repo(path="/tmp/garden", emoji="🌱")
+    assert bare.instance_name == "garden"
+    assert bare.display_name == "🌱 garden"
+
+    second = Repo(path="/tmp/garden", instance=2, emoji="🌱")
+    assert second.instance_name == "garden (II)"
+    assert second.display_name == "🌱 garden (II)"
+
+
+def test_title_does_not_change_display_name() -> None:
+    assert Repo(path="/tmp/garden", title="fix login bug").display_name == "garden"

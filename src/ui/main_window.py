@@ -28,6 +28,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import time
 
 from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QFontMetrics
@@ -48,8 +49,10 @@ from pathlib import Path
 from src import __version__
 from src.core import session_recovery
 from src.core.hook_server import (
+    EVENT_CLAUDE_EXITED,
     EVENT_NOTIFICATION,
     EVENT_REPO_ADDED,
+    EVENT_ROW_RENAMED,
     EVENT_SESSION_END,
     EVENT_SESSION_START,
     EVENT_STOP,
@@ -85,6 +88,9 @@ _LOGO_PATH = Path(__file__).resolve().parent.parent.parent / "logo" / "v2-icon.s
 
 
 log = logging.getLogger(__name__)
+
+# How often the idle-row expiry re-checks (ms).
+EXPIRY_CHECK_MS = 3600 * 1000
 
 
 class MainWindow(QMainWindow):
@@ -184,6 +190,14 @@ class MainWindow(QMainWindow):
         self._sidebar_save_timer.timeout.connect(self._persist_settings_now)
         self._apply_sidebar_layout()
         self._sidebar.set_badge_style(self._settings.ui.status_badge_style)
+
+        # Idle-row expiry: once at startup, then hourly (the setting counts
+        # days, so a finer check buys nothing).
+        self._expiry_timer = QTimer(self)
+        self._expiry_timer.setInterval(EXPIRY_CHECK_MS)
+        self._expiry_timer.timeout.connect(self._expire_idle_rows)
+        self._expiry_timer.start()
+        self._expire_idle_rows()
         splitter.splitterMoved.connect(self._on_splitter_moved)
 
         # ── assemble ──
@@ -213,6 +227,7 @@ class MainWindow(QMainWindow):
         self._sidebar.path_copied.connect(self._on_path_copied)
         self._sidebar.model.working_changed.connect(self._refresh_title)
         self._hook_server.event_received.connect(self._on_hook_event)
+        self._sidebar.model.publish_titles()
 
         # Light the "last focused" violet dot on the repo the user was on
         # when they last closed ccwork. Visible until they click that row
@@ -569,6 +584,20 @@ class MainWindow(QMainWindow):
         else:
             bar.showMessage("Settings applied.", 3_000)
 
+    def _expire_idle_rows(self) -> None:
+        """Move rows idle for `expire_idle_days` into Recent, when enabled.
+        A row with a terminal is in use and never expires."""
+        ui = self._settings.ui
+        if not ui.expire_idle_repos:
+            return
+        cutoff = time.time() - ui.expire_idle_days * 86400
+        model = self._sidebar.model
+        for repo in list(self._store.repos):
+            if repo.id in self._terminals or repo.last_used >= cutoff:
+                continue
+            log.info("expiring idle row %s (%s)", repo.display_name, repo.path)
+            model.remove_repo_at(model.index_of_id(repo.id))
+
     def _on_repo_removed(self, repo: Repo) -> None:
         """A repo was removed from the sidebar — also tear down its terminal."""
         host = self._terminals.pop(repo.id, None)
@@ -712,6 +741,7 @@ class MainWindow(QMainWindow):
     # ── slots ──
 
     def _on_repo_selected(self, repo: Repo) -> None:
+        self._store.mark_used(repo.id)
         # Refresh branches first so the title gets a fresh subtitle on click.
         self._sidebar.refresh_branches()
         self._title.set_repo(repo.display_name, self._branch_for(repo.path))
@@ -747,6 +777,7 @@ class MainWindow(QMainWindow):
         current row re-shows its terminal. In the ordinary selection-change
         flow `_on_repo_selected` has already swapped the stack by the time
         the view's clicked signal fires, so this no-ops."""
+        self._store.mark_used(repo.id)
         if self._stack.currentWidget() is not self._empty_placeholder:
             return
         host = self._terminals.get(repo.id)
@@ -927,6 +958,15 @@ class MainWindow(QMainWindow):
             )
             return
         log.info("hook event=%s cwd=%r row=%s", event, cwd, repo.id)
+        self._store.mark_used(repo.id)
+
+        if event == EVENT_ROW_RENAMED:
+            # `ccwork-rename` sends only the fields it was asked to change.
+            if isinstance(obj.get("title"), str):
+                self._sidebar.model.set_title(repo.id, obj["title"])
+            if isinstance(obj.get("emoji"), str):
+                self._sidebar.model.set_emoji(repo.id, obj["emoji"])
+            return
 
         if event == EVENT_SESSION_START and cwd:
             # The terminal may have `cd`-ed into another repo before running
@@ -934,6 +974,12 @@ class MainWindow(QMainWindow):
             top = git_toplevel(str(cwd))
             if top:
                 self._sidebar.rebind(repo.id, top)
+
+        if event in (EVENT_SESSION_START, EVENT_USER_PROMPT_SUBMIT):
+            title = payload.get("session_title")
+            self._sidebar.model.sync_session_title(
+                repo.id, title if isinstance(title, str) else None,
+            )
 
         before = self._sidebar.model.status_word(repo.id)
         self._sidebar.apply_hook_event(event, repo.id, payload)
@@ -944,7 +990,7 @@ class MainWindow(QMainWindow):
         # SessionEnd is a clean end — drop it.
         sid = payload.get("session_id")
         if cwd:
-            if event == EVENT_SESSION_END:
+            if event in (EVENT_SESSION_END, EVENT_CLAUDE_EXITED):
                 session_recovery.clear_open(str(cwd))
             elif sid:
                 session_recovery.record_open(str(cwd), str(sid), repo.display_name)

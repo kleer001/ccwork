@@ -109,6 +109,9 @@ SUBAGENTS_LABEL = "Subagents running"
 SESSION_ACTIVE_LABEL = "Claude session active"
 TERMINAL_ONLY_LABEL = "Terminal open (no Claude session)"
 COMPACTING_LABEL = "Compacting"
+# Line-3 status text for rows with no badge.
+WORKING_TEXT = "Working"
+CLAUDE_OPEN_TEXT = "Claude open"
 
 # Specific words for the error badge, keyed by the StopFailure `error` field.
 # An error type missing here shows the error status label.

@@ -31,6 +31,8 @@ EVENT_USER_PROMPT_SUBMIT = "UserPromptSubmit"
 EVENT_STOP = "Stop"
 EVENT_NOTIFICATION = "Notification"
 EVENT_REPO_ADDED = "RepoAdded"
+# Sent by `bin/ccwork-rename`: sets the sending row's title and/or emoji.
+EVENT_ROW_RENAMED = "RowRenamed"
 # A turn ended on an API error. Runs instead of Stop; the payload's `error`
 # field names the cause (rate_limit, overloaded, billing_error, …).
 EVENT_STOP_FAILURE = "StopFailure"
@@ -54,6 +56,10 @@ EVENT_SESSION_START = "SessionStart"
 # session-active flag and any leftover per-session state (alerts, working,
 # detached agents) — the session is over, those signals are stale.
 EVENT_SESSION_END = "SessionEnd"
+# Sent by `bin/claude` when the claude process it started returns, however
+# it ended. Covers /exit, which sends no SessionEnd hook
+# (anthropics/claude-code#17885).
+EVENT_CLAUDE_EXITED = "ClaudeExited"
 
 
 def default_socket_path() -> Path:
@@ -66,6 +72,28 @@ def default_socket_path() -> Path:
     xdg = os.environ.get("XDG_RUNTIME_DIR")
     base = Path(xdg) if xdg else Path.home() / ".cache"
     return base / "ccwork" / "ccwork.sock"
+
+
+def row_title_path(row_id: str) -> Path:
+    """Where ccwork publishes one row's title for `bin/ccwork-hook-sink`.
+
+    Two lines: the row title, then the last title ccwork and the Claude
+    session agreed on. The sink compares both with the payload's
+    `session_title` to decide whether to push the row title to Claude.
+    """
+    return default_socket_path().parent / "titles" / row_id
+
+
+def write_row_title(row_id: str, title: str, synced: str) -> None:
+    path = row_title_path(row_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(f"{title}\n{synced}\n")
+    os.replace(tmp, path)
+
+
+def remove_row_title(row_id: str) -> None:
+    row_title_path(row_id).unlink(missing_ok=True)
 
 
 class HookServer(QObject):

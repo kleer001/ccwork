@@ -7,6 +7,7 @@ desktop never see a toast.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -74,3 +75,93 @@ def test_stop_failure_toasts(toast_env: dict) -> None:
 def test_no_toast_outside_the_gui(toast_env: dict) -> None:
     env = dict(toast_env, CCWORK_GUI="0")
     assert _run(env, "StopFailure", '{"error":"rate_limit"}') == ""
+
+
+# ── Row title ↔ Claude session title (sessionTitle / additionalContext) ──
+
+
+def _write_title(env: dict, title: str, synced: str, row: str = "row1") -> None:
+    d = Path(env["XDG_RUNTIME_DIR"]) / "ccwork" / "titles"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / row).write_text(f"{title}\n{synced}\n")
+
+
+def _hook(env: dict, event: str, payload: str, row: str = "row1") -> str:
+    """Run the sink as a row's terminal would. Returns stdout (hook output)."""
+    run_env = {k: v for k, v in env.items() if not k.startswith("_")}
+    run_env["CCWORK_EVENT"] = event
+    run_env["CCWORK_ROW_ID"] = row
+    proc = subprocess.run(
+        ["bash", str(SINK)],
+        input=payload, text=True, capture_output=True, env=run_env,
+        cwd=env["_repo"], timeout=20,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout
+
+
+def test_session_start_pushes_row_title_and_context(toast_env: dict) -> None:
+    _write_title(toast_env, "fix login bug", "")
+    out = _hook(toast_env, "SessionStart", '{"session_id":"s1","source":"startup"}')
+
+    obj = json.loads(out)
+    hso = obj["hookSpecificOutput"]
+    assert hso["hookEventName"] == "SessionStart"
+    assert hso["sessionTitle"] == "fix login bug"
+    assert "ccwork-rename" in hso["additionalContext"]
+
+
+def test_user_prompt_submit_is_silent_when_titles_match(toast_env: dict) -> None:
+    _write_title(toast_env, "fix login bug", "fix login bug")
+    out = _hook(toast_env, "UserPromptSubmit",
+                '{"session_id":"s1","session_title":"fix login bug","prompt":"hi"}')
+    assert out == ""
+
+
+def test_synced_row_with_different_session_title_is_silent(toast_env: dict) -> None:
+    _write_title(toast_env, "mine", "mine")
+    out = _hook(toast_env, "UserPromptSubmit",
+                '{"session_id":"s1","session_title":"renamed in claude","prompt":"hi"}')
+    assert out == ""
+
+
+def test_changed_row_title_is_pushed_on_prompt(toast_env: dict) -> None:
+    _write_title(toast_env, "mine", "old")
+    out = _hook(toast_env, "UserPromptSubmit",
+                '{"session_id":"s1","session_title":"old","prompt":"hi"}')
+
+    hso = json.loads(out)["hookSpecificOutput"]
+    assert hso == {"hookEventName": "UserPromptSubmit", "sessionTitle": "mine"}
+
+
+def test_no_title_file_is_silent(toast_env: dict) -> None:
+    assert _hook(toast_env, "UserPromptSubmit", '{"prompt":"hi"}') == ""
+
+
+def test_prompt_text_mimicking_session_title_does_not_confuse_sink(toast_env: dict) -> None:
+    # The prompt holds an escaped "session_title" equal to the row title.
+    # The real payload has no session_title, so the row title must be pushed.
+    _write_title(toast_env, "fix", "fix")
+    payload = '{"session_id":"s1","prompt":"note: \\"session_title\\":\\"fix\\" is in my text"}'
+    out = _hook(toast_env, "UserPromptSubmit", payload)
+
+    assert json.loads(out)["hookSpecificOutput"]["sessionTitle"] == "fix"
+
+
+def test_title_with_quotes_and_backslash_round_trips(toast_env: dict) -> None:
+    title = 'say "hi" \\ there'
+    _write_title(toast_env, title, "")
+
+    out = _hook(toast_env, "SessionStart", '{"session_id":"s1"}')
+    assert json.loads(out)["hookSpecificOutput"]["sessionTitle"] == title
+
+    # The same title, already escaped in the payload, is not pushed again.
+    _write_title(toast_env, title, title)
+    payload = '{"session_id":"s1","session_title":"say \\"hi\\" \\\\ there"}'
+    assert _hook(toast_env, "UserPromptSubmit", payload) == ""
+
+
+def test_title_output_needs_the_gui(toast_env: dict) -> None:
+    _write_title(toast_env, "fix login bug", "")
+    env = dict(toast_env, CCWORK_GUI="0")
+    assert _hook(env, "SessionStart", '{"session_id":"s1"}') == ""
