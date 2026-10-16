@@ -181,8 +181,10 @@ notifications" preference (single source of truth:
   `~/.config/ccwork/badges.toml` (a separate file from `settings.toml`).
   Colors accept `#hex`, `rgb(r,g,b)` (0–255), `hsv(h,s,v)` (hue 0–360,
   saturation/value 0–255), or an SVG color name; glyphs are strings,
-  frames are arrays, and the two statuses are `[statuses.done]` /
-  `[statuses.attention]` sub-tables of `{color, glyph, label}`. Omitted
+  frames are arrays, and the five statuses are `[statuses.done]`,
+  `[statuses.attention]`, `[statuses.answer]`, `[statuses.error]` and
+  `[statuses.usage_limit]` sub-tables of `{color, glyph, label}`. The
+  compaction glyph is `compact_glyph` / `compact_color`. Omitted
   keys keep their default; a malformed value (bad color, empty glyph,
   unknown key) fails loudly at startup via `load_badge_theme`. The module
   docstring carries the full example schema.
@@ -332,11 +334,13 @@ but no widgets):
 
 ### 3. External integration (`bin/`)
 
-- `bin/ccwork-hook-sink` — wired into Claude Code's Stop/Notification hooks
+- `bin/ccwork-hook-sink` — wired into every Claude Code hook ccwork uses
   by `install.sh`. Reads the hook payload from stdin, wraps it as
   `{"event": $CCWORK_EVENT, "row": $CCWORK_ROW_ID, "cwd": $PWD, "ts": …,
   "payload": …}`, writes
-  one line to the ccwork socket. **Gated by `CCWORK_GUI=1`** — outside the
+  one line to the ccwork socket. It also sends a desktop toast (gated by
+  `desktop_notifications`) for `Stop`, `StopFailure`, and the Notification
+  types that set a badge. **Gated by `CCWORK_GUI=1`** — outside the
   ccwork GUI it drains stdin and exits 0, so plain `claude` use isn't
   affected. Failure to reach the socket is silent by design (hooks must
   never break the user's session).
@@ -360,7 +364,7 @@ Claude Code hook ─▶ ccwork-hook-sink ─▶ unix socket ─▶ HookServer
 ```
 
 `MainWindow._on_hook_event` is a thin dispatcher: it special-cases
-`RepoAdded` (see `bin/claude`), toggles the bell dot for idle events,
+`RepoAdded` (see `bin/claude`), lights the bell dot when a row gets a new badge,
 and routes every other event by its `row` field to exactly one row. An
 event whose row id is missing or unknown is dropped with a logged
 warning — there is no fallback to path routing. On `SessionStart` it
@@ -370,28 +374,37 @@ runs the automatic rebind (see `repo_store.py`). Then it calls
 mutation table. All Claude state in the model is keyed by repo id, so
 duplicate rows on one path animate independently. Crash recovery stays
 keyed by `cwd`, because `claude --resume` must run in the session's own
-directory. The model knows seven Claude events:
+directory. The model knows these Claude events (badge words, colors and
+clear rules: `docs/specs/hook-events.md`):
 
-  • `UserPromptSubmit` — clear any prior alert, mark working,
+  • `UserPromptSubmit` — clear any badge and compaction, mark working,
     `touch_activity()` the row. Self-healing for Esc-interrupted /
     crashed turns is automatic: `set_working(True)` no-ops when already
     True and `touch_activity` refreshes the recency stamp unconditionally.
-  • `Stop` — clear working, set `STATUS_DONE`. Does **not** clear
-    `_subagents`: background subagents outlive the main turn, and the
-    left-edge twinkle is meant to keep painting alongside the green
-    DONE dot until each `SubagentStop` arrives.
-  • `Notification` — set `STATUS_ATTENTION`. Does **not** touch working:
-    `permission_prompt` fires mid-turn and the turn is still live, so
-    the spinner keeps running underneath the attention dot.
-  • `PreToolUse` — registered with matcher `Task`. Increments
-    `_subagents[repo_id]` whenever `payload.tool_name` is `Task` or
-    `Agent` (Claude Code renamed the tool; we accept both via
-    `_is_subagent_dispatch`). Foreground and background subagents
-    both count — the left-edge twinkle paints alongside the
-    right-edge working spinner so parallel work is visible during
-    the main turn, not only after it.
-  • `SubagentStop` — decrements `_subagents[repo_id]`, clamped at 0.
-    Fires for every subagent regardless of fg/bg.
+  • `Stop` — clear working and compaction, set `STATUS_DONE` (replacing
+    a permission or answer badge). Does **not** clear `_subagents`:
+    background subagents outlive the main turn, and the twinkle keeps
+    painting alongside the green DONE dot until each `SubagentStop`
+    arrives.
+  • `StopFailure` — runs *instead of* `Stop` when a turn ends on an API
+    error. Clears working and compaction, sets `STATUS_ERROR` with the
+    word for the payload's `error` (`ERROR_WORDS` in `badge_theme`).
+  • `PermissionRequest` — sets `STATUS_ATTENTION` the moment Claude asks,
+    and records the waiting tool ("Bash: rm -rf build") for the tooltip.
+    It never returns a decision. Does **not** touch working.
+  • `Notification` — keyed on `notification_type`: `permission_prompt`
+    → `STATUS_ATTENTION` (it arrives about six seconds after
+    `PermissionRequest`); elicitation dialogs → `STATUS_ANSWER`, cleared
+    by `elicitation_complete` / `elicitation_response`;
+    `quota_auto_resume_stale` / `_disabled` → `STATUS_USAGE_LIMIT`,
+    cleared by `quota_auto_resume_fired`. Every other type is ignored.
+  • `SubagentStart` / `SubagentStop` — add / remove the payload's
+    `agent_id` in `_subagents[repo_id]`, a set, so a resumed subagent's
+    repeat start counts once and an unknown stop is a no-op.
+    Foreground and background subagents both count.
+  • `PreCompact` / `PostCompact` — set / clear `_compacting`, which
+    paints the violet `COMPACT_GLYPH`. `Stop`, `StopFailure`, the next
+    prompt and `SessionEnd` also clear it.
   • `SessionStart` — flips `_session_active[repo_id] = True`. Lights the
     ambient ⠿ badge when no higher-priority alert is showing, joins the
     row to the floated active group, and lifts any `_session_ended`
@@ -433,15 +446,18 @@ the subagent twinkle.
 **Outboard slot** — main-turn indicators, picked by priority
 (highest first):
 
-  1. `STATUS_ATTENTION` (red dot) — wins over the spinner so a
-     `permission_prompt` is glanceable even when desktop notifications
+  1. Alert dots, in `STATUS_RANK` order — `STATUS_ATTENTION` (red),
+     `STATUS_ANSWER` (orange), `STATUS_ERROR` (magenta),
+     `STATUS_USAGE_LIMIT` (yellow). They win over the spinner so a
+     permission prompt is glanceable even when desktop notifications
      are off (the bell aggregates across repos, so it can't identify
      *which* repo is waiting).
-  2. Working spinner — braille frames from `SPINNER_VARIANTS`, picked
+  2. Compaction glyph — `COMPACT_GLYPH` in `COMPACT_COLOR`.
+  3. Working spinner — braille frames from `SPINNER_VARIANTS`, picked
      per-id via `spinner_for_id`, paints while the main turn is live.
-  3. `STATUS_DONE` (green dot) — paints after `Stop` until the next
+  4. `STATUS_DONE` (green dot) — paints after `Stop` until the next
      `UserPromptSubmit` clears it.
-  4. Ambient session presence — `SESSION_ACTIVE_GLYPH` (⠿, dense
+  5. Ambient session presence — `SESSION_ACTIVE_GLYPH` (⠿, dense
      braille) in `AMBIENT_COLOR` (solarized base01), only when the row
      has a live terminal *and* `_session_active[repo_id]` is True and no
      higher badge applies. A terminal at a bare bash prompt gets **no
@@ -452,7 +468,7 @@ the subagent twinkle.
 **Inboard slot** — subagent twinkle. Paints `SUBAGENT_FRAMES`
 (same-center asterisk-stars ordered light→heavy→light in solarized
 cyan, so they bloom and contract as a smooth pulse) whenever
-`_subagents[repo_id] > 0`, independent of whatever the outboard slot
+`_subagents[repo_id]` is non-empty, independent of whatever the outboard slot
 shows. So a subagent dispatched mid-turn paints the twinkle just
 left of the working spinner; a background subagent that survives past
 `Stop` paints it just left of the green DONE dot. When no main-turn
@@ -510,10 +526,10 @@ events never touch it; user navigation never touches `_status`.
   pending work, and a row left near the top with a badge on it reads as
   unfinished business.
 - **The two right-edge badge slots are reserved for main-turn state
-  and subagent activity.** The outboard slot holds the working spinner,
-  `STATUS_DONE`, `STATUS_ATTENTION`, or the ambient `SESSION_ACTIVE_GLYPH`
-  (priority order above); the inboard slot holds
-  the animated `SUBAGENT_FRAMES` twinkle whenever `_subagents[repo_id] > 0`,
+  and subagent activity.** The outboard slot holds an alert dot, the
+  compaction glyph, the working spinner, `STATUS_DONE`, or the ambient
+  `SESSION_ACTIVE_GLYPH` (priority order above); the inboard slot holds
+  the animated `SUBAGENT_FRAMES` twinkle whenever `_subagents[repo_id]` is non-empty,
   alongside whatever's outboard. The last-focused bookmark renders as a
   thin left-edge stripe in a distinct paint pass.
 - **`apply_hook_event` is the single entry point for hook-driven state
@@ -543,7 +559,8 @@ every touched file under `~/.local/share/ccwork/backups/`, and support
 `--dry-run` and `--uninstall`. The installer wires the hook sink into
 `~/.claude/settings.json` using the `ccwork-hook-sink` marker so uninstall
 can locate and strip those entries. Hooks installed: `Stop`,
-`Notification`, `UserPromptSubmit`, `PreToolUse` (matcher `Task`),
-`SubagentStop`, `SessionStart`, and `SessionEnd`. The installer strips
+`StopFailure`, `Notification`, `UserPromptSubmit`, `PermissionRequest`,
+`SubagentStart`, `SubagentStop`, `PreCompact`, `PostCompact`,
+`SessionStart`, and `SessionEnd`. The installer strips
 any prior ccwork hooks before writing, so re-running `install.sh` is
 the upgrade path when the set changes.

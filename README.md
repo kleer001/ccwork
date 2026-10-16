@@ -16,11 +16,14 @@
 
 A Qt desktop GUI for running Claude Code across many repos. One window, a
 clickable sidebar of repos, real embedded terminals, and a live alerts panel
-driven by Claude Code's Stop/Notification hooks.
+driven by Claude Code hooks.
 
 ## What it does
 
-- **Sidebar of repos** — name + current git branch + unread-alert badge.
+- **Sidebar of repos** — name + current git branch + a status badge. The
+  badge color says why Claude stopped: red needs permission, orange needs
+  an answer, magenta is an API or account error, yellow is a usage limit,
+  green is done. A violet mark shows while Claude compacts its context.
   Click a repo to bring up its terminal; right-click for reload / remove.
   Repos you haven't opened yet this session render in regular italic;
   once a terminal exists they flip to bold upright.

@@ -209,3 +209,16 @@ def test_terminal_finish_clears_only_its_own_row(
         assert model.is_session_active(second.id) is True
     finally:
         win.close()
+
+
+def test_bell_follows_new_badges_only(window: MainWindow, repo_dir: Path) -> None:
+    rid = window._store.repos[0].id
+    ignored = _event("Notification", rid, str(repo_dir))
+    ignored["payload"] = {"notification_type": "idle_prompt"}
+    _emit(window, ignored)
+    assert window._bell_btn._unseen is False
+
+    asking = _event("PermissionRequest", rid, str(repo_dir))
+    asking["payload"] = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
+    _emit(window, asking)
+    assert window._bell_btn._unseen is True

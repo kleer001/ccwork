@@ -13,10 +13,10 @@ from pathlib import Path
 
 from src.core.hook_server import (
     EVENT_NOTIFICATION,
-    EVENT_PRE_TOOL_USE,
     EVENT_SESSION_END,
     EVENT_SESSION_START,
     EVENT_STOP,
+    EVENT_SUBAGENT_START,
     EVENT_USER_PROMPT_SUBMIT,
 )
 from src.core.repo_store import Repo, RepoStore
@@ -90,23 +90,18 @@ def test_session_end_clears_stuck_working(qapp, tmp_path: Path) -> None:
 
 
 def test_session_end_clears_subagents(qapp, tmp_path: Path) -> None:
-    """Subagents don't outlive their parent session — clear the counter
-    on SessionEnd so a stale SubagentStop that arrives late can't drive
-    it below zero (well, the clamp would catch that, but the indicator
-    would still flicker)."""
+    """Subagents don't outlive their parent session — clear the live set
+    on SessionEnd so the indicator stops, and a late SubagentStop for one
+    of those ids finds nothing to remove."""
     repo = tmp_path / "repo"
     repo.mkdir()
     store = _store_with(str(repo), tmp_path / "repos.json")
     model = RepoListModel(store)
     rid = store.repos[0].id
 
-    payload = {
-        "tool_name": "Agent",
-        "tool_input": {"subagent_type": "general-purpose"},
-    }
     model.apply_hook_event(EVENT_SESSION_START, rid)
-    model.apply_hook_event(EVENT_PRE_TOOL_USE, rid, payload)
-    model.apply_hook_event(EVENT_PRE_TOOL_USE, rid, payload)
+    model.apply_hook_event(EVENT_SUBAGENT_START, rid, {"agent_id": "a1"})
+    model.apply_hook_event(EVENT_SUBAGENT_START, rid, {"agent_id": "a2"})
     assert model.subagents(rid) == 2
 
     model.apply_hook_event(EVENT_SESSION_END, rid)
@@ -123,7 +118,7 @@ def test_session_end_clears_attention(qapp, tmp_path: Path) -> None:
     rid = store.repos[0].id
 
     model.apply_hook_event(EVENT_SESSION_START, rid)
-    model.apply_hook_event(EVENT_NOTIFICATION, rid)
+    model.apply_hook_event(EVENT_NOTIFICATION, rid, {"notification_type": "permission_prompt"})
     assert model.index(0).data(ROLE_STATUS) == STATUS_ATTENTION
 
     model.apply_hook_event(EVENT_SESSION_END, rid)
@@ -141,13 +136,9 @@ def test_clear_session_tears_down_on_exit(qapp, tmp_path: Path) -> None:
     model = RepoListModel(store)
     rid = store.repos[0].id
 
-    payload = {
-        "tool_name": "Agent",
-        "tool_input": {"subagent_type": "general-purpose"},
-    }
     model.apply_hook_event(EVENT_SESSION_START, rid)
     model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, rid)
-    model.apply_hook_event(EVENT_PRE_TOOL_USE, rid, payload)
+    model.apply_hook_event(EVENT_SUBAGENT_START, rid, {"agent_id": "a1"})
     assert model.any_working() is True
     assert model.any_subagents() is True
 

@@ -20,6 +20,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from src.core.repo_store import Repo, RepoStore
+from src.ui.badge_theme import STATUS_RANK
 from src.ui.repo_sidebar import (
     ROLE_LAST_FOCUSED,
     ROLE_STATUS,
@@ -48,8 +49,8 @@ def _id(model: RepoListModel, path: str) -> str:
 
 def test_last_focused_not_in_right_edge_badge_dicts() -> None:
     """Only Claude alerts live in the right-edge dot/glyph dicts."""
-    assert set(RepoDelegate.STATUS_COLORS) == {STATUS_DONE, STATUS_ATTENTION}
-    assert set(RepoDelegate.STATUS_GLYPHS) == {STATUS_DONE, STATUS_ATTENTION}
+    assert set(RepoDelegate.STATUS_COLORS) == set(STATUS_RANK)
+    assert set(RepoDelegate.STATUS_GLYPHS) == set(STATUS_RANK)
 
 
 def test_last_focused_stripe_color_is_subtle_per_theme() -> None:

@@ -111,7 +111,7 @@ def test_stop_clears_turn_start_and_tooltip(
     assert rid not in model._turn_started
     tooltip = model.index(0).data(Qt.ToolTipRole)
     assert "Working " not in tooltip  # no "Working Ns" line in DONE state
-    assert tooltip.startswith("Claude finished a turn\n/a")
+    assert tooltip.startswith("Done\n/a")
 
 
 def test_interrupted_turn_resets_timer(
@@ -159,7 +159,7 @@ def test_notification_does_not_touch_turn_start(
     clock.t = 10.0
     model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, rid)
     clock.t = 25.0
-    model.apply_hook_event(EVENT_NOTIFICATION, rid)
+    model.apply_hook_event(EVENT_NOTIFICATION, rid, {"notification_type": "permission_prompt"})
 
     assert model._turn_started[rid] == 10.0  # unchanged
 

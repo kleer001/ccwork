@@ -22,22 +22,32 @@ from PySide6.QtCore import (
 from src.core import repo_store
 from src.core.hook_server import (
     EVENT_NOTIFICATION,
-    EVENT_PRE_TOOL_USE,
+    EVENT_PERMISSION_REQUEST,
+    EVENT_POST_COMPACT,
+    EVENT_PRE_COMPACT,
     EVENT_SESSION_END,
     EVENT_SESSION_START,
     EVENT_STOP,
+    EVENT_STOP_FAILURE,
+    EVENT_SUBAGENT_START,
     EVENT_SUBAGENT_STOP,
     EVENT_USER_PROMPT_SUBMIT,
 )
 from src.core.repo_store import Repo, RepoStore
 from src.ui.badge_theme import (
+    COMPACTING_LABEL,
+    ERROR_WORDS,
     LAST_FOCUSED_LABEL,
     SESSION_ACTIVE_LABEL,
+    STATUS_ANSWER,
     STATUS_ATTENTION,
     STATUS_DONE,
+    STATUS_ERROR,
     STATUS_LABELS,
+    STATUS_USAGE_LIMIT,
     SUBAGENTS_LABEL,
     TERMINAL_ONLY_LABEL,
+    USAGE_LIMIT_WORDS,
     WORKING_LABEL,
 )
 
@@ -49,13 +59,24 @@ _CLAUDE_STATE_EVENTS = frozenset(
     {
         EVENT_USER_PROMPT_SUBMIT,
         EVENT_STOP,
+        EVENT_STOP_FAILURE,
         EVENT_NOTIFICATION,
-        EVENT_PRE_TOOL_USE,
+        EVENT_PERMISSION_REQUEST,
+        EVENT_SUBAGENT_START,
         EVENT_SUBAGENT_STOP,
+        EVENT_PRE_COMPACT,
+        EVENT_POST_COMPACT,
         EVENT_SESSION_START,
         EVENT_SESSION_END,
     }
 )
+
+# Notification types that set a badge, and the types that clear one.
+# Every other notification_type (idle_prompt, auth_success, …) is ignored.
+_PERMISSION_NOTIFICATIONS = frozenset({"permission_prompt"})
+_ANSWER_NOTIFICATIONS = frozenset({"elicitation_dialog", "elicitation_url_dialog"})
+_ANSWERED_NOTIFICATIONS = frozenset({"elicitation_complete", "elicitation_response"})
+_RESUMED_NOTIFICATIONS = frozenset({"quota_auto_resume_fired"})
 
 
 # Custom roles. Two orthogonal axes feed the row paint:
@@ -76,6 +97,8 @@ ROLE_PATH_MISSING = Qt.UserRole + 7   # bool — repo.path doesn't exist on disk
 ROLE_SUBAGENTS    = Qt.UserRole + 8   # int — subagents (fg or bg) currently running
 ROLE_SESSION_ACTIVE = Qt.UserRole + 9 # bool — a live Claude session exists in this terminal
 ROLE_ACTIVE_GROUP = Qt.UserRole + 10  # bool — row belongs to the floated "in progress" group
+ROLE_COMPACTING   = Qt.UserRole + 11  # bool — Claude is compacting its context
+ROLE_STATUS_WORD  = Qt.UserRole + 12  # str — the badge's word ("Rate limited", …), "" with no badge
 
 
 def _norm(path: str) -> str:
@@ -87,24 +110,19 @@ def _norm(path: str) -> str:
     return os.path.realpath(path) if path else ""
 
 
-def _is_subagent_dispatch(payload: dict | None) -> bool:
-    """True iff `payload` describes a PreToolUse for a subagent dispatch.
-
-    Claude Code's PreToolUse payload carries `tool_name` and `tool_input`.
-    The tool was historically named "Task" and was later renamed to "Agent";
-    we accept both so the matcher works across Claude Code versions. The
-    install.sh hook config registers PreToolUse with matcher "Task", which
-    Claude Code currently leniently matches against both names.
-
-    We do NOT filter on `tool_input.run_in_background`: the subagent
-    indicator paints in the inboard right-edge slot while the main turn's
-    braille spinner paints in the outboard slot, so foreground and
-    background subagents both deserve their own glyph for the duration of
-    the dispatch.
-    """
-    if not isinstance(payload, dict):
-        return False
-    return payload.get("tool_name") in ("Task", "Agent")
+def _tool_summary(payload: dict) -> str:
+    """One-line "Tool: detail" for a PermissionRequest payload, e.g.
+    "Bash: rm -rf build". The detail is the first string field of
+    `tool_input` that names what the tool acts on."""
+    name = str(payload.get("tool_name") or "")
+    tool_input = payload.get("tool_input")
+    if not name or not isinstance(tool_input, dict):
+        return name
+    for key in ("command", "file_path", "path", "url", "pattern", "description"):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value:
+            return f"{name}: {value.splitlines()[0][:80]}"
+    return name
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -145,9 +163,18 @@ class RepoListModel(QAbstractListModel):
         # Claude state below is keyed by repo id: each hook event carries the
         # row id of the terminal that sent it, so duplicate rows on one path
         # keep independent state.
-        # Claude alerts only. Values: "", STATUS_DONE, STATUS_ATTENTION.
+        # Claude alerts only. Values: "" or a STATUS_RANK key.
         # User-navigation state lives in _last_focused below, with its own role.
         self._status: dict[str, str] = {}
+        # The specific word for the current status (e.g. "Rate limited" for
+        # an error). Absent → the status label from badge_theme.
+        self._status_word: dict[str, str] = {}
+        # Rows whose session is compacting its context (PreCompact →
+        # PostCompact / Stop / next prompt).
+        self._compacting: set[str] = set()
+        # "Tool: summary" of the call waiting for approval, from
+        # PermissionRequest. Cleared with the permission badge.
+        self._pending_tool: dict[str, str] = {}
         self._working: set[str] = set()
         # Repo ids whose TerminalHost has been spawned in the current ccwork
         # session. Drives the visual difference between "touched" rows (bold
@@ -168,15 +195,16 @@ class RepoListModel(QAbstractListModel):
         # also stamps on Stop and Notification) — we need "turn began",
         # not "any Claude event happened".
         self._turn_started: dict[str, float] = {}
-        # Per-row count of subagents (foreground or background) currently
-        # running. Incremented on PreToolUse(tool=Task|Agent), decremented on
-        # SubagentStop (clamped at 0). Drives the SUBAGENT_FRAMES twinkle —
+        # Per-row set of live subagent ids (foreground or background).
+        # SubagentStart adds its `agent_id`, SubagentStop removes the same
+        # id; a resumed subagent fires SubagentStart again and the set
+        # absorbs the repeat. Drives the SUBAGENT_FRAMES twinkle —
         # painted in the inboard right-edge slot while a subagent is in
         # flight, independent of the main turn's working state (whose glyph
         # sits in the outboard slot). The two indicators occupy separate
         # slots so the user can tell at a glance that Claude has dispatched
         # parallel work.
-        self._subagents: dict[str, int] = {}
+        self._subagents: dict[str, set[str]] = {}
         # Per-row live-session flag. True between SessionStart and
         # SessionEnd. Drives the ambient ⠿ badge and membership in the
         # active group (a bare bash terminal is neither).
@@ -221,7 +249,11 @@ class RepoListModel(QAbstractListModel):
         if role == ROLE_LAST_FOCUSED:
             return _norm(repo.path) == self._last_focused
         if role == ROLE_SUBAGENTS:
-            return self._subagents.get(repo.id, 0)
+            return len(self._subagents.get(repo.id, ()))
+        if role == ROLE_COMPACTING:
+            return repo.id in self._compacting
+        if role == ROLE_STATUS_WORD:
+            return self.status_word(repo.id)
         if role == ROLE_SESSION_ACTIVE:
             return self._session_active.get(repo.id, False)
         if role == ROLE_ACTIVE_GROUP:
@@ -237,10 +269,15 @@ class RepoListModel(QAbstractListModel):
                     elapsed = _format_elapsed(time.monotonic() - started)
                     return f"{WORKING_LABEL}\n{repo.path}\nWorking {elapsed}"
                 return f"{WORKING_LABEL}\n{repo.path}"
-            label = STATUS_LABELS.get(self._status.get(repo.id, ""))
+            label = self.status_word(repo.id)
             if label:
+                tool = self._pending_tool.get(repo.id)
+                if tool and self._status.get(repo.id) == STATUS_ATTENTION:
+                    return f"{label}\n{repo.path}\n{tool}"
                 return f"{label}\n{repo.path}"
-            sub = self._subagents.get(repo.id, 0)
+            if repo.id in self._compacting:
+                return f"{COMPACTING_LABEL}\n{repo.path}"
+            sub = len(self._subagents.get(repo.id, ()))
             if sub > 0:
                 noun = "subagent" if sub == 1 else "subagents"
                 return f"{SUBAGENTS_LABEL}\n{repo.path}\n{sub} {noun}"
@@ -308,21 +345,56 @@ class RepoListModel(QAbstractListModel):
             bot = self.index(len(self._store.repos) - 1)
             self.dataChanged.emit(top, bot, changed_roles)
 
-    def set_status(self, repo_id: str, status: str) -> None:
-        """Set the Claude-alert status for one row ("done", "attention", or
-        "" to clear). Stamps last_activity on DONE/ATTENTION so the
-        auto-arrange sort reflects this event.
+    def set_status(self, repo_id: str, status: str, word: str = "") -> None:
+        """Set the Claude-alert status for one row (a STATUS_RANK key, or ""
+        to clear). `word` overrides the status label for this badge (e.g.
+        "Rate limited" for an error). Any badge stamps last_activity so the
+        auto-arrange sort reflects this event. Leaving the permission badge
+        also drops the pending-tool text.
 
         User-navigation state (last-focused) lives in a separate field and
         is unaffected.
         """
         if status:
             self._status[repo_id] = status
+            self._stamp_activity(repo_id)
         else:
             self._status.pop(repo_id, None)
-        if status in (STATUS_DONE, STATUS_ATTENTION):
-            self._stamp_activity(repo_id)
-        self._emit_changed_for_id(repo_id, [ROLE_STATUS])
+        if word:
+            self._status_word[repo_id] = word
+        else:
+            self._status_word.pop(repo_id, None)
+        if status != STATUS_ATTENTION:
+            self._pending_tool.pop(repo_id, None)
+        self._emit_changed_for_id(
+            repo_id, [ROLE_STATUS, ROLE_STATUS_WORD, Qt.ToolTipRole],
+        )
+
+    def status_word(self, repo_id: str) -> str:
+        """The badge's word for one row, or "" when no badge shows."""
+        status = self._status.get(repo_id, "")
+        if not status:
+            return ""
+        return self._status_word.get(repo_id) or STATUS_LABELS[status]
+
+    def _clear_status_if(self, repo_id: str, status: str) -> None:
+        """Clear the badge only while it is `status` — an end event for one
+        badge must not wipe a different one."""
+        if self._status.get(repo_id) == status:
+            self.clear_status(repo_id)
+
+    def set_compacting(self, repo_id: str, compacting: bool) -> None:
+        was = repo_id in self._compacting
+        if compacting == was:
+            return
+        if compacting:
+            self._compacting.add(repo_id)
+        else:
+            self._compacting.discard(repo_id)
+        self._emit_changed_for_id(repo_id, [ROLE_COMPACTING, Qt.ToolTipRole])
+
+    def is_compacting(self, repo_id: str) -> bool:
+        return repo_id in self._compacting
 
     def clear_status(self, repo_id: str) -> None:
         self.set_status(repo_id, "")
@@ -381,7 +453,7 @@ class RepoListModel(QAbstractListModel):
                 self.dataChanged.emit(idx, idx, [ROLE_LAST_FOCUSED, Qt.ToolTipRole])
 
     def subagents(self, repo_id: str) -> int:
-        return self._subagents.get(repo_id, 0)
+        return len(self._subagents.get(repo_id, ()))
 
     def is_session_active(self, repo_id: str) -> bool:
         return self._session_active.get(repo_id, False)
@@ -446,6 +518,12 @@ class RepoListModel(QAbstractListModel):
                 self.working_changed.emit()
             if self._status.pop(repo_id, None) is not None:
                 roles.append(ROLE_STATUS)
+                roles.append(ROLE_STATUS_WORD)
+            self._status_word.pop(repo_id, None)
+            self._pending_tool.pop(repo_id, None)
+            if repo_id in self._compacting:
+                self._compacting.discard(repo_id)
+                roles.append(ROLE_COMPACTING)
             if self._subagents.pop(repo_id, None) is not None:
                 roles.append(ROLE_SUBAGENTS)
             self._turn_started.pop(repo_id, None)
@@ -458,21 +536,22 @@ class RepoListModel(QAbstractListModel):
                     seen.append(r)
             self._emit_changed_for_id(repo_id, seen)
 
-    def _bump_subagents(self, repo_id: str, delta: int) -> None:
-        """Adjust the subagent counter for one row and repaint.
+    def _set_subagent(self, repo_id: str, agent_id: str, live: bool) -> None:
+        """Add or remove one subagent id for a row and repaint on change.
 
-        Clamped at zero — a stray SubagentStop without a matching dispatch
-        (e.g. out-of-order delivery) must not push the counter negative.
+        Removing an id that never started (out-of-order delivery, a
+        subagent dispatched before ccwork launched) is a no-op.
         """
-        old = self._subagents.get(repo_id, 0)
-        new = max(0, old + delta)
-        if new == old:
-            return
-        if new == 0:
-            self._subagents.pop(repo_id, None)
+        agents = self._subagents.setdefault(repo_id, set())
+        before = len(agents)
+        if live:
+            agents.add(agent_id)
         else:
-            self._subagents[repo_id] = new
-        self._emit_changed_for_id(repo_id, [ROLE_SUBAGENTS, Qt.ToolTipRole])
+            agents.discard(agent_id)
+        if not agents:
+            self._subagents.pop(repo_id, None)
+        if len(agents) != before:
+            self._emit_changed_for_id(repo_id, [ROLE_SUBAGENTS, Qt.ToolTipRole])
 
     def set_working(self, repo_id: str, working: bool) -> None:
         """Toggle the spinner for one row. No-op if state already matches."""
@@ -497,7 +576,7 @@ class RepoListModel(QAbstractListModel):
         """True iff at least one repo has subagents (foreground or background)
         in flight. Used by the sidebar to keep the spinner timer ticking
         for the twinkle animation, even when no main turn is working."""
-        return any(v > 0 for v in self._subagents.values())
+        return any(self._subagents.values())
 
     def working_ids(self) -> set[str]:
         """Repo ids currently flagged as working. Read-only view."""
@@ -516,56 +595,90 @@ class RepoListModel(QAbstractListModel):
         reorder scheduling) are handled by the RepoSidebar wrapper. Every
         event changes only the row whose terminal sent it.
 
-          • UserPromptSubmit — clear prior alert, mark working, stamp
-            recency. Self-heals: if a prior turn never got a Stop, the
-            existing working=True state is preserved (set_working no-ops)
-            and touch_activity refreshes the timestamp anyway.
-          • Stop — clear working, set DONE. Stamping is implicit in
-            set_status for DONE/ATTENTION. Does NOT clear _subagents:
-            background subagents survive past the main turn end, which
-            is the whole point of keeping the twinkle painting after Stop.
-          • Notification — set ATTENTION. Does NOT clear working: a
-            permission_prompt fires mid-turn and the turn is still live.
-          • PreToolUse — increment _subagents iff the tool is "Task" or
-            "Agent" (Claude Code renamed the tool; we accept both).
-            Foreground and background both count — the left-edge twinkle
-            paints alongside the right-edge working spinner.
-          • SubagentStop — decrement _subagents (clamped at 0). Fires for
-            every subagent regardless of fg/bg; the clamp absorbs any
-            stray decrements without a paired dispatch.
+          • UserPromptSubmit — clear any badge and compaction, mark
+            working, stamp recency. Self-heals: if a prior turn never got a
+            Stop, the existing working=True state is preserved (set_working
+            no-ops) and touch_activity refreshes the timestamp anyway.
+          • Stop — clear working and compaction, set DONE (replacing a
+            permission / answer badge). Does NOT clear _subagents:
+            background subagents survive past the main turn end.
+          • StopFailure — runs instead of Stop on an API error: clear
+            working and compaction, set ERROR with the word for `error`.
+          • PermissionRequest — set ATTENTION at once and record the tool
+            waiting for approval. Does NOT clear working.
+          • Notification — keyed on `notification_type`: permission_prompt
+            → ATTENTION; elicitation dialogs → ANSWER (cleared by the
+            elicitation_complete / _response types); quota_auto_resume_stale
+            / _disabled → USAGE_LIMIT (cleared by quota_auto_resume_fired).
+            Other types are ignored.
+          • SubagentStart / SubagentStop — add / remove `agent_id` from the
+            row's live-subagent set.
+          • PreCompact / PostCompact — set / clear the compaction flag.
           • SessionStart — flip _session_active[repo_id] = True. The ⠿
             ambient badge lights once no higher-priority alert masks it,
             and the row joins the floated active group.
           • SessionEnd — drop this session's id from _live_sessions[repo_id].
             Only when it was the LAST live session in the row's terminal do
-            we flip _session_active = False AND cascade-clear _status /
-            _working / _subagents / _turn_started. A nested `claude` in the
-            same terminal must not wipe the outer session's spinner. The
-            last SessionEnd also sinks the row to the bottom of the stack.
+            we flip _session_active = False AND cascade-clear every
+            per-session signal. A nested `claude` in the same terminal must
+            not wipe the outer session's spinner. The last SessionEnd also
+            sinks the row to the bottom of the stack.
         """
+        payload = payload if isinstance(payload, dict) else {}
         if event == EVENT_USER_PROMPT_SUBMIT:
             self.clear_status(repo_id)
+            self.set_compacting(repo_id, False)
             self.set_working(repo_id, True)
             self.touch_activity(repo_id)
             self.mark_turn_start(repo_id)
         elif event == EVENT_STOP:
             self.set_working(repo_id, False)
+            self.set_compacting(repo_id, False)
             self.set_status(repo_id, STATUS_DONE)
             self.clear_turn_start(repo_id)
-        elif event == EVENT_NOTIFICATION:
+        elif event == EVENT_STOP_FAILURE:
+            self.set_working(repo_id, False)
+            self.set_compacting(repo_id, False)
+            self.set_status(
+                repo_id, STATUS_ERROR, ERROR_WORDS.get(str(payload.get("error")), ""),
+            )
+            self.clear_turn_start(repo_id)
+        elif event == EVENT_PERMISSION_REQUEST:
             self.set_status(repo_id, STATUS_ATTENTION)
-        elif event == EVENT_PRE_TOOL_USE:
-            if _is_subagent_dispatch(payload):
-                self._bump_subagents(repo_id, +1)
+            tool = _tool_summary(payload)
+            if tool:
+                self._pending_tool[repo_id] = tool
+        elif event == EVENT_NOTIFICATION:
+            kind = str(payload.get("notification_type", ""))
+            if kind in _PERMISSION_NOTIFICATIONS:
+                # PermissionRequest usually set it already; keep its tool text.
+                if self._status.get(repo_id) != STATUS_ATTENTION:
+                    self.set_status(repo_id, STATUS_ATTENTION)
+            elif kind in _ANSWER_NOTIFICATIONS:
+                self.set_status(repo_id, STATUS_ANSWER)
+            elif kind in _ANSWERED_NOTIFICATIONS:
+                self._clear_status_if(repo_id, STATUS_ANSWER)
+            elif kind in USAGE_LIMIT_WORDS:
+                self.set_status(repo_id, STATUS_USAGE_LIMIT, USAGE_LIMIT_WORDS[kind])
+            elif kind in _RESUMED_NOTIFICATIONS:
+                self._clear_status_if(repo_id, STATUS_USAGE_LIMIT)
+        elif event == EVENT_SUBAGENT_START:
+            if payload.get("agent_id"):
+                self._set_subagent(repo_id, str(payload["agent_id"]), True)
         elif event == EVENT_SUBAGENT_STOP:
-            self._bump_subagents(repo_id, -1)
+            if payload.get("agent_id"):
+                self._set_subagent(repo_id, str(payload["agent_id"]), False)
+        elif event == EVENT_PRE_COMPACT:
+            self.set_compacting(repo_id, True)
+        elif event == EVENT_POST_COMPACT:
+            self.set_compacting(repo_id, False)
         elif event == EVENT_SESSION_START:
-            sid = payload.get("session_id") if isinstance(payload, dict) else None
+            sid = payload.get("session_id")
             if sid:
                 self._live_sessions.setdefault(repo_id, set()).add(str(sid))
             self._set_session_active(repo_id, True)
         elif event == EVENT_SESSION_END:
-            sid = payload.get("session_id") if isinstance(payload, dict) else None
+            sid = payload.get("session_id")
             live = self._live_sessions.get(repo_id)
             if sid and live is not None:
                 live.discard(str(sid))
@@ -796,11 +909,13 @@ class RepoListModel(QAbstractListModel):
                 idx = self.index(i)
                 self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
 
-        for state in (self._status, self._last_activity, self._session_ended,
+        for state in (self._status, self._status_word, self._pending_tool,
+                      self._last_activity, self._session_ended,
                       self._turn_started, self._live_sessions, self._subagents,
                       self._session_active):
             state.pop(repo.id, None)
         self._working.discard(repo.id)
+        self._compacting.discard(repo.id)
         # Path-keyed caches stay only while at least one row still uses the
         # path — drop them once the last duplicate is gone.
         if not self._store.repos_for_path(path):

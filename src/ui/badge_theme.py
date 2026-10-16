@@ -24,19 +24,40 @@ Example `badges.toml`::
     ambient_color   = "hsv(194, 63, 117)"
     last_focused    = "slateblue"
     session_glyph   = "⠿"
+    compact_color   = "#6c71c4"
+    compact_glyph   = "◐"
     subagent_frames = ["✲", "✵", "✷", "✱", "❂", "✹", "✺", "✸", "❉", "❊", "❋"]
 
     [statuses.done]
     color = "#859900"
     glyph = "✓"
-    label = "Claude finished a turn"
+    label = "Done"
 
     [statuses.attention]
     color = "#dc322f"
     glyph = "!"
-    label = "Claude needs input"
+    label = "Needs permission"
 
-The status *value* strings (`STATUS_DONE`, `STATUS_ATTENTION`) are protocol
+    [statuses.answer]
+    color = "#cb4b16"
+    glyph = "?"
+    label = "Needs an answer"
+
+    [statuses.error]
+    color = "#d33682"
+    glyph = "✗"
+    label = "API error"
+
+    [statuses.usage_limit]
+    color = "#b58900"
+    glyph = "⏸"
+    label = "Usage limit reached"
+
+The error and usage-limit badges show a more specific word for each cause
+(`ERROR_WORDS`, `USAGE_LIMIT_WORDS`); the `label` above is the word for an
+unknown cause.
+
+The status *value* strings (`STATUS_DONE`, `STATUS_ATTENTION`, …) are protocol
 identifiers the event system keys on and are not themable; the color /
 glyph / label attached to each are.
 """
@@ -64,8 +85,22 @@ class StatusDefinition:
 
 # Status *value* strings — protocol identifiers the event system keys on.
 # Not themable (the color / glyph / label attached to each are).
-STATUS_DONE      = "done"
-STATUS_ATTENTION = "attention"
+STATUS_DONE        = "done"
+STATUS_ATTENTION   = "attention"     # needs permission to run a tool
+STATUS_ANSWER      = "answer"        # an elicitation dialog waits for an answer
+STATUS_ERROR       = "error"         # the turn ended on an API error
+STATUS_USAGE_LIMIT = "usage_limit"   # a claude.ai usage limit paused the session
+
+# Badge priority: the lower rank wins when a row could show more than one.
+# The compaction glyph sits below every rank but DONE, and above the
+# working spinner (see RepoDelegate.paint).
+STATUS_RANK = {
+    STATUS_ATTENTION: 1,
+    STATUS_ANSWER: 2,
+    STATUS_ERROR: 3,
+    STATUS_USAGE_LIMIT: 4,
+    STATUS_DONE: 5,
+}
 
 # Tooltip text that isn't tied to a glyph/color knob — kept in code.
 WORKING_LABEL = "Claude is working…"
@@ -73,11 +108,34 @@ LAST_FOCUSED_LABEL = "Last focused"
 SUBAGENTS_LABEL = "Subagents running"
 SESSION_ACTIVE_LABEL = "Claude session active"
 TERMINAL_ONLY_LABEL = "Terminal open (no Claude session)"
+COMPACTING_LABEL = "Compacting"
+
+# Specific words for the error badge, keyed by the StopFailure `error` field.
+# An error type missing here shows the error status label.
+ERROR_WORDS = {
+    "rate_limit": "Rate limited",
+    "overloaded": "API overloaded",
+    "server_error": "API overloaded",
+    "authentication_failed": "Account problem",
+    "billing_error": "Account problem",
+    "account_on_hold": "Account problem",
+    "oauth_org_not_allowed": "Account problem",
+    "cloud_credential_error": "Account problem",
+    "max_output_tokens": "Output limit hit",
+}
+
+# Specific words for the usage-limit badge, keyed by notification_type.
+USAGE_LIMIT_WORDS = {
+    "quota_auto_resume_stale": "Usage limit: press Enter",
+    "quota_auto_resume_disabled": "Usage limit reached",
+}
 
 # Built-in defaults — the look when no badges.toml is present. Colors are
 # the canonical solarized hex; the loader also accepts rgb(), hsv(), and
 # SVG names in the override file.
-#   done   = solarized green (calmer), attention = solarized red (urgent)
+#   done   = solarized green (calmer), attention = solarized red (urgent),
+#   answer = solarized orange, error = solarized magenta, usage_limit =
+#   solarized yellow, compaction = solarized violet
 #   spinner = solarized blue, subagent = solarized cyan (live parallel
 #   work), ambient = solarized base01 (quiet presence), last-focused =
 #   solarized violet.
@@ -95,6 +153,8 @@ _DEFAULTS: dict = {
     "ambient_color": "#586e75",
     "last_focused": "#6c71c4",
     "session_glyph": "⠿",
+    "compact_color": "#6c71c4",
+    "compact_glyph": "◐",
     "subagent_frames": ["✲", "✵", "✷", "✱", "❂", "✹", "✺", "✸", "❉", "❊", "❋", "❊", "❉", "✸", "✺", "✹", "❂", "✱", "✷", "✵"],
     "spinner_variants": [
         ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
@@ -104,13 +164,16 @@ _DEFAULTS: dict = {
         ["⠄", "⠆", "⠇", "⠋", "⠙", "⠸", "⠰", "⠠", "⠰", "⠸", "⠙", "⠋", "⠇", "⠆"],
     ],
     "statuses": {
-        "done": {"color": "#859900", "glyph": "✓", "label": "Claude finished a turn"},
-        "attention": {"color": "#dc322f", "glyph": "!", "label": "Claude needs input"},
+        "done": {"color": "#859900", "glyph": "✓", "label": "Done"},
+        "attention": {"color": "#dc322f", "glyph": "!", "label": "Needs permission"},
+        "answer": {"color": "#cb4b16", "glyph": "?", "label": "Needs an answer"},
+        "error": {"color": "#d33682", "glyph": "✗", "label": "API error"},
+        "usage_limit": {"color": "#b58900", "glyph": "⏸", "label": "Usage limit reached"},
     },
 }
 
 _TOP_KEYS = frozenset(_DEFAULTS)
-_STATUS_NAMES = frozenset({STATUS_DONE, STATUS_ATTENTION})
+_STATUS_NAMES = frozenset(STATUS_RANK)
 _STATUS_FIELDS = frozenset({"color", "glyph", "label"})
 
 
@@ -122,10 +185,11 @@ class BadgeTheme:
     ambient_color: QColor
     last_focused: QColor
     session_glyph: str
+    compact_color: QColor
+    compact_glyph: str
     subagent_frames: tuple[str, ...]
     spinner_variants: tuple[tuple[str, ...], ...]
-    status_done: StatusDefinition
-    status_attention: StatusDefinition
+    statuses: dict[str, StatusDefinition]   # keyed by status value
 
 
 def _badges_path() -> Path:
@@ -286,10 +350,11 @@ def load_badge_theme(path: Path | None = None) -> BadgeTheme:
         ambient_color=_parse_color(cfg["ambient_color"], where="ambient_color"),
         last_focused=_parse_color(cfg["last_focused"], where="last_focused"),
         session_glyph=_require_glyph(cfg["session_glyph"], where="session_glyph"),
+        compact_color=_parse_color(cfg["compact_color"], where="compact_color"),
+        compact_glyph=_require_glyph(cfg["compact_glyph"], where="compact_glyph"),
         subagent_frames=_require_frames(cfg["subagent_frames"], where="subagent_frames"),
         spinner_variants=_require_variants(cfg["spinner_variants"], where="spinner_variants"),
-        status_done=_status(cfg, STATUS_DONE),
-        status_attention=_status(cfg, STATUS_ATTENTION),
+        statuses={name: _status(cfg, name) for name in STATUS_RANK},
     )
 
 
@@ -302,15 +367,15 @@ SUBAGENT_COLOR = _THEME.subagent_color
 AMBIENT_COLOR = _THEME.ambient_color
 LAST_FOCUSED_BASE = _THEME.last_focused
 SESSION_ACTIVE_GLYPH = _THEME.session_glyph
+COMPACT_COLOR = _THEME.compact_color
+COMPACT_GLYPH = _THEME.compact_glyph
 SUBAGENT_FRAMES = _THEME.subagent_frames
 SPINNER_VARIANTS = _THEME.spinner_variants
 
-STATUS_DONE_DEF = _THEME.status_done
-STATUS_ATTENTION_DEF = _THEME.status_attention
-_ALL_STATUSES = (STATUS_DONE_DEF, STATUS_ATTENTION_DEF)
+_ALL_STATUSES = tuple(_THEME.statuses.values())
 
 # Lookups keyed by status value. The right-edge badge column is reserved for
-# genuine Claude alerts (working / done / attention); the last-focused
+# genuine Claude alerts (working and the STATUS_RANK statuses); the last-focused
 # bookmark paints a left-edge stripe in a different code path and is NOT in
 # these dicts.
 STATUS_LABELS = {s.value: s.label for s in _ALL_STATUSES}

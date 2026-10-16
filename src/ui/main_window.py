@@ -54,7 +54,6 @@ from src.core.hook_server import (
     EVENT_SESSION_START,
     EVENT_STOP,
     EVENT_USER_PROMPT_SUBMIT,
-    IDLE_EVENTS,
     HookServer,
 )
 from src.core.key_grab import (
@@ -936,6 +935,7 @@ class MainWindow(QMainWindow):
             if top:
                 self._sidebar.rebind(repo.id, top)
 
+        before = self._sidebar.model.status_word(repo.id)
         self._sidebar.apply_hook_event(event, repo.id, payload)
 
         # Crash-recovery bookkeeping stays keyed by cwd: `claude --resume`
@@ -949,9 +949,11 @@ class MainWindow(QMainWindow):
             elif sid:
                 session_recovery.record_open(str(cwd), str(sid), repo.display_name)
 
-        if event in IDLE_EVENTS:
+        after = self._sidebar.model.status_word(repo.id)
+        if after and after != before:
             # Bell dot: glanceable "something happened" signal even when
-            # desktop notifications are off or the sidebar is scrolled.
+            # desktop notifications are off or the sidebar is scrolled. It
+            # follows the badges, so an ignored notification type stays quiet.
             self._bell_btn.set_unseen(True)
 
     def _current_repo_id(self) -> str | None:

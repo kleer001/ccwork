@@ -1,8 +1,8 @@
 """Item delegate that paints each repo row: name + branch + edge badges.
 
 Two-line rows with two reserved right-edge badge slots:
-  • OUTBOARD (rightmost): main-turn indicators — working spinner / DONE
-    dot / ATTENTION dot / ambient terminal state.
+  • OUTBOARD (rightmost): main-turn indicators — alert dots / compaction
+    glyph / working spinner / DONE dot / ambient terminal state.
   • INBOARD (one slot to its left, only when subagents > 0): the
     SUBAGENT_FRAMES twinkle, painted alongside whatever's outboard so
     parallel work is glanceable while the main turn is also live.
@@ -21,13 +21,14 @@ from src.core.repo_store import Repo
 from src.ui import badge_theme
 from src.ui.badge_theme import (
     SESSION_ACTIVE_GLYPH,
-    STATUS_ATTENTION,
+    STATUS_DONE,
     SUBAGENT_FRAMES,
     spinner_for_id,
 )
 from src.ui.repo_model import (
     ROLE_ACTIVE_GROUP,
     ROLE_BRANCH,
+    ROLE_COMPACTING,
     ROLE_HAS_TERMINAL,
     ROLE_LAST_FOCUSED,
     ROLE_PATH_MISSING,
@@ -73,6 +74,8 @@ class RepoDelegate(QStyledItemDelegate):
     SPINNER_COLOR = badge_theme.SPINNER_COLOR
     SUBAGENT_COLOR = badge_theme.SUBAGENT_COLOR
     AMBIENT_COLOR = badge_theme.AMBIENT_COLOR
+    COMPACT_COLOR = badge_theme.COMPACT_COLOR
+    COMPACT_GLYPH = badge_theme.COMPACT_GLYPH
     LAST_FOCUSED_BASE = badge_theme.LAST_FOCUSED_BASE
 
     def __init__(self, parent=None, layout=None) -> None:
@@ -178,6 +181,7 @@ class RepoDelegate(QStyledItemDelegate):
         path_missing: bool = bool(index.data(ROLE_PATH_MISSING))
         subagents: int = int(index.data(ROLE_SUBAGENTS) or 0)
         session_active: bool = bool(index.data(ROLE_SESSION_ACTIVE))
+        compacting: bool = bool(index.data(ROLE_COMPACTING))
         # The ambient badge marks a live Claude session, nothing else. A
         # terminal left at a bare bash prompt gets no glyph at all — it's
         # not pending work, and a badge there reads as an unfinished task.
@@ -228,6 +232,7 @@ class RepoDelegate(QStyledItemDelegate):
         name_font.setItalic(not has_terminal)
         show_right_glyph = (
             working
+            or compacting
             or (status in self.STATUS_COLORS)
             or bool(ambient_glyph)
         )
@@ -297,13 +302,24 @@ class RepoDelegate(QStyledItemDelegate):
             return
 
         # Right-edge glyph priority (highest first):
-        #   attention dot (so a permission_prompt is glanceable even with
-        #     desktop notifications off)
+        #   alert dots — permission, answer, error, usage limit (so a
+        #     permission prompt is glanceable even with desktop
+        #     notifications off)
+        #   compaction glyph
         #   working spinner (main turn active)
-        #   color-coded status dot (DONE — never coincides with working
-        #     since Stop clears working before setting done)
+        #   DONE dot — never coincides with working or compaction, since
+        #     Stop clears both before setting done
         #   ambient terminal-state mark (no Claude alert at all)
-        if working and status != STATUS_ATTENTION:
+        alert = bool(status) and status != STATUS_DONE
+        if compacting and not alert:
+            c_font = QFont(option.font)
+            c_font.setPointSizeF(option.font.pointSizeF() * GLYPH_FONT_SCALE)
+            c_font.setBold(True)
+            painter.setFont(c_font)
+            painter.setPen(QPen(self.COMPACT_COLOR))
+            c_rect = QRect(rect.right() - BADGE_COL_W, rect.top(), BADGE_COL_W, rect.height())
+            painter.drawText(c_rect, Qt.AlignRight | Qt.AlignVCenter, self.COMPACT_GLYPH)
+        elif working and not alert:
             spin_font = QFont(option.font)
             spin_font.setPointSizeF(option.font.pointSizeF() * GLYPH_FONT_SCALE)
             spin_font.setBold(True)

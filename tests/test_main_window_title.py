@@ -84,7 +84,9 @@ def test_title_unchanged_by_notification(main_window) -> None:
     the working flag — title must not bump."""
     main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, _row_id(main_window, "/a"))
     before = main_window.windowTitle()
-    main_window._sidebar.apply_hook_event(EVENT_NOTIFICATION, _row_id(main_window, "/a"))
+    main_window._sidebar.apply_hook_event(
+        EVENT_NOTIFICATION, _row_id(main_window, "/a"), {"notification_type": "permission_prompt"},
+    )
     assert main_window.windowTitle() == before  # still "ccwork — 1 working"
 
 

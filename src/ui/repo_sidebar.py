@@ -50,9 +50,11 @@ from PySide6.QtWidgets import (
 from src.core import repo_store
 from src.core.hook_server import (
     EVENT_NOTIFICATION,
+    EVENT_PERMISSION_REQUEST,
     EVENT_SESSION_END,
     EVENT_SESSION_START,
     EVENT_STOP,
+    EVENT_STOP_FAILURE,
     EVENT_USER_PROMPT_SUBMIT,
 )
 from src.core.repo_store import Repo, RepoStore
@@ -64,12 +66,14 @@ from src.ui.repo_delegate import RepoDelegate
 from src.ui.repo_model import (
     ROLE_ACTIVE_GROUP,
     ROLE_BRANCH,
+    ROLE_COMPACTING,
     ROLE_HAS_TERMINAL,
     ROLE_LAST_FOCUSED,
     ROLE_PATH_MISSING,
     ROLE_REPO,
     ROLE_SESSION_ACTIVE,
     ROLE_STATUS,
+    ROLE_STATUS_WORD,
     ROLE_SUBAGENTS,
     ROLE_WORKING,
     RepoListModel,
@@ -300,7 +304,7 @@ class RepoSidebar(QWidget):
 
     def set_status(self, repo_id: str, status: str) -> None:
         self._model.set_status(repo_id, status)
-        if status in (STATUS_DONE, STATUS_ATTENTION):
+        if status:
             self._maybe_schedule_reorder()
 
     def clear_status(self, repo_id: str) -> None:
@@ -397,9 +401,8 @@ class RepoSidebar(QWidget):
         (spinner timer + auto-arrange schedule). MainWindow._on_hook_event
         is a thin dispatcher over this method.
 
-        `payload` is only inspected for PreToolUse (to distinguish
-        background subagent dispatches from other tool calls). The other
-        events drive transitions on event-name alone.
+        `payload` carries the event's own fields (notification_type,
+        error, agent_id, tool_name, session_id) that the model keys on.
         """
         if event not in _CLAUDE_STATE_EVENTS:
             return
@@ -409,7 +412,8 @@ class RepoSidebar(QWidget):
         # dispatch / stop should not bump the auto-arrange schedule —
         # otherwise long-running background work would keep reshuffling
         # the sidebar under the user's eye.
-        if event in (EVENT_USER_PROMPT_SUBMIT, EVENT_STOP, EVENT_NOTIFICATION):
+        if event in (EVENT_USER_PROMPT_SUBMIT, EVENT_STOP, EVENT_STOP_FAILURE,
+                     EVENT_NOTIFICATION, EVENT_PERMISSION_REQUEST):
             self._maybe_schedule_reorder()
         # Session start/end change group membership *and* the sort tier, so
         # they walk directly rather than through the turn-activity debounce.

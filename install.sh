@@ -250,11 +250,12 @@ fi
 # ── 3. Claude Code hooks ──────────────────────────────────────────────────────
 
 section "3/4  Claude Code hooks — $CLAUDE_SETTINGS"
-info "Adds Stop, Notification, UserPromptSubmit, PreToolUse (Task), SubagentStop, SessionStart, SessionEnd hooks that pipe the payload to ccwork-hook-sink"
+HOOK_NAMES="Stop, StopFailure, Notification, UserPromptSubmit, PermissionRequest, SubagentStart, SubagentStop, PreCompact, PostCompact, SessionStart, SessionEnd"
+info "Adds $HOOK_NAMES hooks that pipe the payload to ccwork-hook-sink"
 info "Appends to existing hook lists — does not overwrite user hooks"
 
 if $DRY_RUN; then
-    dryrun "Would merge Stop, Notification, UserPromptSubmit, PreToolUse (Task), SubagentStop, SessionStart, SessionEnd hooks into $CLAUDE_SETTINGS"
+    dryrun "Would merge $HOOK_NAMES hooks into $CLAUDE_SETTINGS"
 else
     hooks_result=$(python3 - "$CLAUDE_SETTINGS" "$HOOK_SINK" "$HOOK_MARKER" << 'PYEOF'
 import json, sys, os
@@ -297,11 +298,18 @@ def cmd(event: str) -> str:
 new_hooks = {
     "Stop":              [{"matcher": "*",    "hooks": [{"type": "command", "command": cmd("Stop")}]}],
     "Notification":      [{"matcher": "*",    "hooks": [{"type": "command", "command": cmd("Notification")}]}],
+    # A turn that ended on an API error runs StopFailure instead of Stop.
+    "StopFailure":       [{"matcher": "*",    "hooks": [{"type": "command", "command": cmd("StopFailure")}]}],
     "UserPromptSubmit":  [{"matcher": "*",    "hooks": [{"type": "command", "command": cmd("UserPromptSubmit")}]}],
-    # Matcher "Task" so we only see subagent dispatches; the model filters
-    # further on tool_input.run_in_background.
-    "PreToolUse":        [{"matcher": "Task", "hooks": [{"type": "command", "command": cmd("PreToolUse")}]}],
+    # Lights the permission badge as soon as Claude asks. The sink never
+    # returns a decision, so the in-terminal prompt still decides.
+    "PermissionRequest": [{"matcher": "*",    "hooks": [{"type": "command", "command": cmd("PermissionRequest")}]}],
+    # SubagentStart / SubagentStop carry the same agent_id, so the model
+    # tracks a set of live subagents.
+    "SubagentStart":     [{"matcher": "*",    "hooks": [{"type": "command", "command": cmd("SubagentStart")}]}],
     "SubagentStop":      [{"matcher": "*",    "hooks": [{"type": "command", "command": cmd("SubagentStop")}]}],
+    "PreCompact":        [{"matcher": "*",    "hooks": [{"type": "command", "command": cmd("PreCompact")}]}],
+    "PostCompact":       [{"matcher": "*",    "hooks": [{"type": "command", "command": cmd("PostCompact")}]}],
     # Session lifecycle — drives the ambient ⠿/▌ badges that show whether
     # the terminal has a live Claude session or is a bare bash prompt.
     "SessionStart":      [{"matcher": "*",    "hooks": [{"type": "command", "command": cmd("SessionStart")}]}],
@@ -319,8 +327,8 @@ print("replaced" if removed_any else "added")
 PYEOF
 )
     case "$hooks_result" in
-        replaced) ok "Replaced stale hooks and installed Stop/Notification/UserPromptSubmit/PreToolUse/SubagentStop/SessionStart/SessionEnd" ;;
-        added)    ok "Installed Stop, Notification, UserPromptSubmit, PreToolUse, SubagentStop, SessionStart, SessionEnd hooks" ;;
+        replaced) ok "Replaced stale hooks and installed $HOOK_NAMES" ;;
+        added)    ok "Installed $HOOK_NAMES hooks" ;;
         *)        ok "Updated $CLAUDE_SETTINGS ($hooks_result)" ;;
     esac
 fi

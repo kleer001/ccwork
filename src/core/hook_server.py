@@ -31,14 +31,20 @@ EVENT_USER_PROMPT_SUBMIT = "UserPromptSubmit"
 EVENT_STOP = "Stop"
 EVENT_NOTIFICATION = "Notification"
 EVENT_REPO_ADDED = "RepoAdded"
-# PreToolUse fires before every tool invocation; we only register a hook with
-# matcher "Task" so the payload always carries a subagent dispatch. The model
-# counts every dispatch (foreground or background) — the subagent twinkle
-# paints alongside the main-turn spinner, so both deserve a glyph.
-EVENT_PRE_TOOL_USE = "PreToolUse"
-# Fires when any subagent (foreground or background) finishes. We use it to
-# decrement the subagent counter set up by PreToolUse.
+# A turn ended on an API error. Runs instead of Stop; the payload's `error`
+# field names the cause (rate_limit, overloaded, billing_error, …).
+EVENT_STOP_FAILURE = "StopFailure"
+# Claude is about to ask the user to approve a tool. Fires at once, unlike
+# the permission_prompt Notification, which waits about six seconds.
+EVENT_PERMISSION_REQUEST = "PermissionRequest"
+# A subagent started or resumed. The payload's `agent_id` matches the one
+# SubagentStop sends, so the model tracks a set of live agent ids.
+EVENT_SUBAGENT_START = "SubagentStart"
+# Fires when any subagent (foreground or background) finishes.
 EVENT_SUBAGENT_STOP = "SubagentStop"
+# Context compaction (manual /compact, or automatic) begins and ends.
+EVENT_PRE_COMPACT = "PreCompact"
+EVENT_POST_COMPACT = "PostCompact"
 # Fires when a Claude session starts (user invoked `claude` in the terminal).
 # Drives the "is there a live Claude session in this terminal?" axis, which
 # lights the dense-braille "in claude" indicator and floats the row into the
@@ -48,9 +54,6 @@ EVENT_SESSION_START = "SessionStart"
 # session-active flag and any leftover per-session state (alerts, working,
 # detached agents) — the session is over, those signals are stale.
 EVENT_SESSION_END = "SessionEnd"
-
-# Hooks that signal Claude has stopped producing output (idle).
-IDLE_EVENTS = (EVENT_STOP, EVENT_NOTIFICATION)
 
 
 def default_socket_path() -> Path:

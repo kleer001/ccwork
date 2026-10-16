@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ccwork-hook-sink — Claude Code Stop/Notification hook → ccwork GUI.
+# ccwork-hook-sink — Claude Code hook → ccwork GUI.
 #
 # Reads the hook payload from stdin, wraps it as
 #   {"event":"$CCWORK_EVENT","row":"$CCWORK_ROW_ID","cwd":"$PWD","ts":<epoch>,"payload":<stdin>}
@@ -88,10 +88,24 @@ done
 
 if [ "$_notify_disabled" = "0" ] && command -v notify-send >/dev/null 2>&1; then
     _repo=$(basename "$_cwd")
+    # Notification fires for many types; only the ones that set a badge
+    # deserve a desktop toast (see docs/specs/hook-events.md).
+    _ntype=$(printf '%s' "$_payload" | sed -n 's/.*"notification_type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    _msg=""
     case "$_event" in
-        Notification) notify-send -u critical "Claude [$_repo]" "Needs your input" >/dev/null 2>&1 || true ;;
-        Stop)         notify-send -u critical "Claude [$_repo]" "Task done"        >/dev/null 2>&1 || true ;;
+        Notification)
+            case "$_ntype" in
+                permission_prompt)                         _msg="Needs permission" ;;
+                elicitation_dialog|elicitation_url_dialog) _msg="Needs an answer" ;;
+                quota_auto_resume_stale)                   _msg="Usage limit: press Enter" ;;
+                quota_auto_resume_disabled)                _msg="Usage limit reached" ;;
+            esac ;;
+        StopFailure) _msg="Turn failed: API error" ;;
+        Stop)        _msg="Task done" ;;
     esac
+    if [ -n "$_msg" ]; then
+        notify-send -u critical "Claude [$_repo]" "$_msg" >/dev/null 2>&1 || true
+    fi
 fi
 
 exit 0

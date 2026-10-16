@@ -1,7 +1,7 @@
 """Top-bar 🔔 toolbutton with a small red corner dot when unseen alerts exist.
 
 Pure visual widget — owns its own paint pass. `MainWindow` calls
-`set_unseen(True)` when an idle hook event arrives and `set_unseen(False)`
+`set_unseen(True)` when a hook event sets a new row badge and `set_unseen(False)`
 on click; the bell aggregates across repos and carries no per-repo state.
 """
 
