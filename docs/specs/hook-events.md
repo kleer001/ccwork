@@ -1,6 +1,6 @@
 # More hook events, and a badge for each way Claude stops
 
-Status: planned, not built. Needs `docs/specs/row-routing.md` (the row id).
+Status: built. Needs `docs/specs/row-routing.md` (the row id).
 Reference: https://code.claude.com/docs/en/hooks.md
 
 ## Badge table

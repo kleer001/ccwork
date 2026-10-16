@@ -1,6 +1,6 @@
 # Detect when `claude` exits
 
-Status: planned, not built. Needs `docs/specs/row-routing.md` (the row id).
+Status: built. Needs `docs/specs/row-routing.md` (the row id).
 
 ## Problem
 

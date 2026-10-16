@@ -33,7 +33,7 @@ After the widget choice stabilizes:
 
 ## Specs
 
-Planned, not built. Build `row-routing.md` first, because the next three need its row id.
+Built. Each spec records the design behind the code.
 
 - [`row-routing.md`](docs/specs/row-routing.md) — route hook events to the terminal's row, and rebind a row when its terminal starts Claude in another repo.
 - [`row-titles-and-layout.md`](docs/specs/row-titles-and-layout.md) — the three-line row, the title synced with Claude's session title, `ccwork-rename`, and the status text.

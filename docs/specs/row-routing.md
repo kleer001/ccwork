@@ -1,6 +1,6 @@
 # Route hook events to the terminal's row
 
-Status: planned, not built.
+Status: built.
 
 ## Goal
 

@@ -1,6 +1,6 @@
 # Remove idle rows from the sidebar
 
-Status: planned, not built.
+Status: built.
 
 ## Behavior
 

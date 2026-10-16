@@ -1,6 +1,6 @@
 # Row titles and the three-line row
 
-Status: planned, not built. Needs `docs/specs/row-routing.md` (the row id).
+Status: built. Needs `docs/specs/row-routing.md` (the row id).
 
 ## Row layout
 
