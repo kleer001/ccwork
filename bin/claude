@@ -34,7 +34,7 @@ if [ "${CCWORK_GUI:-0}" = "1" ] && command -v git >/dev/null 2>&1; then
             _cwd_esc=${_cwd_esc//$'\r'/\\r}
             _cwd_esc=${_cwd_esc//$'\t'/\\t}
             _ts=$(date +%s)
-            _line="{\"event\":\"RepoAdded\",\"cwd\":\"$_cwd_esc\",\"ts\":$_ts}"
+            _line="{\"event\":\"RepoAdded\",\"row\":\"${CCWORK_ROW_ID:-}\",\"cwd\":\"$_cwd_esc\",\"ts\":$_ts}"
             if command -v socat >/dev/null 2>&1; then
                 printf '%s\n' "$_line" | timeout 1 socat - "UNIX-CONNECT:$_sock" >/dev/null 2>&1 || true
             elif command -v nc >/dev/null 2>&1; then

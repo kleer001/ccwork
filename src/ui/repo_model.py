@@ -82,10 +82,7 @@ def _norm(path: str) -> str:
     """Canonicalize a path so set-membership checks agree no matter how the
     path was supplied (trailing slash, symlink, relative segment).
 
-    Used as the single key shape for `_working`. Without this, a hook that
-    reports `/symlink/repo` while the sidebar holds `/real/repo` would
-    silently fail to flip the spinner on — the bug we hit while clicking
-    off a working repo.
+    Used as the key shape for the `_last_focused` bookmark.
     """
     return os.path.realpath(path) if path else ""
 
@@ -145,6 +142,9 @@ class RepoListModel(QAbstractListModel):
         # makes current_branch() return None, so we can't tell them apart
         # from the branch cache alone. Populated by refresh_branches().
         self._path_missing: dict[str, bool] = {}
+        # Claude state below is keyed by repo id: each hook event carries the
+        # row id of the terminal that sent it, so duplicate rows on one path
+        # keep independent state.
         # Claude alerts only. Values: "", STATUS_DONE, STATUS_ATTENTION.
         # User-navigation state lives in _last_focused below, with its own role.
         self._status: dict[str, str] = {}
@@ -163,40 +163,34 @@ class RepoListModel(QAbstractListModel):
         # one bookmark exists at a time. Mutated exclusively by set_last_focused;
         # no Claude event handler touches this field.
         self._last_focused: str | None = None
-        # Per-path monotonic timestamp of the most recent UserPromptSubmit.
+        # Per-row monotonic timestamp of the most recent UserPromptSubmit.
         # Set on UPS, cleared on Stop. Distinct from _last_activity (which
         # also stamps on Stop and Notification) — we need "turn began",
-        # not "any Claude event happened". Path-keyed unnormalized to match
-        # _status and _last_activity (not _working, which is normalized).
+        # not "any Claude event happened".
         self._turn_started: dict[str, float] = {}
-        # Per-path count of subagents (foreground or background) currently
+        # Per-row count of subagents (foreground or background) currently
         # running. Incremented on PreToolUse(tool=Task|Agent), decremented on
-        # SubagentStop (clamped at 0). Path-keyed unnormalized to match
-        # _status / _last_activity. Drives the SUBAGENT_FRAMES twinkle —
+        # SubagentStop (clamped at 0). Drives the SUBAGENT_FRAMES twinkle —
         # painted in the inboard right-edge slot while a subagent is in
         # flight, independent of the main turn's working state (whose glyph
         # sits in the outboard slot). The two indicators occupy separate
         # slots so the user can tell at a glance that Claude has dispatched
         # parallel work.
         self._subagents: dict[str, int] = {}
-        # Per-path live-session flag. True between SessionStart and
+        # Per-row live-session flag. True between SessionStart and
         # SessionEnd. Drives the ambient ⠿ badge and membership in the
         # active group (a bare bash terminal is neither).
-        # Path-keyed unnormalized to match the other Claude-state dicts.
         self._session_active: dict[str, bool] = {}
-        # Per-path set of live Claude session ids (between SessionStart and
-        # SessionEnd). Several `claude` processes can share one repo path —
-        # state here is path-keyed, so without this we can't tell whose
-        # SessionEnd just arrived. We only run the per-session teardown
-        # cascade (clear working / status / subagents) when the LAST session
-        # on a path ends; a SessionEnd from one session must not wipe the
-        # live working spinner of a sibling session on the same path.
+        # Per-row set of live Claude session ids (between SessionStart and
+        # SessionEnd). A nested `claude` can run inside the row's terminal,
+        # so we only run the per-session teardown cascade (clear working /
+        # status / subagents) when the LAST session in the terminal ends.
         self._live_sessions: dict[str, set[str]] = {}
-        # Per-path monotonic stamp of the moment the last Claude session on
-        # the path ended. Sinks the row past every other repo on the sort
+        # Per-row monotonic stamp of the moment the last Claude session in
+        # the row's terminal ended. Sinks the row past every other repo on the sort
         # axis: a finished session isn't pending work, and a row left sitting
         # near the top reads as unfinished business. Cleared by the next
-        # activity on the path (and by a fresh SessionStart).
+        # activity on the row (and by a fresh SessionStart).
         self._session_ended: dict[str, float] = {}
 
     # ── Qt model API ──
@@ -219,17 +213,17 @@ class RepoListModel(QAbstractListModel):
         if role == ROLE_PATH_MISSING:
             return self._path_missing.get(repo.path, False)
         if role == ROLE_STATUS:
-            return self._status.get(repo.path, "")
+            return self._status.get(repo.id, "")
         if role == ROLE_WORKING:
-            return _norm(repo.path) in self._working
+            return repo.id in self._working
         if role == ROLE_HAS_TERMINAL:
             return repo.id in self._active_ids
         if role == ROLE_LAST_FOCUSED:
             return _norm(repo.path) == self._last_focused
         if role == ROLE_SUBAGENTS:
-            return self._subagents.get(repo.path, 0)
+            return self._subagents.get(repo.id, 0)
         if role == ROLE_SESSION_ACTIVE:
-            return self._session_active.get(repo.path, False)
+            return self._session_active.get(repo.id, False)
         if role == ROLE_ACTIVE_GROUP:
             return self._in_active_group(repo)
         if role == Qt.ToolTipRole:
@@ -237,16 +231,16 @@ class RepoListModel(QAbstractListModel):
             # the user what the badge means without having to memorize the
             # color palette. Path stays as the second line for context.
             # Priority: working > Claude alert > subagents > last-focused.
-            if _norm(repo.path) in self._working:
-                started = self._turn_started.get(repo.path)
+            if repo.id in self._working:
+                started = self._turn_started.get(repo.id)
                 if started is not None:
                     elapsed = _format_elapsed(time.monotonic() - started)
                     return f"{WORKING_LABEL}\n{repo.path}\nWorking {elapsed}"
                 return f"{WORKING_LABEL}\n{repo.path}"
-            label = STATUS_LABELS.get(self._status.get(repo.path, ""))
+            label = STATUS_LABELS.get(self._status.get(repo.id, ""))
             if label:
                 return f"{label}\n{repo.path}"
-            sub = self._subagents.get(repo.path, 0)
+            sub = self._subagents.get(repo.id, 0)
             if sub > 0:
                 noun = "subagent" if sub == 1 else "subagents"
                 return f"{SUBAGENTS_LABEL}\n{repo.path}\n{sub} {noun}"
@@ -257,7 +251,7 @@ class RepoListModel(QAbstractListModel):
             # paint on has_terminal too, so the two channels agree.
             has_terminal = repo.id in self._active_ids
             if has_terminal:
-                if self._session_active.get(repo.path, False):
+                if self._session_active.get(repo.id, False):
                     return f"{SESSION_ACTIVE_LABEL}\n{repo.path}"
                 return f"{TERMINAL_ONLY_LABEL}\n{repo.path}"
             return repo.path
@@ -282,9 +276,10 @@ class RepoListModel(QAbstractListModel):
                 return i
         return -1
 
-    def _emit_changed_for_path(self, path: str, roles: list[int]) -> None:
-        """dataChanged for every row matching `path` (for broadcast updates)."""
-        for row in self.indices_of(path):
+    def _emit_changed_for_id(self, repo_id: str, roles: list[int]) -> None:
+        """dataChanged for the one row with `repo_id`."""
+        row = self.index_of_id(repo_id)
+        if row >= 0:
             idx = self.index(row)
             self.dataChanged.emit(idx, idx, roles)
 
@@ -313,56 +308,55 @@ class RepoListModel(QAbstractListModel):
             bot = self.index(len(self._store.repos) - 1)
             self.dataChanged.emit(top, bot, changed_roles)
 
-    def set_status(self, path: str, status: str) -> None:
-        """Set the Claude-alert status for `path` ("done", "attention", or
+    def set_status(self, repo_id: str, status: str) -> None:
+        """Set the Claude-alert status for one row ("done", "attention", or
         "" to clear). Stamps last_activity on DONE/ATTENTION so the
         auto-arrange sort reflects this event.
 
-        Per-path state — every duplicate row for this path repaints together.
         User-navigation state (last-focused) lives in a separate field and
         is unaffected.
         """
         if status:
-            self._status[path] = status
+            self._status[repo_id] = status
         else:
-            self._status.pop(path, None)
+            self._status.pop(repo_id, None)
         if status in (STATUS_DONE, STATUS_ATTENTION):
-            self._stamp_activity(path)
-        self._emit_changed_for_path(path, [ROLE_STATUS])
+            self._stamp_activity(repo_id)
+        self._emit_changed_for_id(repo_id, [ROLE_STATUS])
 
-    def clear_status(self, path: str) -> None:
-        self.set_status(path, "")
+    def clear_status(self, repo_id: str) -> None:
+        self.set_status(repo_id, "")
 
-    def touch_activity(self, path: str) -> None:
-        """Stamp `_last_activity[path]` without touching working/status state.
+    def touch_activity(self, repo_id: str) -> None:
+        """Stamp `_last_activity[repo_id]` without touching working/status state.
 
         Lets a UserPromptSubmit refresh the sort-recency key even when
         working was already True (the old code used a False→True toggle on
         set_working as a back-channel; this is the explicit version).
         """
-        self._stamp_activity(path)
+        self._stamp_activity(repo_id)
 
-    def _stamp_activity(self, path: str) -> None:
+    def _stamp_activity(self, repo_id: str) -> None:
         """Record "something Claude-driven just happened here".
 
-        Also lifts any session-ended sink stamp — the path is live again,
+        Also lifts any session-ended sink stamp — the row is live again,
         so it belongs back on the recency axis rather than at the bottom.
         """
-        self._last_activity[path] = time.monotonic()
-        self._session_ended.pop(path, None)
+        self._last_activity[repo_id] = time.monotonic()
+        self._session_ended.pop(repo_id, None)
 
-    def mark_turn_start(self, path: str) -> None:
+    def mark_turn_start(self, repo_id: str) -> None:
         """Stamp the start of a Claude turn for tooltip elapsed-time display.
 
         Dict assignment overwrites on interrupt: a second UPS without an
         intervening Stop (Esc-interrupted turn, crashed turn) correctly
         restarts the elapsed counter from zero.
         """
-        self._turn_started[path] = time.monotonic()
+        self._turn_started[repo_id] = time.monotonic()
 
-    def clear_turn_start(self, path: str) -> None:
+    def clear_turn_start(self, repo_id: str) -> None:
         """Drop the turn-start timestamp on Stop. Idempotent."""
-        self._turn_started.pop(path, None)
+        self._turn_started.pop(repo_id, None)
 
     def set_last_focused(self, path: str | None) -> None:
         """Set the user-navigation bookmark (or clear it with None).
@@ -386,11 +380,11 @@ class RepoListModel(QAbstractListModel):
                 idx = self.index(row)
                 self.dataChanged.emit(idx, idx, [ROLE_LAST_FOCUSED, Qt.ToolTipRole])
 
-    def subagents(self, path: str) -> int:
-        return self._subagents.get(path, 0)
+    def subagents(self, repo_id: str) -> int:
+        return self._subagents.get(repo_id, 0)
 
-    def is_session_active(self, path: str) -> bool:
-        return self._session_active.get(path, False)
+    def is_session_active(self, repo_id: str) -> bool:
+        return self._session_active.get(repo_id, False)
 
     def _in_active_group(self, repo: Repo) -> bool:
         """Rows the grouping preference floats to the top: a live terminal
@@ -400,10 +394,10 @@ class RepoListModel(QAbstractListModel):
         open — is not work in progress, so it sinks with the idle rows
         instead of holding a top slot.
         """
-        return repo.id in self._active_ids and self._session_active.get(repo.path, False)
+        return repo.id in self._active_ids and self._session_active.get(repo.id, False)
 
-    def clear_session(self, path: str) -> None:
-        """Tear down every per-session signal for `path`.
+    def clear_session(self, repo_id: str) -> None:
+        """Tear down every per-session signal for one row.
 
         Same cascade as the SessionEnd hook (working spinner, DONE/
         ATTENTION dot, leftover subagent twinkle, session-active flag).
@@ -415,46 +409,46 @@ class RepoListModel(QAbstractListModel):
         # The xterm process is gone, so every session it hosted is dead —
         # drop the whole live-session set, not just one id, before the
         # cascade. Otherwise a stale id would keep session_active pinned on.
-        self._live_sessions.pop(path, None)
-        self._set_session_active(path, False)
+        self._live_sessions.pop(repo_id, None)
+        self._set_session_active(repo_id, False)
 
-    def _set_session_active(self, path: str, active: bool) -> None:
-        """Flip the session-active flag and broadcast a repaint.
+    def _set_session_active(self, repo_id: str, active: bool) -> None:
+        """Flip the session-active flag and repaint the row.
 
         On SessionEnd we also clear `_status`, `_working`, and `_subagents`
-        for `path` — the session is over, so its per-session signals (the
+        for the row — the session is over, so its per-session signals (the
         DONE/ATTENTION dot, a stuck working spinner, leftover subagents
         whose SubagentStop didn't arrive) are stale, and a row still
         carrying them reads as work you haven't finished.
         """
-        old = self._session_active.get(path, False)
+        old = self._session_active.get(repo_id, False)
         roles: list[int] = []
         if old != active:
-            self._session_active[path] = active
+            self._session_active[repo_id] = active
             roles.append(ROLE_SESSION_ACTIVE)
             roles.append(ROLE_ACTIVE_GROUP)
             roles.append(Qt.ToolTipRole)
         if active:
-            self._session_ended.pop(path, None)
+            self._session_ended.pop(repo_id, None)
         if not active:
             # Drop the recency stamp and record the exit instead, so the row
             # sinks to the bottom of the stack rather than lingering at the
             # top of the recency sort as if a turn were still pending.
-            self._last_activity.pop(path, None)
-            self._session_ended[path] = time.monotonic()
+            self._last_activity.pop(repo_id, None)
+            self._session_ended[repo_id] = time.monotonic()
             # Cascade-clear per-session signals. Doing it directly on the
             # dicts (not via the public mutators) keeps everything inside
             # one dataChanged emission below — set_working / set_status
             # would each fire their own.
-            if _norm(path) in self._working:
-                self._working.discard(_norm(path))
+            if repo_id in self._working:
+                self._working.discard(repo_id)
                 roles.append(ROLE_WORKING)
                 self.working_changed.emit()
-            if self._status.pop(path, None) is not None:
+            if self._status.pop(repo_id, None) is not None:
                 roles.append(ROLE_STATUS)
-            if self._subagents.pop(path, None) is not None:
+            if self._subagents.pop(repo_id, None) is not None:
                 roles.append(ROLE_SUBAGENTS)
-            self._turn_started.pop(path, None)
+            self._turn_started.pop(repo_id, None)
         if roles:
             # Deduplicate while preserving order — repeated roles in the
             # list don't break anything but they're noise in the signal.
@@ -462,42 +456,38 @@ class RepoListModel(QAbstractListModel):
             for r in roles:
                 if r not in seen:
                     seen.append(r)
-            self._emit_changed_for_path(path, seen)
+            self._emit_changed_for_id(repo_id, seen)
 
-    def _bump_subagents(self, path: str, delta: int) -> None:
-        """Adjust the subagent counter for `path` and repaint.
+    def _bump_subagents(self, repo_id: str, delta: int) -> None:
+        """Adjust the subagent counter for one row and repaint.
 
         Clamped at zero — a stray SubagentStop without a matching dispatch
         (e.g. out-of-order delivery) must not push the counter negative.
         """
-        old = self._subagents.get(path, 0)
+        old = self._subagents.get(repo_id, 0)
         new = max(0, old + delta)
         if new == old:
             return
         if new == 0:
-            self._subagents.pop(path, None)
+            self._subagents.pop(repo_id, None)
         else:
-            self._subagents[path] = new
-        self._emit_changed_for_path(path, [ROLE_SUBAGENTS, Qt.ToolTipRole])
+            self._subagents[repo_id] = new
+        self._emit_changed_for_id(repo_id, [ROLE_SUBAGENTS, Qt.ToolTipRole])
 
-    def set_working(self, path: str, working: bool) -> None:
-        """Toggle the spinner for `path`. No-op if state already matches.
-
-        Per-path state — every duplicate row for this path spins together.
-        """
-        key = _norm(path)
-        was = key in self._working
+    def set_working(self, repo_id: str, working: bool) -> None:
+        """Toggle the spinner for one row. No-op if state already matches."""
+        was = repo_id in self._working
         if working == was:
             return
         if working:
-            self._working.add(key)
-            self._stamp_activity(path)
+            self._working.add(repo_id)
+            self._stamp_activity(repo_id)
         else:
-            self._working.discard(key)
-        self._emit_changed_for_path(path, [ROLE_WORKING])
+            self._working.discard(repo_id)
+        self._emit_changed_for_id(repo_id, [ROLE_WORKING])
         # Fire the title-counter signal only on the actual edge — the
         # `if working == was: return` guard above ensures we never emit on a
-        # redundant set_working(path, True) when the path is already working.
+        # redundant set_working(repo_id, True) when the row is already working.
         self.working_changed.emit()
 
     def any_working(self) -> bool:
@@ -509,21 +499,22 @@ class RepoListModel(QAbstractListModel):
         for the twinkle animation, even when no main turn is working."""
         return any(v > 0 for v in self._subagents.values())
 
-    def working_paths(self) -> set[str]:
-        """Normalized paths currently flagged as working. Read-only view."""
+    def working_ids(self) -> set[str]:
+        """Repo ids currently flagged as working. Read-only view."""
         return set(self._working)
 
-    def is_working(self, path: str) -> bool:
-        return _norm(path) in self._working
+    def is_working(self, repo_id: str) -> bool:
+        return repo_id in self._working
 
     def apply_hook_event(
-        self, event: str, path: str, payload: dict | None = None
+        self, event: str, repo_id: str, payload: dict | None = None
     ) -> None:
         """Atomic per-row state transition for one Claude hook event.
 
         Owns the entire event → state mapping; callers don't need to know
         the per-event mutator sequence. UI side-effects (spinner timer,
-        reorder scheduling) are handled by the RepoSidebar wrapper.
+        reorder scheduling) are handled by the RepoSidebar wrapper. Every
+        event changes only the row whose terminal sent it.
 
           • UserPromptSubmit — clear prior alert, mark working, stamp
             recency. Self-heals: if a prior turn never got a Stop, the
@@ -542,50 +533,47 @@ class RepoListModel(QAbstractListModel):
           • SubagentStop — decrement _subagents (clamped at 0). Fires for
             every subagent regardless of fg/bg; the clamp absorbs any
             stray decrements without a paired dispatch.
-          • SessionStart — flip _session_active[path] = True. The ⠿
+          • SessionStart — flip _session_active[repo_id] = True. The ⠿
             ambient badge lights once no higher-priority alert masks it,
             and the row joins the floated active group.
-          • SessionEnd — drop this session's id from _live_sessions[path].
-            Only when it was the LAST live session on the path do we flip
-            _session_active = False AND cascade-clear _status / _working /
-            _subagents / _turn_started. Several `claude` processes can
-            share one repo dir, so a SessionEnd from one must not wipe a
-            sibling's live working spinner — the bug where an active row
-            lost its spinner mid-turn. The last SessionEnd also sinks the
-            row to the bottom of the stack.
+          • SessionEnd — drop this session's id from _live_sessions[repo_id].
+            Only when it was the LAST live session in the row's terminal do
+            we flip _session_active = False AND cascade-clear _status /
+            _working / _subagents / _turn_started. A nested `claude` in the
+            same terminal must not wipe the outer session's spinner. The
+            last SessionEnd also sinks the row to the bottom of the stack.
         """
         if event == EVENT_USER_PROMPT_SUBMIT:
-            self.clear_status(path)
-            self.set_working(path, True)
-            self.touch_activity(path)
-            self.mark_turn_start(path)
+            self.clear_status(repo_id)
+            self.set_working(repo_id, True)
+            self.touch_activity(repo_id)
+            self.mark_turn_start(repo_id)
         elif event == EVENT_STOP:
-            self.set_working(path, False)
-            self.set_status(path, STATUS_DONE)
-            self.clear_turn_start(path)
+            self.set_working(repo_id, False)
+            self.set_status(repo_id, STATUS_DONE)
+            self.clear_turn_start(repo_id)
         elif event == EVENT_NOTIFICATION:
-            self.set_status(path, STATUS_ATTENTION)
+            self.set_status(repo_id, STATUS_ATTENTION)
         elif event == EVENT_PRE_TOOL_USE:
             if _is_subagent_dispatch(payload):
-                self._bump_subagents(path, +1)
+                self._bump_subagents(repo_id, +1)
         elif event == EVENT_SUBAGENT_STOP:
-            self._bump_subagents(path, -1)
+            self._bump_subagents(repo_id, -1)
         elif event == EVENT_SESSION_START:
             sid = payload.get("session_id") if isinstance(payload, dict) else None
             if sid:
-                self._live_sessions.setdefault(path, set()).add(str(sid))
-            self._set_session_active(path, True)
+                self._live_sessions.setdefault(repo_id, set()).add(str(sid))
+            self._set_session_active(repo_id, True)
         elif event == EVENT_SESSION_END:
             sid = payload.get("session_id") if isinstance(payload, dict) else None
-            live = self._live_sessions.get(path)
+            live = self._live_sessions.get(repo_id)
             if sid and live is not None:
                 live.discard(str(sid))
-            # Only tear down per-session signals when no session remains on
-            # this path. A SessionEnd from one of several concurrent sessions
-            # sharing a repo dir must not clobber a sibling's working spinner.
-            if not self._live_sessions.get(path):
-                self._live_sessions.pop(path, None)
-                self._set_session_active(path, False)
+            # Only tear down per-session signals when no session remains in
+            # this row's terminal.
+            if not self._live_sessions.get(repo_id):
+                self._live_sessions.pop(repo_id, None)
+                self._set_session_active(repo_id, False)
 
     def set_emoji(self, repo_id: str, emoji: str) -> None:
         """Set or clear the optional leading emoji for one row.
@@ -603,33 +591,32 @@ class RepoListModel(QAbstractListModel):
             idx = self.index(row)
             self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
 
-    def rebind_repo(self, repo_id: str, new_path: str) -> None:
-        """Repoint one row at `new_path`. The display name updates implicitly
-        because `Repo.display_name` is derived from `path` basename + emoji +
-        instance (see src/core/repo_store.py:Repo). Invalidates the branch
-        and path-missing caches for both old and new paths and emits a
-        single dataChanged covering name, branch, and missing-state.
+    def rebind_repo(self, repo_id: str, new_path: str) -> bool:
+        """Repoint one row at `new_path` via `RepoStore.rebind`. The display
+        name updates implicitly because `Repo.display_name` is derived from
+        `path` basename + emoji + instance. Repaints every row whose name or
+        instance changed (the rebound row, and siblings on the old and new
+        paths). Returns False when nothing changed.
         """
         repo = self._store.find_by_id(repo_id)
         if repo is None:
-            return
-        new_path = os.path.realpath(new_path)
-        if os.path.realpath(repo.path) == new_path:
-            return
+            return False
         old_path = repo.path
-        repo.path = new_path
+        before = {r.id: r.instance for r in self._store.repos}
+        if not self._store.rebind(repo_id, new_path):
+            return False
         self._store.save()
-        self._branches.pop(old_path, None)
-        self._path_missing.pop(old_path, None)
-        self._branches[new_path] = repo_store.current_branch(new_path)
-        self._path_missing[new_path] = not os.path.isdir(new_path)
-        row = self.index_of_id(repo_id)
-        if row >= 0:
-            idx = self.index(row)
-            self.dataChanged.emit(
-                idx, idx,
-                [Qt.DisplayRole, Qt.ToolTipRole, ROLE_BRANCH, ROLE_PATH_MISSING],
-            )
+        if not self._store.repos_for_path(old_path):
+            self._branches.pop(old_path, None)
+            self._path_missing.pop(old_path, None)
+        self._branches[repo.path] = repo_store.current_branch(repo.path)
+        self._path_missing[repo.path] = not os.path.isdir(repo.path)
+        roles = [Qt.DisplayRole, Qt.ToolTipRole, ROLE_BRANCH, ROLE_PATH_MISSING]
+        for i, r in enumerate(self._store.repos):
+            if r.id == repo_id or before.get(r.id) != r.instance:
+                idx = self.index(i)
+                self.dataChanged.emit(idx, idx, roles)
+        return True
 
     def set_terminal_active(self, repo_id: str, active: bool) -> None:
         """Mark `repo_id` as having a live TerminalHost (or not).
@@ -649,8 +636,8 @@ class RepoListModel(QAbstractListModel):
             idx = self.index(row)
             self.dataChanged.emit(idx, idx, [ROLE_HAS_TERMINAL, ROLE_ACTIVE_GROUP])
 
-    def last_activity(self, path: str) -> float:
-        return self._last_activity.get(path, 0.0)
+    def last_activity(self, repo_id: str) -> float:
+        return self._last_activity.get(repo_id, 0.0)
 
     def _activity_key(self, item) -> tuple:
         """Recency ordering key for `(index, repo)`, in three tiers:
@@ -663,10 +650,10 @@ class RepoListModel(QAbstractListModel):
         Ties break on current position, keeping the sort stable.
         """
         i, r = item
-        ts = self._last_activity.get(r.path, 0.0)
+        ts = self._last_activity.get(r.id, 0.0)
         if ts > 0:
             return (0, -ts, i)
-        ended = self._session_ended.get(r.path)
+        ended = self._session_ended.get(r.id)
         if ended is not None:
             return (2, ended, i)
         return (1, 0.0, i)
@@ -809,16 +796,15 @@ class RepoListModel(QAbstractListModel):
                 idx = self.index(i)
                 self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
 
-        # Per-path state stays only while at least one row still uses the
-        # path — drop it once the last duplicate is gone.
+        for state in (self._status, self._last_activity, self._session_ended,
+                      self._turn_started, self._live_sessions, self._subagents,
+                      self._session_active):
+            state.pop(repo.id, None)
+        self._working.discard(repo.id)
+        # Path-keyed caches stay only while at least one row still uses the
+        # path — drop them once the last duplicate is gone.
         if not self._store.repos_for_path(path):
             self._branches.pop(path, None)
-            self._status.pop(path, None)
-            self._working.discard(_norm(path))
-            self._last_activity.pop(path, None)
-            self._session_ended.pop(path, None)
-            self._turn_started.pop(path, None)
-            self._live_sessions.pop(path, None)
             if self._last_focused == _norm(path):
                 self._last_focused = None
         self._store.save()

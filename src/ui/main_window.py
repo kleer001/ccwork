@@ -51,6 +51,7 @@ from src.core.hook_server import (
     EVENT_NOTIFICATION,
     EVENT_REPO_ADDED,
     EVENT_SESSION_END,
+    EVENT_SESSION_START,
     EVENT_STOP,
     EVENT_USER_PROMPT_SUBMIT,
     IDLE_EVENTS,
@@ -61,7 +62,7 @@ from src.core.key_grab import (
     MainWindowSlots,
     build_main_window_bindings,
 )
-from src.core.repo_store import Repo, RepoStore, is_git_root
+from src.core.repo_store import Repo, RepoStore, git_toplevel, is_git_root
 from src.core.settings import Settings, load_settings, save_settings
 from src.core.terminal_session import build_session
 from src.core import x11
@@ -849,13 +850,12 @@ class MainWindow(QMainWindow):
     def _refresh_title(self) -> None:
         """Recompute the window title from the model's working-count.
 
-        Count is path-keyed (matches `_working`'s normalized-path
-        membership), so duplicate rows on the same path count once —
-        "1 working" rather than "2 working" for one Claude session.
+        Counts working rows: two duplicate rows each running Claude read
+        "2 working".
         Format: `ccwork` / `ccwork — 1 working` / `ccwork — N working`.
         Em dash so a future suffix (e.g. `, 1 needs attention`) composes.
         """
-        n = len(self._sidebar.model.working_paths())
+        n = len(self._sidebar.model.working_ids())
         if n == 0:
             self.setWindowTitle("ccwork")
         else:
@@ -872,18 +872,18 @@ class MainWindow(QMainWindow):
         if host is not None:
             self._stack.removeWidget(host)
             host.deleteLater()
-        # Per-session state is path-broadcast. If another terminal at this
-        # path is still alive, leave it — that other session may still be
-        # mid-turn. Otherwise tear it all down: `/exit` gets no SessionEnd
+        # Tear down this row's session state: `/exit` gets no SessionEnd
         # hook (anthropics/claude-code#17885), so the process-exit is our
         # only chance to clear a stuck spinner or leaked subagent twinkle.
+        self._sidebar.clear_session(repo.id)
+        # Crash tracking is keyed by path, so keep it while another terminal
+        # at this path is still alive.
         any_alive = any(
             r.id in self._terminals and self._terminals[r.id].is_running()
             for r in self._store.repos_for_path(repo.path)
             if r.id != repo.id
         )
         if not any_alive:
-            self._sidebar.clear_session(repo.path)
             # The last live terminal at this path is gone — a clean end, so
             # drop it from crash tracking (only a crash leaves it behind).
             session_recovery.clear_open(repo.path)
@@ -908,37 +908,46 @@ class MainWindow(QMainWindow):
         event = str(obj.get("event", ""))
         payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else {}
         cwd = obj.get("cwd") or (payload.get("cwd") if isinstance(payload, dict) else None)
+        row_id = obj.get("row")
 
-        if event == EVENT_REPO_ADDED and cwd:
-            # Auto-add only when no row exists yet for this path. Manual
-            # Ctrl+O is the only way to create duplicates — every plain
-            # `claude` invocation in an existing repo dir would otherwise
-            # spawn a new tab.
+        if event == EVENT_REPO_ADDED:
+            # A `claude` launched from a ccwork terminal carries its row id;
+            # the SessionStart rebind below covers that case, and an auto-add
+            # here would leave a duplicate row for the same repo.
+            if row_id or not cwd:
+                return
             if not self._store.repos_for_path(str(cwd)):
                 self._sidebar.model.add_repo(cwd)
             return
 
-        # Resolve the cwd to every repo instance sharing that path. With
-        # duplicates allowed, hooks can't tell duplicates apart by cwd alone
-        # — sidebar state is path-keyed so a single apply_hook_event call
-        # paints every matching row. Per-session routing is future work.
-        matching: list[Repo] = (
-            self._store.repos_for_path(str(cwd)) if cwd else []
-        )
-        log.info("hook event=%s cwd=%r matched=%d", event, cwd, len(matching))
-        if not matching:
+        repo = self._store.find_by_id(str(row_id)) if row_id else None
+        if repo is None:
+            log.warning(
+                "dropping hook event=%s cwd=%r: %s row id %r",
+                event, cwd, "unknown" if row_id else "missing", row_id,
+            )
             return
+        log.info("hook event=%s cwd=%r row=%s", event, cwd, repo.id)
 
-        self._sidebar.apply_hook_event(event, str(cwd), payload)
+        if event == EVENT_SESSION_START and cwd:
+            # The terminal may have `cd`-ed into another repo before running
+            # `claude`: the row follows the session to that repo's git root.
+            top = git_toplevel(str(cwd))
+            if top:
+                self._sidebar.rebind(repo.id, top)
 
-        # Crash-recovery bookkeeping. Every Claude hook carries a session_id;
-        # record_open is idempotent (writes only when the id changes) so
-        # calling it per event is cheap. SessionEnd is a clean end — drop it.
+        self._sidebar.apply_hook_event(event, repo.id, payload)
+
+        # Crash-recovery bookkeeping stays keyed by cwd: `claude --resume`
+        # must run in the session's own directory. record_open is idempotent
+        # (writes only when the id changes) so calling it per event is cheap.
+        # SessionEnd is a clean end — drop it.
         sid = payload.get("session_id")
-        if event == EVENT_SESSION_END:
-            session_recovery.clear_open(str(cwd))
-        elif sid:
-            session_recovery.record_open(str(cwd), str(sid), matching[0].display_name)
+        if cwd:
+            if event == EVENT_SESSION_END:
+                session_recovery.clear_open(str(cwd))
+            elif sid:
+                session_recovery.record_open(str(cwd), str(sid), repo.display_name)
 
         if event in IDLE_EVENTS:
             # Bell dot: glanceable "something happened" signal even when
@@ -957,13 +966,13 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # type: ignore[override]
         # Only nag when Claude is mid-turn somewhere — an idle shell sitting
         # at a prompt is fine to kill silently. Working state lives on the
-        # model (path-keyed); we intersect with the set of repos that have
+        # model (id-keyed); we intersect with the set of repos that have
         # a running terminal here. Notification fires mid-turn and does
         # not clear working, so a permission_prompt still nags.
         model = self._sidebar.model
         working_ids = [
             rid for rid, host in self._terminals.items()
-            if host.is_running() and model.is_working(self._store.find_by_id(rid).path)
+            if host.is_running() and model.is_working(rid)
         ]
         if working_ids:
             id_to_repo = {r.id: r for r in self._store.repos}

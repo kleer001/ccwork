@@ -420,3 +420,105 @@ def test_recent_round_trips(store_path: Path, tmp_path: Path) -> None:
     assert len(s2.recent) == 1
     assert s2.recent[0]["emoji"] == "🌟"
     assert os.path.basename(s2.recent[0]["path"]) == "saved"
+
+
+# ── rebind and git toplevel ──
+
+
+def test_rebind_gives_new_path_the_add_sequence(store_path: Path, tmp_path: Path) -> None:
+    """A lone bare sibling on the new path is promoted to (I), and the
+    rebound row takes (II), the same as a plain add would."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    s = RepoStore(config_path=store_path)
+    mover = s.add(str(a))
+    lone = s.add(str(b))
+
+    assert s.rebind(mover.id, str(b)) is True
+    assert lone.instance == 1
+    assert mover.instance == 2
+
+
+def test_rebind_resets_old_path_last_survivor_to_bare(store_path: Path, tmp_path: Path) -> None:
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    s = RepoStore(config_path=store_path)
+    first = s.add(str(a))
+    second = s.add(str(a))
+    assert (first.instance, second.instance) == (1, 2)
+
+    assert s.rebind(second.id, str(b)) is True
+    assert first.instance == 0
+    assert second.instance == 0
+
+
+def test_rebind_pushes_old_path_to_recent_with_emoji(store_path: Path, tmp_path: Path) -> None:
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    s = RepoStore(config_path=store_path)
+    r = s.add(str(a))
+    r.emoji = "🚀"
+
+    assert s.rebind(r.id, str(b)) is True
+    assert s.recent == [{"path": os.path.realpath(a), "emoji": "🚀"}]
+
+
+def test_rebind_keeps_old_path_out_of_recent_while_a_row_remains(
+    store_path: Path, tmp_path: Path
+) -> None:
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    s = RepoStore(config_path=store_path)
+    s.add(str(a))
+    mover = s.add(str(a))
+
+    s.rebind(mover.id, str(b))
+    assert s.recent == []
+
+
+def test_rebind_drops_new_path_from_recent(store_path: Path, tmp_path: Path) -> None:
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    s = RepoStore(config_path=store_path)
+    gone = s.add(str(b))
+    s.remove_by_id(gone.id)
+    assert [os.path.realpath(e["path"]) for e in s.recent] == [os.path.realpath(b)]
+
+    mover = s.add(str(a))
+    assert s.rebind(mover.id, str(b)) is True
+    assert [os.path.realpath(e["path"]) for e in s.recent] == [os.path.realpath(a)]
+
+
+def test_rebind_returns_false_for_unknown_id(store_path: Path, tmp_path: Path) -> None:
+    s = RepoStore(config_path=store_path)
+    s.add(str(tmp_path))
+    assert s.rebind("no-such-id", str(tmp_path)) is False
+
+
+def test_rebind_returns_false_for_same_path(store_path: Path, tmp_path: Path) -> None:
+    s = RepoStore(config_path=store_path)
+    r = s.add(str(tmp_path))
+    assert s.rebind(r.id, str(tmp_path)) is False
+    assert r.path == os.path.realpath(tmp_path)
+
+
+def test_git_toplevel_from_subdir_returns_root(git_repo: Path) -> None:
+    sub = git_repo / "sub"
+    sub.mkdir()
+    assert repo_store.git_toplevel(sub) == os.path.realpath(git_repo)
+
+
+def test_git_toplevel_outside_git_is_none(tmp_path: Path) -> None:
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert repo_store.git_toplevel(plain) is None

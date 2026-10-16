@@ -2,7 +2,7 @@
 
 Drives the bold-upright / regular-italic split in the delegate so the user
 can see which repos already have a live terminal this session. Per-id (not
-per-path) so duplicate rows track independently.
+per-row, keyed by repo id) so duplicate rows track independently.
 """
 
 from __future__ import annotations

@@ -42,6 +42,11 @@ def _paths(model: RepoListModel) -> list[str]:
     return [r.path for r in model._store.repos]
 
 
+def _id(model: RepoListModel, path: str) -> str:
+    """Repo id of the row whose path is `path` (paths must be unique here)."""
+    return next(r.id for r in model._store.repos if r.path == path)
+
+
 def test_apply_auto_arrange_orders_by_recency_desc(
     qapp: QApplication, tmp_path: Path
 ) -> None:
@@ -50,9 +55,9 @@ def test_apply_auto_arrange_orders_by_recency_desc(
     model = RepoListModel(store)
 
     # Stamp activity in order: D first, then C, then B. A never stamped.
-    model.set_status("/d", STATUS_DONE)
-    model.set_status("/c", STATUS_DONE)
-    model.set_status("/b", STATUS_ATTENTION)
+    model.set_status(_id(model, "/d"), STATUS_DONE)
+    model.set_status(_id(model, "/c"), STATUS_DONE)
+    model.set_status(_id(model, "/b"), STATUS_ATTENTION)
 
     changed = model.apply_auto_arrange()
     assert changed
@@ -69,7 +74,7 @@ def test_no_activity_repos_keep_stable_relative_order(
     model = RepoListModel(store)
 
     # Only B gets activity; A, C, D stay in their original relative order.
-    model.set_status("/b", STATUS_DONE)
+    model.set_status(_id(model, "/b"), STATUS_DONE)
 
     model.apply_auto_arrange()
     assert _paths(model) == ["/b", "/a", "/c", "/d"]
@@ -83,13 +88,13 @@ def test_last_focused_does_not_stamp_activity(
     model = RepoListModel(store)
 
     # Only A gets a Claude-driven event.
-    model.set_status("/a", STATUS_DONE)
+    model.set_status(_id(model, "/a"), STATUS_DONE)
     # Marking B as last-focused is user navigation, not Claude — it must
     # not feed the recency sort.
     model.set_last_focused("/b")
 
-    assert model.last_activity("/a") > 0
-    assert model.last_activity("/b") == 0.0
+    assert model.last_activity(_id(model, "/a")) > 0
+    assert model.last_activity(_id(model, "/b")) == 0.0
 
     model.apply_auto_arrange()
     # A bubbles to the top; B stays below it because B has no activity.
@@ -104,8 +109,8 @@ def test_user_prompt_submit_stamps_activity(
     model = RepoListModel(store)
 
     # set_working(True) is the model-side effect of a UserPromptSubmit hook.
-    model.set_working("/b", True)
-    assert model.last_activity("/b") > 0
+    model.set_working(_id(model, "/b"), True)
+    assert model.last_activity(_id(model, "/b")) > 0
 
     model.apply_auto_arrange()
     assert _paths(model) == ["/b", "/a"]
@@ -119,7 +124,7 @@ def test_apply_auto_arrange_returns_false_when_order_unchanged(
     model = RepoListModel(store)
 
     # A is already first and gets the activity → order doesn't change.
-    model.set_status("/a", STATUS_DONE)
+    model.set_status(_id(model, "/a"), STATUS_DONE)
     assert model.apply_auto_arrange() is False
 
 
@@ -135,7 +140,7 @@ def test_persistent_index_follows_row_after_reorder(
     assert pidx.isValid() and pidx.row() == 2
 
     # Bump /c so it moves to the top.
-    model.set_status("/c", STATUS_DONE)
+    model.set_status(_id(model, "/c"), STATUS_DONE)
     model.apply_auto_arrange()
 
     assert _paths(model)[0] == "/c"

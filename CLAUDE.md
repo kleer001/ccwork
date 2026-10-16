@@ -281,6 +281,14 @@ but no widgets):
   (validated with `is_git_root`); `display_name` is a derived property
   over `path` basename + emoji + instance, so renaming the directory
   and rebinding flows through without a separate "rename row" action.
+  `RepoStore.rebind` keeps the row's id and emoji, assigns the Roman
+  numeral on the new path with the same rules as `add`, resets the old
+  path's last survivor to bare, and moves `recent` entries the same way
+  a remove + add would. The same rebind runs automatically when a row's
+  terminal starts a Claude session whose git root (`git_toplevel` of the
+  hook `cwd`) is a different repo: the row follows the session, with no
+  prompt. A subdirectory of the same repo, or a non-git `cwd`, leaves
+  the row alone.
   The store also keeps a `recent` list (in the same `repos.json`, so no
   new file) — the recently-removed history that feeds the sidebar's
   *Recent* recall slot. Each entry is `{path, emoji}`, most-recent first,
@@ -289,7 +297,8 @@ but no widgets):
   the path is still on the shelf); `add` restores the badge from a
   matching `recent` entry and drops it (re-adding forgets it as "recent").
 - `terminal_session.py` — builds the argv passed to `TerminalHost`. Sets
-  `CCWORK_GUI=1` in the child env (the gate the hook sink checks). Launches
+  `CCWORK_GUI=1` (the gate the hook sink checks) and `CCWORK_ROW_ID=<repo.id>`
+  (the routing key every hook event carries) in the child env. Launches
   bash with `--rcfile bin/ccwork-bashrc` so ccwork's `bin/` wins on `PATH`
   regardless of the user's `.bashrc`.
 - `hook_server.py` — `QLocalServer` listening at
@@ -325,15 +334,18 @@ but no widgets):
 
 - `bin/ccwork-hook-sink` — wired into Claude Code's Stop/Notification hooks
   by `install.sh`. Reads the hook payload from stdin, wraps it as
-  `{"event": $CCWORK_EVENT, "cwd": $PWD, "ts": …, "payload": …}`, writes
+  `{"event": $CCWORK_EVENT, "row": $CCWORK_ROW_ID, "cwd": $PWD, "ts": …,
+  "payload": …}`, writes
   one line to the ccwork socket. **Gated by `CCWORK_GUI=1`** — outside the
   ccwork GUI it drains stdin and exits 0, so plain `claude` use isn't
   affected. Failure to reach the socket is silent by design (hooks must
   never break the user's session).
 - `bin/claude` — `PATH`-shadow wrapper for `claude`. Pings the ccwork
-  socket with a `RepoAdded` event for unregistered git roots so the
-  sidebar auto-populates, then execs the real `claude` with the user's
-  args untouched.
+  socket with a `RepoAdded` event (carrying `CCWORK_ROW_ID`) for git
+  roots, then execs the real `claude` with the user's args untouched.
+  MainWindow ignores a `RepoAdded` that names a row — the SessionStart
+  rebind moves that row instead — and auto-adds only for a `RepoAdded`
+  with no row.
 
 ### Event flow
 
@@ -348,13 +360,20 @@ Claude Code hook ─▶ ccwork-hook-sink ─▶ unix socket ─▶ HookServer
 ```
 
 `MainWindow._on_hook_event` is a thin dispatcher: it special-cases
-`RepoAdded` (auto-add a row) and toggles the bell dot for idle events;
-everything else routes through `RepoSidebar.apply_hook_event(event,
-path, payload)` → `RepoListModel.apply_hook_event`, which owns the entire
-event → state mutation table. The model knows seven Claude events:
+`RepoAdded` (see `bin/claude`), toggles the bell dot for idle events,
+and routes every other event by its `row` field to exactly one row. An
+event whose row id is missing or unknown is dropped with a logged
+warning — there is no fallback to path routing. On `SessionStart` it
+runs the automatic rebind (see `repo_store.py`). Then it calls
+`RepoSidebar.apply_hook_event(event, repo_id, payload)` →
+`RepoListModel.apply_hook_event`, which owns the entire event → state
+mutation table. All Claude state in the model is keyed by repo id, so
+duplicate rows on one path animate independently. Crash recovery stays
+keyed by `cwd`, because `claude --resume` must run in the session's own
+directory. The model knows seven Claude events:
 
   • `UserPromptSubmit` — clear any prior alert, mark working,
-    `touch_activity()` the path. Self-healing for Esc-interrupted /
+    `touch_activity()` the row. Self-healing for Esc-interrupted /
     crashed turns is automatic: `set_working(True)` no-ops when already
     True and `touch_activity` refreshes the recency stamp unconditionally.
   • `Stop` — clear working, set `STATUS_DONE`. Does **not** clear
@@ -365,31 +384,29 @@ event → state mutation table. The model knows seven Claude events:
     `permission_prompt` fires mid-turn and the turn is still live, so
     the spinner keeps running underneath the attention dot.
   • `PreToolUse` — registered with matcher `Task`. Increments
-    `_subagents[path]` whenever `payload.tool_name` is `Task` or
+    `_subagents[repo_id]` whenever `payload.tool_name` is `Task` or
     `Agent` (Claude Code renamed the tool; we accept both via
     `_is_subagent_dispatch`). Foreground and background subagents
     both count — the left-edge twinkle paints alongside the
     right-edge working spinner so parallel work is visible during
     the main turn, not only after it.
-  • `SubagentStop` — decrements `_subagents[path]`, clamped at 0.
+  • `SubagentStop` — decrements `_subagents[repo_id]`, clamped at 0.
     Fires for every subagent regardless of fg/bg.
-  • `SessionStart` — flips `_session_active[path] = True`. Lights the
+  • `SessionStart` — flips `_session_active[repo_id] = True`. Lights the
     ambient ⠿ badge when no higher-priority alert is showing, joins the
     row to the floated active group, and lifts any `_session_ended`
     sink stamp.
-  • `SessionEnd` — drops this session's id from `_live_sessions[path]`
-    (a per-path set of live Claude `session_id`s, populated on
+  • `SessionEnd` — drops this session's id from `_live_sessions[repo_id]`
+    (a per-row set of live Claude `session_id`s, populated on
     `SessionStart`). Only when that set goes empty — i.e. the **last**
-    session on the path ended — does it flip `_session_active[path] =
-    False` AND cascade-clear `_status`, `_working`, `_subagents`,
-    `_turn_started`. Several `claude` processes can share one repo dir
-    (state is path-keyed), so a `SessionEnd` from one must **not** wipe a
-    sibling's live working spinner — without the set, a dead session's
-    exit stripped an actively-working row of its spinner mid-turn. The
-    last `SessionEnd` on a path also pops `_last_activity` and stamps
-    `_session_ended[path]`, sinking the row to the bottom of the stack.
+    session in the row's terminal ended — does it flip
+    `_session_active[repo_id] = False` AND cascade-clear `_status`,
+    `_working`, `_subagents`, `_turn_started`. A nested `claude` in the
+    same terminal must **not** wipe the outer session's working spinner.
+    The last `SessionEnd` also pops `_last_activity` and stamps
+    `_session_ended[repo_id]`, sinking the row to the bottom of the stack.
     A `SessionEnd` whose id was never tracked (resumed session,
-    sink started mid-session) with no other live session on the path
+    sink started mid-session) with no other live session in the row
     still cascades, matching the pre-tracking behavior. The cascade is
     done inline in `_set_session_active(active=False)` rather than via the
     public mutators so the whole transition lands in a single dataChanged
@@ -397,16 +414,15 @@ event → state mutation table. The model knows seven Claude events:
     the `/exit` slash command (only for Ctrl+D —
     anthropics/claude-code#17885), so the same cascade is run as a
     fallback from `MainWindow._on_terminal_finished` via
-    `RepoListModel.clear_session(path)` when the row's xterm process
-    exits and no duplicate terminal at that path is still alive.
-    `clear_session` drops the *whole* `_live_sessions[path]` set (the
+    `RepoListModel.clear_session(repo_id)` when the row's xterm process
+    exits. `clear_session` drops the *whole* `_live_sessions[repo_id]` set (the
     xterm is gone, so every session it hosted is dead) before the
     cascade, unlike the single-id `SessionEnd` drop. Otherwise an `/exit`
     mid-turn (or with a subagent in flight) would leave the spinner /
     twinkle animating forever.
 
 `MainWindow` no longer keeps a parallel id-keyed `_working` set; the
-quit-confirm derives its list on demand via `model.is_working(path)`
+quit-confirm derives its list on demand via `model.is_working(repo_id)`
 intersected with running terminals.
 
 Each row reserves up to two right-edge badge slots, which animate
@@ -427,7 +443,7 @@ the subagent twinkle.
      `UserPromptSubmit` clears it.
   4. Ambient session presence — `SESSION_ACTIVE_GLYPH` (⠿, dense
      braille) in `AMBIENT_COLOR` (solarized base01), only when the row
-     has a live terminal *and* `_session_active[path]` is True and no
+     has a live terminal *and* `_session_active[repo_id]` is True and no
      higher badge applies. A terminal at a bare bash prompt gets **no
      glyph at all** — it isn't pending work, and a badge there reads as
      an unfinished task. The state is still discoverable on hover
@@ -436,7 +452,7 @@ the subagent twinkle.
 **Inboard slot** — subagent twinkle. Paints `SUBAGENT_FRAMES`
 (same-center asterisk-stars ordered light→heavy→light in solarized
 cyan, so they bloom and contract as a smooth pulse) whenever
-`_subagents[path] > 0`, independent of whatever the outboard slot
+`_subagents[repo_id] > 0`, independent of whatever the outboard slot
 shows. So a subagent dispatched mid-turn paints the twinkle just
 left of the working spinner; a background subagent that survives past
 `Stop` paints it just left of the green DONE dot. When no main-turn
@@ -487,7 +503,7 @@ events never touch it; user navigation never touches `_status`.
   does not stamp. `RepoListModel._activity_key` tiers the result:
   repos with activity first (most recent first), then repos that never
   ran anything, then repos whose Claude session **ended** — keyed on
-  `_session_ended[path]`, oldest exit first, so the repo you just quit
+  `_session_ended[repo_id]`, oldest exit first, so the repo you just quit
   lands at the very bottom of the stack. Ending a session pops
   `_last_activity` and stamps `_session_ended`; the next activity (or a
   fresh `SessionStart`) reverses it. Rationale: a finished session isn't
@@ -497,7 +513,7 @@ events never touch it; user navigation never touches `_status`.
   and subagent activity.** The outboard slot holds the working spinner,
   `STATUS_DONE`, `STATUS_ATTENTION`, or the ambient `SESSION_ACTIVE_GLYPH`
   (priority order above); the inboard slot holds
-  the animated `SUBAGENT_FRAMES` twinkle whenever `_subagents[path] > 0`,
+  the animated `SUBAGENT_FRAMES` twinkle whenever `_subagents[repo_id] > 0`,
   alongside whatever's outboard. The last-focused bookmark renders as a
   thin left-edge stripe in a distinct paint pass.
 - **`apply_hook_event` is the single entry point for hook-driven state
@@ -508,15 +524,13 @@ events never touch it; user navigation never touches `_status`.
   reorder schedule.
 - **Terminals are keyed by `repo.id`, not `repo.path`.** `MainWindow._terminals`
   is a dict of repo ids so duplicate rows on the same path get
-  independent xterms. Hook events arrive with `cwd` and the sidebar
-  state is path-keyed — `apply_hook_event(event, path)` broadcasts to
-  every duplicate row. The quit-confirm derives its working-id list on
-  demand from `model.is_working(path)` rather than maintaining a
-  parallel set. Most per-row state is still broadcast to every session
-  on a path; the one exception is session liveness, tracked per
-  `session_id` in `_live_sessions[path]` so one session's `SessionEnd`
-  doesn't tear down a sibling's live turn. Finer per-session routing
-  (whose spinner, whose DONE dot) is future work.
+  independent xterms. Hook events carry the row id (`CCWORK_ROW_ID`) of
+  the terminal that sent them, and all Claude state in `RepoListModel` is
+  keyed by repo id — `apply_hook_event(event, repo_id)` changes exactly
+  one row. The quit-confirm derives its working-id list on demand from
+  `model.is_working(repo_id)` rather than maintaining a parallel set.
+  Path-keyed state is limited to the branch / path-missing caches, the
+  last-focused bookmark, and crash recovery.
 - Tests use `QT_QPA_PLATFORM=offscreen`. The shared `qapp` fixture and
   `StubHookServer` stand-in live in `tests/conftest.py` — depend on those
   rather than re-rolling them per file.

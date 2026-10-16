@@ -298,13 +298,13 @@ class RepoSidebar(QWidget):
     def refresh_branches(self) -> None:
         self._model.refresh_branches()
 
-    def set_status(self, path: str, status: str) -> None:
-        self._model.set_status(path, status)
+    def set_status(self, repo_id: str, status: str) -> None:
+        self._model.set_status(repo_id, status)
         if status in (STATUS_DONE, STATUS_ATTENTION):
             self._maybe_schedule_reorder()
 
-    def clear_status(self, path: str) -> None:
-        self._model.clear_status(path)
+    def clear_status(self, repo_id: str) -> None:
+        self._model.clear_status(repo_id)
 
     def set_last_focused(self, path: str) -> None:
         self._model.set_last_focused(path)
@@ -377,21 +377,21 @@ class RepoSidebar(QWidget):
         self._delegate.badge_style = style
         self._view.viewport().update()
 
-    def set_working(self, path: str, working: bool) -> None:
-        self._model.set_working(path, working)
+    def set_working(self, repo_id: str, working: bool) -> None:
+        self._model.set_working(repo_id, working)
         self._refresh_spinner_timer()
         if working:
             self._maybe_schedule_reorder()
 
-    def clear_session(self, path: str) -> None:
-        self._model.clear_session(path)
+    def clear_session(self, repo_id: str) -> None:
+        self._model.clear_session(repo_id)
         self._refresh_spinner_timer()
         self._maybe_walk()
 
     def apply_hook_event(
-        self, event: str, path: str, payload: dict | None = None
+        self, event: str, repo_id: str, payload: dict | None = None
     ) -> None:
-        """Single entry point for a Claude hook event affecting one path.
+        """Single entry point for a Claude hook event affecting one row.
 
         Delegates state mutation to the model and refreshes UI side-effects
         (spinner timer + auto-arrange schedule). MainWindow._on_hook_event
@@ -403,7 +403,7 @@ class RepoSidebar(QWidget):
         """
         if event not in _CLAUDE_STATE_EVENTS:
             return
-        self._model.apply_hook_event(event, path, payload)
+        self._model.apply_hook_event(event, repo_id, payload)
         self._refresh_spinner_timer()
         # Only the three turn-level events feed the activity sort. Bg-agent
         # dispatch / stop should not bump the auto-arrange schedule —
@@ -598,7 +598,7 @@ class RepoSidebar(QWidget):
             self._model.set_last_focused(prev_repo.path)
         repo = self._model.repo_at(current.row()) if current.isValid() else None
         if repo is not None:
-            self._model.clear_status(repo.path)
+            self._model.clear_status(repo.id)
             self.repo_selected.emit(repo)
 
     def _on_view_clicked(self, index: QModelIndex) -> None:
@@ -941,7 +941,16 @@ class RepoSidebar(QWidget):
                 "Pick the directory that contains the .git folder.",
             )
             return
-        self._model.rebind_repo(repo.id, picked)
+        self.rebind(repo.id, picked)
+
+    def rebind(self, repo_id: str, new_path: str) -> bool:
+        """Repoint a row at `new_path` and queue the re-sort the new name
+        may need. Shared by the *Rebind to…* menu action and the automatic
+        rebind when a row's terminal starts Claude in another repo."""
+        changed = self._model.rebind_repo(repo_id, new_path)
+        if changed:
+            self._maybe_walk()
+        return changed
 
     def _prompt_badge(self, repo: Repo) -> None:
         dlg = QDialog(self)

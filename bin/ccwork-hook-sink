@@ -2,7 +2,7 @@
 # ccwork-hook-sink — Claude Code Stop/Notification hook → ccwork GUI.
 #
 # Reads the hook payload from stdin, wraps it as
-#   {"event":"$CCWORK_EVENT","cwd":"$PWD","ts":<epoch>,"payload":<stdin>}
+#   {"event":"$CCWORK_EVENT","row":"$CCWORK_ROW_ID","cwd":"$PWD","ts":<epoch>,"payload":<stdin>}
 # and writes one newline-terminated line to the ccwork Unix socket.
 #
 # The event type is passed through $CCWORK_EVENT (set via the hooks config).
@@ -53,8 +53,9 @@ _json_escape() {
 }
 _cwd_esc=$(_json_escape "$_cwd")
 _event_esc=$(_json_escape "$_event")
+_row_esc=$(_json_escape "${CCWORK_ROW_ID:-}")
 
-_line="{\"event\":\"$_event_esc\",\"cwd\":\"$_cwd_esc\",\"ts\":$_ts,\"payload\":$_payload}"
+_line="{\"event\":\"$_event_esc\",\"row\":\"$_row_esc\",\"cwd\":\"$_cwd_esc\",\"ts\":$_ts,\"payload\":$_payload}"
 
 # Best-effort send. Short timeout so a dead socket doesn't stall Claude Code.
 if command -v socat >/dev/null 2>&1; then

@@ -64,11 +64,12 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
 def test_ups_stamps_turn_start(qapp: QApplication, tmp_path: Path, clock: _Clock) -> None:
     store = _store_with("/a", tmp_path / "repos.json")
     model = RepoListModel(store)
+    rid = store.repos[0].id
 
     clock.t = 1234.5
-    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/a")
+    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, rid)
 
-    assert model._turn_started["/a"] == 1234.5
+    assert model._turn_started[rid] == 1234.5
 
 
 def test_tooltip_elapsed_format_bands(
@@ -76,9 +77,10 @@ def test_tooltip_elapsed_format_bands(
 ) -> None:
     store = _store_with("/a", tmp_path / "repos.json")
     model = RepoListModel(store)
+    rid = store.repos[0].id
 
     clock.t = 0.0
-    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/a")
+    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, rid)
     idx = model.index(0)
 
     # Seconds band.
@@ -99,13 +101,14 @@ def test_stop_clears_turn_start_and_tooltip(
 ) -> None:
     store = _store_with("/a", tmp_path / "repos.json")
     model = RepoListModel(store)
+    rid = store.repos[0].id
 
     clock.t = 100.0
-    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/a")
+    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, rid)
     clock.t = 130.0
-    model.apply_hook_event(EVENT_STOP, "/a")
+    model.apply_hook_event(EVENT_STOP, rid)
 
-    assert "/a" not in model._turn_started
+    assert rid not in model._turn_started
     tooltip = model.index(0).data(Qt.ToolTipRole)
     assert "Working " not in tooltip  # no "Working Ns" line in DONE state
     assert tooltip.startswith("Claude finished a turn\n/a")
@@ -116,16 +119,17 @@ def test_interrupted_turn_resets_timer(
 ) -> None:
     store = _store_with("/a", tmp_path / "repos.json")
     model = RepoListModel(store)
+    rid = store.repos[0].id
 
     clock.t = 50.0
-    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/a")
-    assert model._turn_started["/a"] == 50.0
+    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, rid)
+    assert model._turn_started[rid] == 50.0
 
     # Second UPS without an intervening Stop — interrupted turn restarts
     # the elapsed clock from zero.
     clock.t = 80.0
-    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/a")
-    assert model._turn_started["/a"] == 80.0
+    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, rid)
+    assert model._turn_started[rid] == 80.0
 
 
 def test_working_true_without_ups_falls_back_to_two_line_tooltip(
@@ -135,8 +139,9 @@ def test_working_true_without_ups_falls_back_to_two_line_tooltip(
     leaves _working True but _turn_started empty. Tooltip must not raise."""
     store = _store_with("/a", tmp_path / "repos.json")
     model = RepoListModel(store)
+    rid = store.repos[0].id
 
-    model.set_working("/a", True)
+    model.set_working(rid, True)
     tooltip = model.index(0).data(Qt.ToolTipRole)
 
     assert tooltip == "Claude is working…\n/a"
@@ -149,13 +154,14 @@ def test_notification_does_not_touch_turn_start(
     must keep running, not reset and not stop."""
     store = _store_with("/a", tmp_path / "repos.json")
     model = RepoListModel(store)
+    rid = store.repos[0].id
 
     clock.t = 10.0
-    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/a")
+    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, rid)
     clock.t = 25.0
-    model.apply_hook_event(EVENT_NOTIFICATION, "/a")
+    model.apply_hook_event(EVENT_NOTIFICATION, rid)
 
-    assert model._turn_started["/a"] == 10.0  # unchanged
+    assert model._turn_started[rid] == 10.0  # unchanged
 
 
 def test_format_elapsed_unit_table() -> None:

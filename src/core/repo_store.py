@@ -208,15 +208,7 @@ class RepoStore:
           prior removals are preserved)
         """
         resolved = os.path.realpath(path)
-        siblings = [self.repos[i] for i in self.indices_of(resolved)]
-        if not siblings:
-            new_inst = 0
-        elif len(siblings) == 1 and siblings[0].instance == 0:
-            siblings[0].instance = 1
-            new_inst = 2
-        else:
-            new_inst = max(s.instance for s in siblings) + 1
-        repo = Repo(path=resolved, instance=new_inst)
+        repo = Repo(path=resolved, instance=self._next_instance(resolved))
         # Re-adding a path that was previously removed restores its badge and
         # forgets it as "recent" (it's back on the shelf). A path only lands
         # in `recent` once every row for it is gone, so a hit here is always a
@@ -228,6 +220,18 @@ class RepoStore:
                 break
         self.repos.append(repo)
         return repo
+
+    def _next_instance(self, resolved: str) -> int:
+        """Instance number for one more row on `resolved`, per the
+        sticky-while-duplicated rule documented on `add`. Promotes a lone
+        bare sibling to instance 1 as a side effect."""
+        siblings = self.repos_for_path(resolved)
+        if not siblings:
+            return 0
+        if len(siblings) == 1 and siblings[0].instance == 0:
+            siblings[0].instance = 1
+            return 2
+        return max(s.instance for s in siblings) + 1
 
     def _push_recent(self, resolved: str, emoji: str) -> None:
         """Record a just-removed path at the front of `recent`, deduped."""
@@ -258,6 +262,33 @@ class RepoStore:
                 return True
         return False
 
+    def rebind(self, repo_id: str, new_path: str) -> bool:
+        """Repoint one row at `new_path`, keeping its id, emoji and position.
+
+        Instance numbers follow the same rules as a remove from the old path
+        plus an `add` on the new path, and `recent` follows the same rules
+        too: the old path enters it when its last row leaves, and the new
+        path leaves it. Returns False when the id is unknown or the row
+        already has that path.
+        """
+        repo = self.find_by_id(repo_id)
+        resolved = os.path.realpath(new_path)
+        if repo is None or os.path.realpath(repo.path) == resolved:
+            return False
+        old = os.path.realpath(repo.path)
+        repo.instance = self._next_instance(resolved)
+        repo.path = resolved
+        survivors = self.repos_for_path(old)
+        if len(survivors) == 1:
+            survivors[0].instance = 0
+        elif not survivors:
+            self._push_recent(old, repo.emoji)
+        self.recent = [
+            e for e in self.recent
+            if os.path.realpath(e.get("path", "")) != resolved
+        ]
+        return True
+
     def move_by_id(self, repo_id: str, new_index: int) -> bool:
         """Reorder: move the repo with `repo_id` to `new_index`."""
         for i, r in enumerate(self.repos):
@@ -275,8 +306,8 @@ class RepoStore:
         return len(self.repos)
 
 
-def is_git_root(path: str | os.PathLike[str]) -> bool:
-    """True iff `path` is the top level of a git working tree."""
+def git_toplevel(path: str | os.PathLike[str]) -> str | None:
+    """Real path of the git working tree that contains `path`, or None."""
     try:
         r = subprocess.run(
             ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
@@ -285,13 +316,16 @@ def is_git_root(path: str | os.PathLike[str]) -> bool:
             timeout=2,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+        return None
     if r.returncode != 0:
-        return False
+        return None
     top = r.stdout.strip()
-    if not top:
-        return False
-    return os.path.realpath(top) == os.path.realpath(str(path))
+    return os.path.realpath(top) if top else None
+
+
+def is_git_root(path: str | os.PathLike[str]) -> bool:
+    """True iff `path` is the top level of a git working tree."""
+    return git_toplevel(path) == os.path.realpath(str(path))
 
 
 def current_branch(path: str | os.PathLike[str]) -> str | None:

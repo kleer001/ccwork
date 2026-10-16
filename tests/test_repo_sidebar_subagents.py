@@ -1,7 +1,7 @@
 """Coverage for the subagent counter and its left-edge twinkle indicator.
 
 A subagent dispatch (PreToolUse with tool_name in {"Task", "Agent"} — Claude
-Code renamed the tool; we accept both) bumps the per-path counter on the
+Code renamed the tool; we accept both) bumps the per-row counter on the
 model. SubagentStop decrements it. While the counter is positive, the
 delegate paints the SUBAGENT_FRAMES twinkle (·→✦→✶→❋→✶→✦) on the LEFT
 edge of the row, alongside whatever the right-edge column is showing —
@@ -50,13 +50,15 @@ def test_subagent_dispatch_increments_counter(qapp, tmp_path: Path, tool_name: s
     """Claude Code renamed Task → Agent; the matcher must accept both."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    model = RepoListModel(_store_with(str(repo), tmp_path / "repos.json"))
+    store = _store_with(str(repo), tmp_path / "repos.json")
+    model = RepoListModel(store)
+    rid = store.repos[0].id
 
     payload = _pre_tool_use_payload(tool_name, subagent_type="general-purpose")
-    model.apply_hook_event(EVENT_PRE_TOOL_USE, str(repo), payload)
+    model.apply_hook_event(EVENT_PRE_TOOL_USE, rid, payload)
 
     assert model.index(0).data(ROLE_SUBAGENTS) == 1
-    assert model.subagents(str(repo)) == 1
+    assert model.subagents(rid) == 1
 
 
 def test_foreground_subagent_dispatch_is_counted(qapp, tmp_path: Path) -> None:
@@ -65,17 +67,19 @@ def test_foreground_subagent_dispatch_is_counted(qapp, tmp_path: Path) -> None:
     during the main turn, not just after it."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    model = RepoListModel(_store_with(str(repo), tmp_path / "repos.json"))
+    store = _store_with(str(repo), tmp_path / "repos.json")
+    model = RepoListModel(store)
+    rid = store.repos[0].id
 
     payload = _pre_tool_use_payload("Agent", subagent_type="general-purpose")
-    model.apply_hook_event(EVENT_PRE_TOOL_USE, str(repo), payload)
-    assert model.subagents(str(repo)) == 1
+    model.apply_hook_event(EVENT_PRE_TOOL_USE, rid, payload)
+    assert model.subagents(rid) == 1
 
     payload = _pre_tool_use_payload(
         "Agent", subagent_type="general-purpose", run_in_background=False,
     )
-    model.apply_hook_event(EVENT_PRE_TOOL_USE, str(repo), payload)
-    assert model.subagents(str(repo)) == 2
+    model.apply_hook_event(EVENT_PRE_TOOL_USE, rid, payload)
+    assert model.subagents(rid) == 2
 
 
 def test_non_subagent_pre_tool_use_is_ignored(qapp, tmp_path: Path) -> None:
@@ -84,30 +88,34 @@ def test_non_subagent_pre_tool_use_is_ignored(qapp, tmp_path: Path) -> None:
     change), it must not increment the counter."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    model = RepoListModel(_store_with(str(repo), tmp_path / "repos.json"))
+    store = _store_with(str(repo), tmp_path / "repos.json")
+    model = RepoListModel(store)
+    rid = store.repos[0].id
 
     model.apply_hook_event(
-        EVENT_PRE_TOOL_USE, str(repo),
+        EVENT_PRE_TOOL_USE, rid,
         _pre_tool_use_payload("Bash", command="ls"),
     )
-    assert model.subagents(str(repo)) == 0
+    assert model.subagents(rid) == 0
 
 
 def test_subagent_stop_decrements_counter(qapp, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
-    model = RepoListModel(_store_with(str(repo), tmp_path / "repos.json"))
+    store = _store_with(str(repo), tmp_path / "repos.json")
+    model = RepoListModel(store)
+    rid = store.repos[0].id
 
     payload = _pre_tool_use_payload("Agent", subagent_type="general-purpose")
-    model.apply_hook_event(EVENT_PRE_TOOL_USE, str(repo), payload)
-    model.apply_hook_event(EVENT_PRE_TOOL_USE, str(repo), payload)
-    assert model.subagents(str(repo)) == 2
+    model.apply_hook_event(EVENT_PRE_TOOL_USE, rid, payload)
+    model.apply_hook_event(EVENT_PRE_TOOL_USE, rid, payload)
+    assert model.subagents(rid) == 2
 
-    model.apply_hook_event(EVENT_SUBAGENT_STOP, str(repo))
-    assert model.subagents(str(repo)) == 1
+    model.apply_hook_event(EVENT_SUBAGENT_STOP, rid)
+    assert model.subagents(rid) == 1
 
-    model.apply_hook_event(EVENT_SUBAGENT_STOP, str(repo))
-    assert model.subagents(str(repo)) == 0
+    model.apply_hook_event(EVENT_SUBAGENT_STOP, rid)
+    assert model.subagents(rid) == 0
 
 
 def test_subagent_stop_clamps_at_zero(qapp, tmp_path: Path) -> None:
@@ -115,11 +123,13 @@ def test_subagent_stop_clamps_at_zero(qapp, tmp_path: Path) -> None:
     must not push the counter negative."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    model = RepoListModel(_store_with(str(repo), tmp_path / "repos.json"))
+    store = _store_with(str(repo), tmp_path / "repos.json")
+    model = RepoListModel(store)
+    rid = store.repos[0].id
 
-    model.apply_hook_event(EVENT_SUBAGENT_STOP, str(repo))
-    model.apply_hook_event(EVENT_SUBAGENT_STOP, str(repo))
-    assert model.subagents(str(repo)) == 0
+    model.apply_hook_event(EVENT_SUBAGENT_STOP, rid)
+    model.apply_hook_event(EVENT_SUBAGENT_STOP, rid)
+    assert model.subagents(rid) == 0
     assert model.index(0).data(ROLE_SUBAGENTS) == 0
 
 
@@ -129,16 +139,18 @@ def test_stop_does_not_clear_subagents(qapp, tmp_path: Path) -> None:
     painting alongside the green DONE dot."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    model = RepoListModel(_store_with(str(repo), tmp_path / "repos.json"))
+    store = _store_with(str(repo), tmp_path / "repos.json")
+    model = RepoListModel(store)
+    rid = store.repos[0].id
 
-    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, str(repo))
+    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, rid)
     payload = _pre_tool_use_payload("Agent", subagent_type="general-purpose")
-    model.apply_hook_event(EVENT_PRE_TOOL_USE, str(repo), payload)
-    model.apply_hook_event(EVENT_STOP, str(repo))
+    model.apply_hook_event(EVENT_PRE_TOOL_USE, rid, payload)
+    model.apply_hook_event(EVENT_STOP, rid)
 
     assert model.index(0).data(ROLE_WORKING) is False
     assert model.index(0).data(ROLE_STATUS) == STATUS_DONE
-    assert model.subagents(str(repo)) == 1
+    assert model.subagents(rid) == 1
 
 
 def test_subagents_coexist_with_attention(qapp, tmp_path: Path) -> None:
@@ -146,14 +158,16 @@ def test_subagents_coexist_with_attention(qapp, tmp_path: Path) -> None:
     The two states are independent — neither should clobber the other."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    model = RepoListModel(_store_with(str(repo), tmp_path / "repos.json"))
+    store = _store_with(str(repo), tmp_path / "repos.json")
+    model = RepoListModel(store)
+    rid = store.repos[0].id
 
     payload = _pre_tool_use_payload("Agent", subagent_type="general-purpose")
-    model.apply_hook_event(EVENT_PRE_TOOL_USE, str(repo), payload)
-    model.apply_hook_event(EVENT_NOTIFICATION, str(repo))
+    model.apply_hook_event(EVENT_PRE_TOOL_USE, rid, payload)
+    model.apply_hook_event(EVENT_NOTIFICATION, rid)
 
     assert model.index(0).data(ROLE_STATUS) == STATUS_ATTENTION
-    assert model.subagents(str(repo)) == 1
+    assert model.subagents(rid) == 1
 
 
 def test_subagents_coexist_with_working(qapp, tmp_path: Path) -> None:
@@ -162,11 +176,13 @@ def test_subagents_coexist_with_working(qapp, tmp_path: Path) -> None:
     on the left while the braille spinner runs on the right."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    model = RepoListModel(_store_with(str(repo), tmp_path / "repos.json"))
+    store = _store_with(str(repo), tmp_path / "repos.json")
+    model = RepoListModel(store)
+    rid = store.repos[0].id
 
-    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, str(repo))
+    model.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, rid)
     payload = _pre_tool_use_payload("Agent", subagent_type="general-purpose")
-    model.apply_hook_event(EVENT_PRE_TOOL_USE, str(repo), payload)
+    model.apply_hook_event(EVENT_PRE_TOOL_USE, rid, payload)
 
     assert model.index(0).data(ROLE_WORKING) is True
-    assert model.subagents(str(repo)) == 1
+    assert model.subagents(rid) == 1

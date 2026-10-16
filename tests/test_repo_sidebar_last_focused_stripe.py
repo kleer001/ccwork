@@ -41,6 +41,11 @@ def _store_with(paths: list[str], cfg_path: Path) -> RepoStore:
     return store
 
 
+def _id(model: RepoListModel, path: str) -> str:
+    """Repo id of the row whose path is `path` (paths must be unique here)."""
+    return next(r.id for r in model._store.repos if r.path == path)
+
+
 def test_last_focused_not_in_right_edge_badge_dicts() -> None:
     """Only Claude alerts live in the right-edge dot/glyph dicts."""
     assert set(RepoDelegate.STATUS_COLORS) == {STATUS_DONE, STATUS_ATTENTION}
@@ -79,7 +84,7 @@ def test_claude_alert_does_not_clobber_last_focused_bookmark(
     assert model.index(0).data(ROLE_LAST_FOCUSED) is True
 
     # Claude alert lands on the bookmarked row.
-    model.set_status("/a", STATUS_DONE)
+    model.set_status(_id(model, "/a"), STATUS_DONE)
 
     # Both signals coexist on the row, sourced from separate storage.
     assert model.index(0).data(ROLE_LAST_FOCUSED) is True
@@ -93,7 +98,7 @@ def test_user_navigation_does_not_clobber_claude_alert(
     store = _store_with(["/a", "/b"], tmp_path / "repos.json")
     model = RepoListModel(store)
 
-    model.set_status("/a", STATUS_ATTENTION)
+    model.set_status(_id(model, "/a"), STATUS_ATTENTION)
     model.set_last_focused("/a")
 
     assert model.index(0).data(ROLE_STATUS) == STATUS_ATTENTION

@@ -41,9 +41,10 @@ driven by Claude Code's Stop/Notification hooks.
 - **Multiple sessions per repo** — `Ctrl+Shift+O` the same repo twice to spawn
   parallel Claude sessions on it. Duplicates get Roman-numeral suffixes
   (`myrepo (I)`, `myrepo (II)`, …); remove all but one and the suffix
-  disappears. Hook events (status badge, working spinner) currently light
-  up every duplicate row for that path — per-session routing is future
-  work.
+  disappears. Each row shows only its own terminal's Claude state, so
+  duplicates animate independently. When you `cd` into another repo and
+  start `claude`, the row follows the session and renames itself to that
+  repo.
 - **Optional badge per row** — right-click a repo → *Set badge…* to
   prefix the row with a glyph (emoji or any single character). The dialog
   has a 25-glyph quick-pick gallery for common software-project tags

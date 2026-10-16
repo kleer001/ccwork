@@ -46,7 +46,9 @@ def build_session(
     <shell> -i`.
 
     `gui_marker` sets CCWORK_GUI=1 so the `claude` wrapper can tell it is
-    being invoked from inside the GUI and ping the hook socket.
+    being invoked from inside the GUI and ping the hook socket, and
+    CCWORK_ROW_ID=<repo.id> so every hook event names the row whose
+    terminal sent it.
 
     `extra_env` is merged in last (e.g. `CCWORK_RESUME_CMD` for the splash
     "Launch" button, which `bin/ccwork-bashrc` reads to present a resume
@@ -62,6 +64,7 @@ def build_session(
     env: dict[str, str] = {}
     if gui_marker:
         env["CCWORK_GUI"] = "1"
+        env["CCWORK_ROW_ID"] = repo.id
     if extra_env:
         env.update(extra_env)
 

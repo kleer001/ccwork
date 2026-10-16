@@ -37,11 +37,16 @@ def _ids(model: RepoListModel) -> list[str]:
     return [r.id for r in model._store.repos]
 
 
-def _go_live(model, repo_id: str, path: str) -> None:
+def _id(model: RepoListModel, path: str) -> str:
+    """Repo id of the row whose path is `path` (paths must be unique here)."""
+    return next(r.id for r in model._store.repos if r.path == path)
+
+
+def _go_live(model, repo_id: str) -> None:
     """Put a row in the active group: a terminal *and* a live Claude session.
     A terminal parked at a bare bash prompt does not float.
     """
-    model.apply_hook_event("SessionStart", path, {"session_id": f"s{repo_id}"})
+    model.apply_hook_event("SessionStart", repo_id, {"session_id": f"s{repo_id}"})
     model.set_terminal_active(repo_id, True)
 
 
@@ -53,8 +58,8 @@ def test_grouping_floats_active_repos_to_top(
     a, b, c, d = _ids(model)
 
     # B and D are running Claude; A and C aren't.
-    _go_live(model, b, "/b")
-    _go_live(model, d, "/d")
+    _go_live(model, b)
+    _go_live(model, d)
 
     assert model.apply_terminal_grouping() is True
     # Within each group, original order is preserved.
@@ -67,7 +72,7 @@ def test_grouping_returns_false_when_already_grouped(
     store = _store_with(["/a", "/b"], tmp_path / "repos.json")
     model = RepoListModel(store)
     a, _b = _ids(model)
-    _go_live(model, a, "/a")
+    _go_live(model, a)
 
     # First call rearranges (or no-ops if already correct); second is a no-op.
     model.apply_terminal_grouping()
@@ -84,8 +89,8 @@ def test_grouping_dominates_auto_arrange(
     a, b = _ids(model)
 
     # A has fresh activity but no session. B has a live session, no activity.
-    model.set_status("/a", STATUS_DONE)
-    _go_live(model, b, "/b")
+    model.set_status(_id(model, "/a"), STATUS_DONE)
+    _go_live(model, b)
 
     # Activity-only sort would float A. Grouping applied afterward overrides.
     model.apply_auto_arrange()
@@ -123,7 +128,7 @@ def test_set_terminal_active_does_not_reshuffle_immediately(
     # Simulate clicking /d: select it, then bring up a Claude session.
     sb._view.setCurrentIndex(sb._model.index(3))
     pre = [r.path for r in sb._model._store.repos]
-    _go_live(sb, ids[3], "/d")
+    _go_live(sb, ids[3])
     post = [r.path for r in sb._model._store.repos]
     assert pre == post, "set_terminal_active must defer the reshuffle"
     # And the selection is still /d at row 3.
@@ -145,7 +150,7 @@ def test_pending_regroup_fires_after_sidebar_quiet(
     # User clicks /d; terminal spawns; reshuffle is deferred (selection
     # change just bumped the activity timestamp).
     sb._view.setCurrentIndex(sb._model.index(3))
-    _go_live(sb, ids[3], "/d")
+    _go_live(sb, ids[3])
     assert [r.path for r in sb._model._store.repos] == ["/a", "/b", "/c", "/d"]
     assert sb._arrange_pending is True
 
@@ -175,7 +180,7 @@ def test_grouping_animation_walks_one_swap_per_step(
 
     # /e becomes active; nothing reshuffles yet.
     sb._view.setCurrentIndex(sb._model.index(4))
-    _go_live(sb, ids[4], "/e")
+    _go_live(sb, ids[4])
     sb._view.setCurrentIndex(sb._model.index(0))
     sb._last_sidebar_activity = 0.0
     sb._check_pending_walk()  # quiet → fires the deferred walk
@@ -205,7 +210,7 @@ def test_grouping_animation_picks_up_new_active_mid_walk(
 
     # /e active → sidebar quiet → first step taken.
     sb._view.setCurrentIndex(sb._model.index(4))
-    _go_live(sb, ids[4], "/e")
+    _go_live(sb, ids[4])
     sb._view.setCurrentIndex(sb._model.index(0))
     sb._last_sidebar_activity = 0.0
     sb._check_pending_walk()
@@ -214,7 +219,7 @@ def test_grouping_animation_picks_up_new_active_mid_walk(
     # Mid-walk: /c also becomes active. Target now wants both /c and /e on top.
     # Tie-breaker is current row index (stable within the active group), so
     # /c (currently row 2) sorts above /e (currently row 3) and bubbles first.
-    _go_live(sb, ids[2], "/c")
+    _go_live(sb, ids[2])
     sb._step_arrange()
     assert [r.path for r in sb._model._store.repos] == ["/a", "/c", "/b", "/e", "/d"]
     sb._step_arrange()
@@ -246,7 +251,7 @@ def test_auto_arrange_uses_bubble_animation(
     sb._model.endResetModel()
 
     # /d gets fresh activity — auto-arrange wants it at row 0.
-    sb._model.set_status("/d", STATUS_DONE)
+    sb._model.set_status(_id(sb._model, "/d"), STATUS_DONE)
 
     # Sidebar is quiet by default at construction (_last_sidebar_activity
     # initialized to 0.0). Fire the debounce-end handler directly (skip
@@ -279,7 +284,7 @@ def test_walk_defers_while_sidebar_active(
     store.repos = [Repo(path=p) for p in ["/a", "/b", "/c", "/d"]]
     sb._model.endResetModel()
 
-    sb._model.set_status("/d", STATUS_DONE)
+    sb._model.set_status(_id(sb._model, "/d"), STATUS_DONE)
 
     # Pretend the user just touched the sidebar (recent activity).
     sb._last_sidebar_activity = _t.monotonic()
@@ -311,7 +316,7 @@ def test_step_interval_eases_in_and_out(
     # 6 repos with /f having the freshest activity → 5-swap walk.
     store.repos = [Repo(path=p) for p in ["/a", "/b", "/c", "/d", "/e", "/f"]]
     sb._model.endResetModel()
-    sb._model.set_status("/f", STATUS_DONE)
+    sb._model.set_status(_id(sb._model, "/f"), STATUS_DONE)
 
     sb._apply_auto_arrange()
     intervals = [sb._arrange_step_timer.interval()]
@@ -336,11 +341,11 @@ def test_session_end_walks_the_row_to_the_bottom(
         ["/a", "/b", "/c"], tmp_path / "repos.json", group=True, arrange=True
     )
     ids = [r.id for r in sb._model._store.repos]
-    _go_live(sb, ids[0], "/a")
-    sb.apply_hook_event(EVENT_STOP, "/a")
+    _go_live(sb, ids[0])
+    sb.apply_hook_event(EVENT_STOP, _id(sb._model, "/a"))
 
     sb._last_sidebar_activity = 0.0
-    sb.apply_hook_event(EVENT_SESSION_END, "/a", {"session_id": f"s{ids[0]}"})
+    sb.apply_hook_event(EVENT_SESSION_END, _id(sb._model, "/a"), {"session_id": f"s{ids[0]}"})
     while sb._step_arrange():
         pass
     assert [r.path for r in sb._model._store.repos] == ["/b", "/c", "/a"]

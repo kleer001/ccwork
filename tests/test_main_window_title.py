@@ -1,8 +1,8 @@
 """Tests for the working-count suffix in the main window title.
 
 The title is driven by `RepoListModel.working_changed`, which fires on
-the True↔False edge inside `set_working`. The suffix is path-keyed so
-duplicate rows on the same path count once.
+the True↔False edge inside `set_working`. The suffix counts working rows,
+so duplicate rows on the same path each count.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from src.core.repo_store import Repo, RepoStore
 from src.core.settings import Settings
 
 from tests.conftest import StubHookServer
+from src.ui.main_window import MainWindow
 
 
 @pytest.fixture
@@ -34,12 +35,17 @@ def store(tmp_path: Path) -> RepoStore:
     return s
 
 
+def _row_id(win: MainWindow, path: str) -> str:
+    return next(r.id for r in win._store.repos if r.path == path)
+
+
 @pytest.fixture
 def main_window(qapp: QApplication, store: RepoStore, tmp_path: Path,
                 monkeypatch: pytest.MonkeyPatch):
     # Sandbox settings.toml so saves don't touch the user's real config.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    from src.ui.main_window import MainWindow
+    # The sidebar reloads the store from disk, so the rows must be saved first.
+    store.save()
     win = MainWindow(store=store, hook_server=StubHookServer(), settings=Settings())
     yield win
     win.close()
@@ -50,55 +56,56 @@ def test_title_no_suffix_when_idle(main_window) -> None:
 
 
 def test_title_increments_on_user_prompt_submit(main_window) -> None:
-    main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/a")
+    main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, _row_id(main_window, "/a"))
     assert main_window.windowTitle() == "ccwork — 1 working"
 
 
 def test_title_counts_two_distinct_repos(main_window) -> None:
-    main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/a")
-    main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/b")
+    main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, _row_id(main_window, "/a"))
+    main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, _row_id(main_window, "/b"))
     assert main_window.windowTitle() == "ccwork — 2 working"
 
 
 def test_title_decrements_on_stop(main_window) -> None:
-    main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/a")
-    main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/b")
-    main_window._sidebar.apply_hook_event(EVENT_STOP, "/a")
+    main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, _row_id(main_window, "/a"))
+    main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, _row_id(main_window, "/b"))
+    main_window._sidebar.apply_hook_event(EVENT_STOP, _row_id(main_window, "/a"))
     assert main_window.windowTitle() == "ccwork — 1 working"
 
 
 def test_title_returns_to_idle_when_all_stop(main_window) -> None:
-    main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/a")
-    main_window._sidebar.apply_hook_event(EVENT_STOP, "/a")
+    main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, _row_id(main_window, "/a"))
+    main_window._sidebar.apply_hook_event(EVENT_STOP, _row_id(main_window, "/a"))
     assert main_window.windowTitle() == "ccwork"
 
 
 def test_title_unchanged_by_notification(main_window) -> None:
     """Notification fires mid-turn (permission_prompt) and does not touch
     the working flag — title must not bump."""
-    main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/a")
+    main_window._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, _row_id(main_window, "/a"))
     before = main_window.windowTitle()
-    main_window._sidebar.apply_hook_event(EVENT_NOTIFICATION, "/a")
+    main_window._sidebar.apply_hook_event(EVENT_NOTIFICATION, _row_id(main_window, "/a"))
     assert main_window.windowTitle() == before  # still "ccwork — 1 working"
 
 
-def test_title_counts_duplicate_rows_once(
+def test_title_counts_duplicate_rows_separately(
     qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Two sidebar rows pointing at the same path → one working repo, not two.
-    Matches `_working`'s normalized-path semantics."""
+    """Two sidebar rows pointing at the same path are two working rows.
+    Each row runs its own Claude session, so each counts."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     store = RepoStore(config_path=tmp_path / "repos.json")
     store.repos = [Repo(path="/shared", id="r1"), Repo(path="/shared", id="r2")]
-    from src.ui.main_window import MainWindow
+    store.save()
     win = MainWindow(store=store, hook_server=StubHookServer(), settings=Settings())
     try:
-        win._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/shared")
+        win._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "r1")
         assert win.windowTitle() == "ccwork — 1 working"
-        # A second UPS on the same path is a no-op for the working set —
-        # set_working(path, True) short-circuits on the already-True case.
-        win._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "/shared")
-        assert win.windowTitle() == "ccwork — 1 working"
+        win._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "r2")
+        assert win.windowTitle() == "ccwork — 2 working"
+        # A second UPS on the same row is a no-op for the working set.
+        win._sidebar.apply_hook_event(EVENT_USER_PROMPT_SUBMIT, "r1")
+        assert win.windowTitle() == "ccwork — 2 working"
     finally:
         win.close()
 
@@ -115,10 +122,11 @@ def test_working_changed_fires_once_per_edge(qapp: QApplication, tmp_path: Path)
     fired = []
     model.working_changed.connect(lambda: fired.append(None))
 
-    model.set_working("/a", True)       # edge: emit
-    model.set_working("/a", True)       # no-op: no emit
-    model.set_working("/a", True)       # no-op: no emit
-    model.set_working("/a", False)      # edge: emit
-    model.set_working("/a", False)      # no-op: no emit
+    rid = store.repos[0].id
+    model.set_working(rid, True)       # edge: emit
+    model.set_working(rid, True)       # no-op: no emit
+    model.set_working(rid, True)       # no-op: no emit
+    model.set_working(rid, False)      # edge: emit
+    model.set_working(rid, False)      # no-op: no emit
 
     assert len(fired) == 2
