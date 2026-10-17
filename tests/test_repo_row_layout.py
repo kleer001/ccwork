@@ -7,6 +7,7 @@ that the title and status line are drawn, not only that paint() returns.
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 
@@ -15,7 +16,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QFont, QFontMetrics, QImage, QPainter, QPalette
+from PySide6.QtGui import QFont, QFontMetrics, QFontMetricsF, QImage, QPainter, QPalette
 from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionViewItem
 
 from src.core.hook_server import EVENT_USER_PROMPT_SUBMIT
@@ -52,7 +53,9 @@ def test_repo_line_branch_elides_before_name(fm: QFontMetrics) -> None:
 
 def test_repo_line_shows_name_alone_when_no_branch_room(fm: QFontMetrics) -> None:
     name = "garden"
-    width = fm.horizontalAdvance(name)
+    # horizontalAdvance rounds; elidedText measures the fractional width, so
+    # the smallest width that holds the name is its true width rounded up.
+    width = math.ceil(QFontMetricsF(QFont()).horizontalAdvance(name))
     assert _repo_line(fm, name, "main", width) == name
 
 
