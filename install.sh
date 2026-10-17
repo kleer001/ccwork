@@ -254,6 +254,7 @@ HOOK_NAMES="Stop, StopFailure, Notification, UserPromptSubmit, PermissionRequest
 info "Adds $HOOK_NAMES hooks that pipe the payload to ccwork-hook-sink"
 info "Appends to existing hook lists — does not overwrite user hooks"
 
+backup "$CLAUDE_SETTINGS"
 if $DRY_RUN; then
     dryrun "Would merge $HOOK_NAMES hooks into $CLAUDE_SETTINGS"
 else
