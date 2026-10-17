@@ -2,11 +2,10 @@
 # ccwork bootstrap — clone, venv, install. Safe to re-run.
 #
 # One-liner:
-#   bash -c "$(curl -sSfL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh)"
+#   curl -fsSL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh | bash
 #
 # Pass flags (see --help for the list):
-#   bash -c "$(curl -sSfL .../bootstrap.sh)" -- --dry-run
-#   curl -sSfL .../bootstrap.sh | bash -s -- --dry-run
+#   curl -fsSL .../bootstrap.sh | bash -s -- --dry-run
 #
 # The whole body is wrapped in _main() and called at EOF so a truncated
 # curl stream can't execute a partial payload. set -euo pipefail bails
@@ -20,9 +19,8 @@ _print_help() {
 ccwork bootstrap — clone, venv, install. Safe to re-run.
 
 Usage:
-    bash -c "$(curl -sSfL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh)"
-    bash -c "$(curl -sSfL .../bootstrap.sh)" -- [FLAGS]
-    curl -sSfL .../bootstrap.sh | bash -s -- [FLAGS]
+    curl -fsSL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh | bash
+    curl -fsSL .../bootstrap.sh | bash -s -- [FLAGS]
 
 Flags:
     -h, --help       Show this help and exit.
@@ -231,7 +229,7 @@ _main() {
     _say "  ccwork              # launch"
     echo
     _say "To undo:"
-    _say "  bash -c \"\$(curl -sSfL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh)\" -- --uninstall"
+    _say "  curl -fsSL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh | bash -s -- --uninstall"
     [ -n "$log" ] && _say "Log:   $log"
 }
 

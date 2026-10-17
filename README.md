@@ -14,178 +14,94 @@
   <img alt="Platform: Linux · X11/XWayland" src="https://img.shields.io/badge/platform-Linux%20%C2%B7%20X11%2FXWayland-lightgrey.svg">
 </p>
 
-A Qt desktop GUI for running Claude Code across many repos. One window, a
-clickable sidebar of repos, real embedded terminals, and a live alerts panel
-driven by Claude Code hooks.
+A desktop app for running Claude Code in many repos at once. One window
+holds a sidebar of repos and a terminal for each. Claude Code can run a
+command, called a hook, when you send a prompt or a reply ends. ccwork
+installs hooks that light a status badge on each row, so you can see which
+session needs you.
+
+<p align="center">
+  <img alt="ccwork window: a sidebar of repo rows next to a Claude Code session that just started in ~/code/garden; that row shows Claude open" src="docs/images/ccwork-main.png" width="880">
+</p>
 
 ## What it does
 
-- **Sidebar of repos** — each row has three lines: a task title, then
-  `repo | branch`, then what Claude is doing ("Needs permission",
-  "Working · 2m", "Claude open"). The title is shared with the Claude
-  session title: `/rename` in Claude updates the row, and right-click →
-  *Set title…* updates Claude at your next prompt. Claude can also name
-  its own row by running `ccwork-rename "<topic>"` (add `--badge 🐛` to
-  set the row icon). The status line can be turned off in Preferences.
-  Each row also has a status badge. The
-  badge color says why Claude stopped: red needs permission, orange needs
-  an answer, magenta is an API or account error, yellow is a usage limit,
-  green is done. A violet mark shows while Claude compacts its context.
-  Click a repo to bring up its terminal; right-click for reload / remove.
-  Repos you haven't opened yet this session render in regular italic;
-  once a terminal exists they flip to bold upright.
-- **Idle repos clean themselves up (optional)** — turn on *Remove idle
-  repos from the sidebar after N days* in Preferences, and a repo with no
-  Claude activity and no click for that long moves to the Recent list.
-  Repos with an open terminal stay.
-- **Recent recall** — a faded half-width slot rides the bottom of the repo
-  stack. Click it for a drop-down list of every repo you've removed;
-  pick one to add it straight back (badge and all).
-- **Splash dashboard** — when no repo is selected (a fresh launch, after
-  a terminal closes, or via the sidebar's **Dashboard** button) the main
-  pane shows a weekly retro built entirely from local git, rolling 7 days
-  with merges excluded: a plain-language narrative of the week, an 8-week
-  commit trend, a week-in-numbers row, a release celebration when a tag
-  shipped, per-repo cards with a six-spoke radar "fingerprint" plus churn
-  and file stats, and a quiet strip for idle repos. The Dashboard button
-  overlays the view without touching your terminals — Esc or re-clicking
-  the selected repo returns. It re-sweeps every minute while visible. No
-  network, no telemetry — just `git` over the repos you already track.
-  (With no repos yet it stays a simple logo + keyboard-hints screen.)
-- **Multiple sessions per repo** — `Ctrl+Shift+O` the same repo twice to spawn
-  parallel Claude sessions on it. Duplicates get Roman-numeral suffixes
-  (`myrepo (I)`, `myrepo (II)`, …); remove all but one and the suffix
-  disappears. Each row shows only its own terminal's Claude state, so
-  duplicates animate independently. When you `cd` into another repo and
-  start `claude`, the row follows the session and renames itself to that
-  repo.
-- **Optional badge per row** — right-click a repo → *Set badge…* to
-  prefix the row with a glyph (emoji or any single character). The dialog
-  has a 25-glyph quick-pick gallery for common software-project tags
-  (🐛 🧪 🚀 🔧 🎨 …) and a *Browse system…* button that launches the first
-  available system emoji picker (`bemoji`, `rofimoji`, `gnome-characters`,
-  `gucharmap`, `kcharselect`). The line-edit accepts any pasted/typed
-  character. Per-row, so duplicate `(I)/(II)` sessions on the same repo
-  can be tagged independently. *Clear badge* on the same menu wipes it.
-- **Per-repo spinner flavor** — while Claude is mid-turn, the sidebar row
-  ticks a small braille spinner. Each repo gets one of five variants
-  picked deterministically from its id (classic rotating, rolling wave,
-  bouncing trio, pulse fill, center bounce) so the same repo always
-  animates the same way and a wall of busy rows isn't visually monotonous.
-  Mid-turn means *between* `UserPromptSubmit` and `Stop`; permission and
-  idle notifications fire mid-turn and don't end it, so the spinner
-  keeps running through a permission pause and resumes when you approve.
-- **Real embedded terminals** — xterm is reparented into the window via
-  XEmbed. Your existing terminal muscle memory (copy/paste, scrollback,
-  ctrl-c) all works; no reimplemented VT100 emulator.
-- **Alerts panel** — Claude Code's Stop and Notification hooks pipe into a
-  top-right list. Click an entry to jump to that repo; the matching
-  sidebar row gets an unread badge if you weren't looking at it.
-- **Auto-registration** — running `claude` inside the GUI from a git root
-  not yet in the sidebar adds it silently. Auto-add only fires when no row
-  exists for that path; duplicates require manual `Ctrl+Shift+O`.
-- **Preferences dialog** with color-scheme presets (Solarized Dark/Light,
-  Dracula, Gruvbox Dark, GitHub Light, Tomorrow), font/scrollback/
-  scrollbar controls, and live OSC-based apply for colors and fonts.
-- **Keyboard surface** — `Ctrl+Shift+P` Preferences, `Ctrl+Shift+O` Add
-  Repo, `Ctrl+Shift+Q` Quit, `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle repos,
-  `Ctrl+Shift+1`..`Ctrl+Shift+9` jump to row N (digits visible in the
-  top-left corner of each row), `Ctrl+=` / `Ctrl+-` / `Ctrl+0` zoom
-  terminals. **`F1` opens the full cheatsheet.** Shortcuts only fire
-  when ccwork has focus — they don't leak into your other apps.
+<p align="center">
+  <img alt="One sidebar row up close, with numbered highlights: 1 row number, 2 row icon, 3 title, 4 repo name, 5 git branch, 6 status text, 7 subagent twinkle, 8 status badge; and the status badge colors" src="docs/images/ccwork-row.png" width="560">
+</p>
 
-<details>
-<summary><b>Preferences reference</b></summary>
+<img alt="Sidebar rows: done, working with subagents, working, compacting, needs permission, Claude open, and a repo with no terminal" src="docs/images/ccwork-sidebar.png" width="300" align="right">
 
-Open with the gear button or `Ctrl+Shift+P`. Settings persist to
-`~/.config/ccwork/settings.toml`.
+- **A badge per row.** Red: needs permission. Orange: needs an answer.
+  Magenta: API or account error. Yellow: usage limit. Green: done.
+- **Three-line rows.** A task title, then `repo | branch`, then Claude's
+  state in words: `Working · 2m`, `Compacting`, `Claude open`.
+- **A bell for the whole window.** The 🔔 gets a dot when any row gets a
+  new badge. 🔊 / 🔇 mutes desktop notifications.
+- **One title, two places.** The row title is the Claude session title.
+  Rename either side, and the other catches up at your next prompt.
+- **Claude can title its own row.** ccwork tells each session about
+  `ccwork-rename "<topic>"`; you can run it too.
+- **xterm inside.** Each repo runs its own xterm, embedded through X11.
+  Ctrl+C reaches the shell; Ctrl+Shift+C and Ctrl+Shift+V copy and paste.
+- **Parallel sessions.** Add a repo twice to run two Claude sessions on it.
+  Each row shows only its own terminal's state.
+- **Rows follow `cd`.** Start `claude` in a different repo from a row's
+  terminal, and that row renames itself to the new repo.
+- **Weekly review.** A dashboard built from local git: an 8-week commit
+  trend and a per-repo chart of churn and rework. No network calls.
+- **Shortcuts.** `Ctrl+Shift+O` adds a repo, `Ctrl+Tab` cycles, `F1` lists
+  the rest. Keys ccwork doesn't use go to the terminal.
 
-**Text tab**
+<p align="center">
+  <img alt="Weekly review dashboard: a summary sentence, an 8-week commit trend, a release callout, and per-repo cards with radar charts" src="docs/images/ccwork-dashboard.png" width="760">
+</p>
 
-- **Font family / size** — applied live to running terminals via OSC.
+The [guide](docs/guide.md) has the details and the full Preferences
+reference.
 
-**Colors tab**
+## Limits
 
-- **Color scheme** — preset palette dropdown (Solarized Dark/Light, Dracula,
-  Gruvbox Dark, GitHub Light, Tomorrow). Picking one updates the bg/fg
-  swatches; setting bg/fg by hand falls the scheme back to "Custom".
-- **Background / foreground** — direct color pickers, applied live.
-
-**Scrolling tab**
-
-- **Scrollback** — lines retained in xterm history.
-- **Scrollbar** — `right`, `left`, or `off`.
-- **Jump scroll** — xterm's fast-redraw mode for bursts of output.
-
-**UI tab**
-
-- **Sidebar position** — left or right.
-- **Status badge** — `Colored dot` (default) or `Glyph (! ✓ ·)`. The glyph
-  variant is more legible at narrow sidebar widths and colorblind-friendlier.
-  Hover any row for a tooltip describing the current state.
-- **Reopen the last-used repo on launch** — restores focus + terminal on
-  startup. Turn it off to land on the splash dashboard every launch.
-- **Show desktop notifications** — gates `notify-send` pop-ups from
-  `ccwork-hook-sink`. In-window indicators (badges, sidebar colors) stay
-  on regardless. Mirrored by the 🔊 / 🔇 toggle in the top bar — both
-  surfaces drive the same setting.
-- **Auto-arrange repos by recent Claude activity** — when on, the sidebar
-  reorders itself so repos with the most recent Stop / Notification /
-  UserPromptSubmit events sit on top. Reorder is debounced ~2 s after the
-  last event, and waits another ~800 ms after you stop touching the
-  sidebar (hover, click, scroll, selection) so rows don't shift under
-  your cursor. Once it fires, the row bubbles up one neighbor at a
-  time on a sine ease-in-out cadence (slow start, fast middle, slow
-  settle). The violet "last focused" dot is user navigation, not
-  Claude activity, and never feeds the sort.
-
-Sidebar width isn't in the dialog — drag the splitter; the new width
-persists. Drag floor is ~6 characters wide; the badge auto-hides before
-text is squeezed below ~4 chars.
-
-**Advanced tab**
-
-- **Extra xterm args** — raw flags appended to every xterm spawn, parsed
-  with shell quoting rules. See `man xterm`.
-
-Unknown keys in `settings.toml` round-trip on save, so hand-edited fields
-(including user comments) aren't dropped when ccwork rewrites the file.
-Legacy `settings.json` is migrated to `.toml` on first launch.
-
-</details>
+ccwork runs on Linux only, under X11. On a Wayland desktop it runs through
+XWayland, because the embedded terminals need X11. The terminal is always
+xterm. A title change crosses between ccwork and Claude only when you send
+a prompt or start a session.
 
 ## Install
 
-Linux with X11 or XWayland. Requires `git`, `python3`, `python3-venv`,
-`xterm`, and either `socat` or `nc`.
+ccwork needs Linux with X11 or XWayland, and `git`, `python3` with `venv`,
+`xterm` and `socat`. On Debian or Ubuntu that is
+`sudo apt install git python3 python3-venv xterm socat`. Then one line
+installs ccwork:
 
 ```bash
-sudo apt install git python3 python3-venv xterm socat
+curl -fsSL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh | bash
 ```
 
-One-line bootstrap:
+The script clones into `~/ccwork` (set `CCWORK_DEST` to change that), makes
+a venv and installs the dependencies, PySide6 (Qt for Python) among them.
+`socat` carries hook messages to the app; an `nc` with Unix-socket support
+also works. The script then edits two files. It backs up each one to
+`~/.local/share/ccwork/backups/` first.
+
+- `~/.bashrc` gets a marked block that puts ccwork's `bin/` on `PATH`.
+- `~/.claude/settings.json` gets ccwork's hook entries.
+
+Outside ccwork the hooks exit at once, so `claude` in any other terminal
+behaves as before. The script also adds a `.desktop` launcher. Open a new
+terminal and run `ccwork`, or start it from your app menu. Re-run the same
+line to upgrade.
+
+Flags go after `bash -s --`: `--dry-run` previews every change,
+`--uninstall` removes ccwork's entries from both files (backing them up
+first), and `--help` lists the rest.
 
 ```bash
-bash -c "$(curl -sSfL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh)"
-```
-
-Clones into `~/ccwork` (override with `CCWORK_DEST=…`), creates a venv,
-installs dependencies, wires up PATH + hooks + a `.desktop` launcher, and
-is safe to re-run for upgrades.
-
-```bash
-# Preview without touching anything:
-bash -c "$(curl -sSfL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh)" -- --dry-run
-
-# Full flag list:
-bash -c "$(curl -sSfL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh)" -- --help
-
-# Clean uninstall:
-bash -c "$(curl -sSfL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh)" -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh | bash -s -- --dry-run
 ```
 
 <details>
-<summary><b>Manual install</b></summary>
+<summary><b>Manual install, if you'd rather not pipe a script to bash</b></summary>
 
 ```bash
 git clone https://github.com/kleer001/ccwork ~/ccwork
@@ -198,8 +114,8 @@ source ~/.bashrc         # pick up PATH change
 ccwork                   # launch
 ```
 
-`install.sh` is idempotent — re-run it after upgrading. It writes only
-under `$HOME` (no sudo), backs up every file it touches to
-`~/.local/share/ccwork/backups/`, and supports `--uninstall` to revert.
+`install.sh` is the installer the bootstrap runs. It takes `--dry-run` and
+`--uninstall`.
+[docs/setup.md](docs/setup.md) has the details.
 
 </details>
