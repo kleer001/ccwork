@@ -51,12 +51,9 @@ from src.core import session_recovery
 from src.core.hook_server import (
     EVENT_CLAUDE_EXITED,
     EVENT_NOTIFICATION,
-    EVENT_REPO_ADDED,
-    EVENT_ROW_RENAMED,
     EVENT_SESSION_END,
     EVENT_SESSION_START,
     EVENT_STOP,
-    EVENT_USER_PROMPT_SUBMIT,
     HookServer,
 )
 from src.core.key_grab import (
@@ -158,6 +155,10 @@ class MainWindow(QMainWindow):
 
         # ── body: sidebar + terminal stack ──
         self._sidebar = RepoSidebar(self._store, self, settings=self._settings)
+        # Bell dot: glanceable "something happened" signal even when desktop
+        # notifications are off or the sidebar is scrolled. It follows the
+        # badges, so an ignored notification type stays quiet.
+        self._sidebar.model.badge_raised.connect(lambda: self._bell_btn.set_unseen(True))
         self._stack = QStackedWidget(self)
         self._empty_placeholder = self._make_empty_placeholder()
         self._stack.addWidget(self._empty_placeholder)
@@ -591,12 +592,8 @@ class MainWindow(QMainWindow):
         if not ui.expire_idle_repos:
             return
         cutoff = time.time() - ui.expire_idle_days * 86400
-        model = self._sidebar.model
-        for repo in list(self._store.repos):
-            if repo.id in self._terminals or repo.last_used >= cutoff:
-                continue
-            log.info("expiring idle row %s (%s)", repo.display_name, repo.path)
-            model.remove_repo_at(model.index_of_id(repo.id))
+        for repo in self._sidebar.model.expire_idle(cutoff, self._terminals):
+            log.info("expired idle row %s (%s)", repo.display_name, repo.path)
 
     def _on_repo_removed(self, repo: Repo) -> None:
         """A repo was removed from the sidebar — also tear down its terminal."""
@@ -929,7 +926,7 @@ class MainWindow(QMainWindow):
         Per-row state ownership lives entirely in RepoListModel — see the
         docstring on RepoListModel.apply_hook_event for the event →
         mutation table. This method only handles cross-cutting concerns:
-        the RepoAdded auto-add and the bell-dot for idle events. The
+        routing by row id, the SessionStart rebind and crash recovery. The
         quit-confirm prompt derives its working list on demand from the
         model (closeEvent), so there's no id-keyed shadow state to
         maintain here.
@@ -938,16 +935,6 @@ class MainWindow(QMainWindow):
         payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else {}
         cwd = obj.get("cwd") or (payload.get("cwd") if isinstance(payload, dict) else None)
         row_id = obj.get("row")
-
-        if event == EVENT_REPO_ADDED:
-            # A `claude` launched from a ccwork terminal carries its row id;
-            # the SessionStart rebind below covers that case, and an auto-add
-            # here would leave a duplicate row for the same repo.
-            if row_id or not cwd:
-                return
-            if not self._store.repos_for_path(str(cwd)):
-                self._sidebar.model.add_repo(cwd)
-            return
 
         repo = self._store.find_by_id(str(row_id)) if row_id else None
         if repo is None:
@@ -959,14 +946,6 @@ class MainWindow(QMainWindow):
         log.info("hook event=%s cwd=%r row=%s", event, cwd, repo.id)
         self._store.mark_used(repo.id)
 
-        if event == EVENT_ROW_RENAMED:
-            # `ccwork-rename` sends only the fields it was asked to change.
-            if isinstance(obj.get("title"), str):
-                self._sidebar.model.set_title(repo.id, obj["title"])
-            if isinstance(obj.get("emoji"), str):
-                self._sidebar.model.set_emoji(repo.id, obj["emoji"])
-            return
-
         if event == EVENT_SESSION_START and cwd:
             # The terminal may have `cd`-ed into another repo before running
             # `claude`: the row follows the session to that repo's git root.
@@ -974,13 +953,6 @@ class MainWindow(QMainWindow):
             if top:
                 self._sidebar.rebind(repo.id, top)
 
-        if event in (EVENT_SESSION_START, EVENT_USER_PROMPT_SUBMIT):
-            title = payload.get("session_title")
-            self._sidebar.model.sync_session_title(
-                repo.id, title if isinstance(title, str) else None,
-            )
-
-        before = self._sidebar.model.status_word(repo.id)
         self._sidebar.apply_hook_event(event, repo.id, payload)
 
         # Crash-recovery bookkeeping stays keyed by cwd: `claude --resume`
@@ -993,13 +965,6 @@ class MainWindow(QMainWindow):
                 session_recovery.clear_open(str(cwd))
             elif sid:
                 session_recovery.record_open(str(cwd), str(sid), repo.display_name)
-
-        after = self._sidebar.model.status_word(repo.id)
-        if after and after != before:
-            # Bell dot: glanceable "something happened" signal even when
-            # desktop notifications are off or the sidebar is scrolled. It
-            # follows the badges, so an ignored notification type stays quiet.
-            self._bell_btn.set_unseen(True)
 
     def _current_repo_id(self) -> str | None:
         w = self._stack.currentWidget()

@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 # ccwork wrapper for the `claude` CLI.
 #
-# Responsibility: when invoked from inside the ccwork GUI (CCWORK_GUI=1),
-# and the current working directory is a git root we have not yet
-# registered, ping the ccwork socket so the GUI can auto-add the repo.
-# Then run the real `claude` with the user's args, untouched, as a child,
-# and send a ClaudeExited event when it returns. Claude Code sends no
+# Responsibility: inside the ccwork GUI (CCWORK_GUI=1), run the real
+# `claude` with the user's args, untouched, as a child, and send a
+# ClaudeExited event when it returns. Claude Code sends no
 # SessionEnd hook for /exit (anthropics/claude-code#17885), so this is how
 # the row learns that the session is over while the shell stays open.
 
@@ -29,41 +27,14 @@ if [ "${CCWORK_GUI:-0}" != "1" ] || [ -n "${CCWORK_CLAUDE_DEPTH:-}" ]; then
 fi
 export CCWORK_CLAUDE_DEPTH=1
 
-_sock="${XDG_RUNTIME_DIR:-$HOME/.cache}/ccwork/ccwork.sock"
-
-# Best-effort send: a missing socket or a dead GUI must never block claude.
-_send() {
-    [ -S "$_sock" ] || return 0
-    if command -v socat >/dev/null 2>&1; then
-        printf '%s\n' "$1" | timeout 1 socat - "UNIX-CONNECT:$_sock" >/dev/null 2>&1 || true
-    elif command -v nc >/dev/null 2>&1; then
-        printf '%s\n' "$1" | timeout 1 nc -UN "$_sock" >/dev/null 2>&1 \
-            || printf '%s\n' "$1" | timeout 1 nc -U "$_sock" >/dev/null 2>&1 \
-            || true
-    fi
-}
-
-# JSON-escape PWD inline: backslash, dquote, and common C0 controls.
-_cwd_esc=$PWD
-_cwd_esc=${_cwd_esc//\\/\\\\}
-_cwd_esc=${_cwd_esc//\"/\\\"}
-_cwd_esc=${_cwd_esc//$'\n'/\\n}
-_cwd_esc=${_cwd_esc//$'\r'/\\r}
-_cwd_esc=${_cwd_esc//$'\t'/\\t}
-_row="${CCWORK_ROW_ID:-}"
-
-# Register a git root with the GUI (it auto-adds only when no row sent it).
-if command -v git >/dev/null 2>&1; then
-    _top=$(git rev-parse --show-toplevel 2>/dev/null || true)
-    if [ -n "${_top:-}" ] && [ "$(readlink -f "$PWD")" = "$(readlink -f "$_top")" ]; then
-        _send "{\"event\":\"RepoAdded\",\"row\":\"$_row\",\"cwd\":\"$_cwd_esc\",\"ts\":$(date +%s)}"
-    fi
-fi
+. "$(dirname "$_self")/ccwork-lib.sh"
 
 # Run claude as a child so we see it exit — any way it exits, /exit included.
 # Ctrl+C and Ctrl+Z reach claude through the terminal's foreground process
 # group; this script only waits.
 "$_real" "$@"
 _code=$?
-_send "{\"event\":\"ClaudeExited\",\"row\":\"$_row\",\"cwd\":\"$_cwd_esc\",\"ts\":$(date +%s),\"payload\":{\"code\":$_code}}"
+# Best-effort send: a dead GUI must never change claude's exit code.
+_line="{\"event\":\"ClaudeExited\",\"row\":\"$(ccwork_json_escape "${CCWORK_ROW_ID:-}")\",\"cwd\":\"$(ccwork_json_escape "$PWD")\",\"ts\":$(date +%s),\"payload\":{\"code\":$_code}}"
+ccwork_send "$_line" 2>/dev/null || true
 exit "$_code"

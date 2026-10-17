@@ -4,9 +4,9 @@ Isolates the "which command to run inside xterm" decision so the UI doesn't
 need to know about shell selection or the user's claude launch preference.
 
 Design note: ccwork drops into an interactive shell. Users type `claude`
-(or anything else) themselves. The `claude` wrapper at bin/claude pings
-the GUI socket with a RepoAdded event for unregistered git roots; it
-otherwise execs the real claude untouched. For bash, we launch via
+(or anything else) themselves. The `claude` wrapper at bin/claude runs
+the real claude untouched and sends the GUI a ClaudeExited event when it
+returns. For bash, we launch via
 --rcfile bin/ccwork-bashrc to guarantee ccwork/bin wins on PATH regardless
 of the user's .bashrc layout — see _inner_command.
 """
@@ -78,7 +78,7 @@ def _inner_command() -> list[str]:
     guaranteed to win on PATH after the user's .bashrc runs. Without this,
     a .bashrc that re-prepends another directory after the ccwork block
     (or one that doesn't source the ccwork block at all) bypasses the
-    `claude` wrapper, and the GUI's RepoAdded ping is lost. For non-bash
+    `claude` wrapper, and the GUI's ClaudeExited event is lost. For non-bash
     shells we drop in plain `-i`; users on zsh/fish need to handle PATH
     ordering themselves until we ship per-shell shims.
     """

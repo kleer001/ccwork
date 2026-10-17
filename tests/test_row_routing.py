@@ -17,7 +17,6 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from src.core.hook_server import (
-    EVENT_REPO_ADDED,
     EVENT_SESSION_START,
     EVENT_STOP,
     EVENT_USER_PROMPT_SUBMIT,
@@ -132,24 +131,6 @@ def test_unknown_row_is_dropped_with_warning(
     assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
-def test_repo_added_with_row_adds_nothing(window: MainWindow, repo_dir: Path, tmp_path: Path) -> None:
-    other = _git_init(tmp_path / "other")
-    row_id = window._store.repos[0].id
-    before = len(window._store.repos)
-
-    _emit(window, _event(EVENT_REPO_ADDED, row_id, str(other)))
-
-    assert len(window._store.repos) == before
-
-
-def test_repo_added_without_row_adds_a_row(window: MainWindow, tmp_path: Path) -> None:
-    other = _git_init(tmp_path / "other")
-
-    _emit(window, _event(EVENT_REPO_ADDED, None, str(other)))
-
-    assert [r.path for r in window._store.repos][-1] == os.path.realpath(other)
-
-
 def test_session_start_in_subdir_does_not_rebind(
     window: MainWindow, repo_dir: Path
 ) -> None:
@@ -229,7 +210,7 @@ def test_bell_follows_new_badges_only(window: MainWindow, repo_dir: Path) -> Non
 
 
 def _rename(row: str | None, **fields) -> dict:
-    obj: dict = {"event": "RowRenamed", "ts": 0, **fields}
+    obj: dict = {"event": "RowRenamed", "ts": 0, "payload": fields}
     if row is not None:
         obj["row"] = row
     return obj

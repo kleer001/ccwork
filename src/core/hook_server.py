@@ -2,9 +2,8 @@
 
 Wire format on the socket: one JSON object per line, terminated by `\\n`.
 
-    {"event":"Stop","cwd":"/home/x/repo","ts":1712345678.0,"payload":{...}}
-    {"event":"Notification","cwd":"/home/x/repo","ts":...,"payload":{...}}
-    {"event":"RepoAdded","cwd":"/home/x/repo","ts":...}
+    {"event":"Stop","row":"<row id>","cwd":"/home/x/repo","ts":1712345678.0,"payload":{...}}
+    {"event":"ClaudeExited","row":"<row id>","cwd":"/home/x/repo","ts":...,"payload":{"code":0}}
 
 The server emits a single `event_received(dict)` signal for each parsed line.
 Unparseable lines are logged and dropped — never raised — so a bad client
@@ -30,7 +29,6 @@ log = logging.getLogger(__name__)
 EVENT_USER_PROMPT_SUBMIT = "UserPromptSubmit"
 EVENT_STOP = "Stop"
 EVENT_NOTIFICATION = "Notification"
-EVENT_REPO_ADDED = "RepoAdded"
 # Sent by `bin/ccwork-rename`: sets the sending row's title and/or emoji.
 EVENT_ROW_RENAMED = "RowRenamed"
 # A turn ended on an API error. Runs instead of Stop; the payload's `error`

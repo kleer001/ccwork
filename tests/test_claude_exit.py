@@ -75,7 +75,7 @@ def wrapper_env(tmp_path: Path):
     fake = fake_bin / "claude"
     fake.write_text('#!/bin/sh\necho "depth=${CCWORK_CLAUDE_DEPTH:-}"\nexit 3\n')
     fake.chmod(0o755)
-    work = tmp_path / "work"   # not a git repo: no RepoAdded
+    work = tmp_path / "work"
     work.mkdir()
     runtime = tmp_path / "run"
     listener = _Listener(runtime)

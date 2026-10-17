@@ -131,37 +131,32 @@ def test_title_only_sends_only_the_title(env: dict) -> None:
     assert msg["event"] == "RowRenamed"
     assert msg["row"] == ROW
     assert isinstance(msg["ts"], int)
-    assert set(msg) == {"event", "row", "ts", "title"}
-    assert msg["title"] == "fix login bug"
+    assert msg["payload"] == {"title": "fix login bug"}
 
 
 def test_badge_only_sends_only_the_emoji(env: dict) -> None:
     proc, sent = _run(env, "--badge", "🐛")
     assert proc.returncode == 0, proc.stderr
     msg = _only(sent)
-    assert set(msg) == {"event", "row", "ts", "emoji"}
-    assert msg["emoji"] == "🐛"
+    assert msg["payload"] == {"emoji": "🐛"}
 
 
 def test_badge_and_title_send_both(env: dict) -> None:
     proc, sent = _run(env, "--badge", "🐛", 'fix "login" bug')
     assert proc.returncode == 0, proc.stderr
     msg = _only(sent)
-    assert msg["emoji"] == "🐛"
-    assert msg["title"] == 'fix "login" bug'
+    assert msg["payload"] == {"emoji": "🐛", "title": 'fix "login" bug'}
 
 
 def test_empty_title_sends_an_empty_title_field(env: dict) -> None:
     proc, sent = _run(env, "")
     assert proc.returncode == 0, proc.stderr
     msg = _only(sent)
-    assert msg["title"] == ""
-    assert "emoji" not in msg
+    assert msg["payload"] == {"title": ""}
 
 
 def test_empty_badge_sends_an_empty_emoji_field(env: dict) -> None:
     proc, sent = _run(env, "--badge", "")
     assert proc.returncode == 0, proc.stderr
     msg = _only(sent)
-    assert msg["emoji"] == ""
-    assert "title" not in msg
+    assert msg["payload"] == {"emoji": ""}

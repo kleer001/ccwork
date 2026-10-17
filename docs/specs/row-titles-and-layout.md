@@ -66,18 +66,16 @@ ccwork sees a `/rename` only at the next prompt or session start.
 ### Set the title or emoji from a session
 
 `bin/ccwork-rename [--badge <emoji>] "<title>"` sends
-`{"event":"RowRenamed","row":"$CCWORK_ROW_ID","title":"…","emoji":"…"}` to the
-socket. It uses the same JSON escape and socat or nc path as `bin/claude`.
+`{"event":"RowRenamed","row":"$CCWORK_ROW_ID","payload":{"title":"…","emoji":"…"}}`
+to the socket. It uses the shared `bin/ccwork-lib.sh` helpers, as `bin/claude` does.
 
 - An empty title clears the title.
 - With no `--badge`, the emoji does not change. `--badge ""` clears the emoji.
 - The command exits 1 with a message when `CCWORK_GUI` or `CCWORK_ROW_ID` is not set.
 
-`MainWindow._on_hook_event` handles `RowRenamed` beside `RepoAdded`:
-
-1. It finds the row with `store.find_by_id`.
-2. It sets the title and the emoji, then calls `store.save()`.
-3. It writes the title file and emits `dataChanged` for that row.
+`RepoListModel.apply_hook_event` handles `RowRenamed` like any other event. It
+calls `set_title` and `set_emoji` for the fields in the payload. Each one saves
+the store, writes the title file and emits `dataChanged` for that row.
 
 An unknown row id follows the drop-and-warn rule in `docs/specs/row-routing.md`.
 

@@ -17,7 +17,7 @@ renamed in place to the new repo.
 1. `src/core/terminal_session.py` `build_session` sets `CCWORK_ROW_ID=<repo.id>`
    next to `CCWORK_GUI=1`.
 2. `bin/ccwork-hook-sink` adds `"row":"$CCWORK_ROW_ID"` to every event line.
-3. `bin/claude` adds `"row"` to its `RepoAdded` line.
+3. `bin/claude` adds `"row"` to its `ClaudeExited` line.
 
 ### Routing rules (`MainWindow._on_hook_event`)
 
@@ -25,8 +25,6 @@ renamed in place to the new repo.
 |---|---|
 | `row` missing or empty | Drop the event. Log a warning with the event name and `cwd`. |
 | `row` not in the store | Drop the event. Log a warning. |
-| `RepoAdded` with a `row` | Ignore it. The automatic rebind (below) covers this case. |
-| `RepoAdded` with no `row` | Keep the current behavior: add a row when no row has that path. |
 | Any other event | Apply the event to that row only. |
 
 There is no fallback to path routing.
@@ -85,7 +83,6 @@ bubble walk.
 - A `SessionStart` from another git root rebinds the row: same id, new path,
   correct instance numbers on both paths, and correct `recent` entries.
 - A `SessionStart` in a subdirectory, or in a directory outside git, does not rebind.
-- A `RepoAdded` with a row id adds no row.
 - `_on_terminal_finished` clears only its own row.
 - Replace the path-normalization tests in `tests/test_repo_sidebar_working.py`.
 

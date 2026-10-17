@@ -17,7 +17,6 @@ from PySide6.QtWidgets import QApplication
 
 from src.core.hook_server import (
     EVENT_NOTIFICATION,
-    EVENT_REPO_ADDED,
     EVENT_STOP,
     HookServer,
     default_socket_path,
@@ -90,7 +89,7 @@ def test_server_handles_multiple_lines_in_one_send(qapp: QCoreApplication, tmp_p
     payload = (
         json.dumps({"event": EVENT_STOP, "n": 1}) + "\n"
         + json.dumps({"event": EVENT_NOTIFICATION, "n": 2}) + "\n"
-        + json.dumps({"event": EVENT_REPO_ADDED, "n": 3}) + "\n"
+        + json.dumps({"event": EVENT_STOP, "n": 3}) + "\n"
     ).encode("utf-8")
     client.write(payload)
     client.waitForBytesWritten(1000)

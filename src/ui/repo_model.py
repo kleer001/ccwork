@@ -20,13 +20,13 @@ from PySide6.QtCore import (
 )
 
 from src.core import repo_store
-from src.core.hook_server import remove_row_title, write_row_title
 from src.core.hook_server import (
     EVENT_CLAUDE_EXITED,
     EVENT_NOTIFICATION,
     EVENT_PERMISSION_REQUEST,
     EVENT_POST_COMPACT,
     EVENT_PRE_COMPACT,
+    EVENT_ROW_RENAMED,
     EVENT_SESSION_END,
     EVENT_SESSION_START,
     EVENT_STOP,
@@ -34,6 +34,8 @@ from src.core.hook_server import (
     EVENT_SUBAGENT_START,
     EVENT_SUBAGENT_STOP,
     EVENT_USER_PROMPT_SUBMIT,
+    remove_row_title,
+    write_row_title,
 )
 from src.core.repo_store import Repo, RepoStore
 from src.ui.badge_theme import (
@@ -57,8 +59,7 @@ from src.ui.badge_theme import (
 
 
 # Hook events that drive per-row Claude-state transitions in
-# RepoListModel.apply_hook_event. Other events (e.g. RepoAdded) are handled
-# at the MainWindow level since they don't mutate per-row state.
+# RepoListModel.apply_hook_event. Other events are ignored.
 _CLAUDE_STATE_EVENTS = frozenset(
     {
         EVENT_USER_PROMPT_SUBMIT,
@@ -73,8 +74,24 @@ _CLAUDE_STATE_EVENTS = frozenset(
         EVENT_SESSION_START,
         EVENT_SESSION_END,
         EVENT_CLAUDE_EXITED,
+        EVENT_ROW_RENAMED,
     }
 )
+
+# Turn-level events feed the debounced activity sort. Subagent traffic does
+# not: long background work would keep reshuffling the sidebar.
+REORDER_EVENTS = frozenset(
+    {
+        EVENT_USER_PROMPT_SUBMIT,
+        EVENT_STOP,
+        EVENT_STOP_FAILURE,
+        EVENT_NOTIFICATION,
+        EVENT_PERMISSION_REQUEST,
+    }
+)
+# Session start / end change group membership and the sort tier, so they
+# walk at once instead of through the debounce.
+WALK_EVENTS = frozenset({EVENT_SESSION_START, EVENT_SESSION_END, EVENT_CLAUDE_EXITED})
 
 # Notification types that set a badge, and the types that clear one.
 # Every other notification_type (idle_prompt, auth_success, …) is ignored.
@@ -117,6 +134,11 @@ def _norm(path: str) -> str:
     return os.path.realpath(path) if path else ""
 
 
+def _one_line(title: str) -> str:
+    """A title as one line with single spaces."""
+    return " ".join(title.split())
+
+
 def _tool_summary(payload: dict) -> str:
     """One-line "Tool: detail" for a PermissionRequest payload, e.g.
     "Bash: rm -rf build". The detail is the first string field of
@@ -132,30 +154,20 @@ def _tool_summary(payload: dict) -> str:
     return name
 
 
-def _format_minutes(seconds: float) -> str:
-    """Coarse elapsed time for the row's status line: "40s", "2m", "1h 5m".
-    Minute steps keep the line still while the spinner animates."""
-    s = int(seconds)
-    if s < 60:
-        return f"{s}s"
-    if s < 3600:
-        return f"{s // 60}m"
-    h, rem = divmod(s, 3600)
-    return f"{h}h {rem // 60}m"
-
-
-def _format_elapsed(seconds: float) -> str:
+def _format_elapsed(seconds: float, *, with_seconds: bool = True) -> str:
     """Human "Ns / Nm Ms / Nh Mm" elapsed-time format.
 
     Bare seconds under a minute; `1m 23s` up to an hour; `1h 5m` thereafter
     (seconds dropped in the hours bucket — at multi-hour scale the digit
     isn't useful and would jitter the tooltip on every re-show).
+    `with_seconds=False` gives `2m` up to an hour: the row's status line
+    then steps once a minute and stays still while the spinner animates.
     """
     s = int(seconds)
     if s < 60:
         return f"{s}s"
     if s < 3600:
-        return f"{s // 60}m {s % 60}s"
+        return f"{s // 60}m {s % 60}s" if with_seconds else f"{s // 60}m"
     h, rem = divmod(s, 3600)
     return f"{h}h {rem // 60}m"
 
@@ -168,6 +180,9 @@ class RepoListModel(QAbstractListModel):
     # duplicate broadcasts. The window-title counter listens here so it
     # doesn't have to re-scan _working on every row repaint.
     working_changed = Signal()
+    # Emitted when a row gets a badge word it did not show before — the
+    # main window's bell follows it.
+    badge_raised = Signal()
 
     def __init__(self, store: RepoStore, parent=None) -> None:
         super().__init__(parent)
@@ -198,6 +213,9 @@ class RepoListModel(QAbstractListModel):
         # row title that differs from it was changed on the ccwork side
         # and is pushed to Claude; see sync_session_title.
         self._title_synced: dict[str, str] = {}
+        # (title, synced) last written to each row's title file, so an
+        # unchanged pair is not rewritten on every prompt.
+        self._title_written: dict[str, tuple[str, str]] = {}
         self._working: set[str] = set()
         # Repo ids whose TerminalHost has been spawned in the current ccwork
         # session. Drives the visual difference between "touched" rows (bold
@@ -282,7 +300,7 @@ class RepoListModel(QAbstractListModel):
         if role == ROLE_STATUS_TEXT:
             return self._status_text(repo)
         if role == ROLE_SESSION_ACTIVE:
-            return self._session_active.get(repo.id, False)
+            return self.is_session_active(repo.id)
         if role == ROLE_ACTIVE_GROUP:
             return self._in_active_group(repo)
         if role == Qt.ToolTipRole:
@@ -315,7 +333,7 @@ class RepoListModel(QAbstractListModel):
             # paint on has_terminal too, so the two channels agree.
             has_terminal = repo.id in self._active_ids
             if has_terminal:
-                if self._session_active.get(repo.id, False):
+                if self.is_session_active(repo.id):
                     return f"{SESSION_ACTIVE_LABEL}\n{repo.path}"
                 return f"{TERMINAL_ONLY_LABEL}\n{repo.path}"
             return repo.path
@@ -382,6 +400,7 @@ class RepoListModel(QAbstractListModel):
         User-navigation state (last-focused) lives in a separate field and
         is unaffected.
         """
+        before = self.status_word(repo_id)
         if status:
             self._status[repo_id] = status
             self._stamp_activity(repo_id)
@@ -396,6 +415,9 @@ class RepoListModel(QAbstractListModel):
         self._emit_changed_for_id(
             repo_id, [ROLE_STATUS, ROLE_STATUS_WORD, Qt.ToolTipRole],
         )
+        after = self.status_word(repo_id)
+        if after and after != before:
+            self.badge_raised.emit()
 
     def status_word(self, repo_id: str) -> str:
         """The badge's word for one row, or "" when no badge shows."""
@@ -415,8 +437,8 @@ class RepoListModel(QAbstractListModel):
             started = self._turn_started.get(repo.id)
             if started is None:
                 return WORKING_TEXT
-            return f"{WORKING_TEXT} · {_format_minutes(time.monotonic() - started)}"
-        if repo.id in self._active_ids and self._session_active.get(repo.id, False):
+            return f"{WORKING_TEXT} · {_format_elapsed(time.monotonic() - started, with_seconds=False)}"
+        if repo.id in self._active_ids and self.is_session_active(repo.id):
             return CLAUDE_OPEN_TEXT
         return ""
 
@@ -425,7 +447,7 @@ class RepoListModel(QAbstractListModel):
         sidebar menu or `ccwork-rename`. Leaves the synced title alone, so
         the hook sink pushes the new title to Claude at the next prompt."""
         repo = self._store.find_by_id(repo_id)
-        title = " ".join(title.split())
+        title = _one_line(title)
         if repo is None or repo.title == title:
             return
         self._title_synced.setdefault(repo_id, repo.title)
@@ -448,7 +470,7 @@ class RepoListModel(QAbstractListModel):
             return
         synced = self._title_synced.get(repo_id, repo.title)
         if session_title and session_title != repo.title and repo.title == synced:
-            repo.title = " ".join(session_title.split())
+            repo.title = _one_line(session_title)
             self._store.save()
             self._emit_changed_for_id(repo_id, [ROLE_TITLE])
         self._title_synced[repo_id] = repo.title
@@ -460,7 +482,10 @@ class RepoListModel(QAbstractListModel):
             self._publish_title(repo)
 
     def _publish_title(self, repo: Repo) -> None:
-        write_row_title(repo.id, repo.title, self._title_synced.get(repo.id, repo.title))
+        pair = (repo.title, self._title_synced.get(repo.id, repo.title))
+        if self._title_written.get(repo.id) != pair:
+            write_row_title(repo.id, *pair)
+            self._title_written[repo.id] = pair
 
     def _clear_status_if(self, repo_id: str, status: str) -> None:
         """Clear the badge only while it is `status` — an end event for one
@@ -551,7 +576,7 @@ class RepoListModel(QAbstractListModel):
         open — is not work in progress, so it sinks with the idle rows
         instead of holding a top slot.
         """
-        return repo.id in self._active_ids and self._session_active.get(repo.id, False)
+        return repo.id in self._active_ids and self.is_session_active(repo.id)
 
     def clear_session(self, repo_id: str) -> None:
         """Tear down every per-session signal for one row.
@@ -578,7 +603,7 @@ class RepoListModel(QAbstractListModel):
         whose SubagentStop didn't arrive) are stale, and a row still
         carrying them reads as work you haven't finished.
         """
-        old = self._session_active.get(repo_id, False)
+        old = self.is_session_active(repo_id)
         roles: list[int] = []
         if old != active:
             self._session_active[repo_id] = active
@@ -613,13 +638,7 @@ class RepoListModel(QAbstractListModel):
                 roles.append(ROLE_SUBAGENTS)
             self._turn_started.pop(repo_id, None)
         if roles:
-            # Deduplicate while preserving order — repeated roles in the
-            # list don't break anything but they're noise in the signal.
-            seen: list[int] = []
-            for r in roles:
-                if r not in seen:
-                    seen.append(r)
-            self._emit_changed_for_id(repo_id, seen)
+            self._emit_changed_for_id(repo_id, roles)
 
     def _set_subagent(self, repo_id: str, agent_id: str, live: bool) -> None:
         """Add or remove one subagent id for a row and repaint on change.
@@ -710,8 +729,15 @@ class RepoListModel(QAbstractListModel):
             sinks the row to the bottom of the stack.
           • ClaudeExited — `bin/claude` saw the claude process return:
             the same full teardown as clear_session.
+          • RowRenamed — `ccwork-rename` set the row's title and / or emoji.
+
+        SessionStart and UserPromptSubmit also reconcile the row title with
+        the payload's `session_title` (sync_session_title).
         """
         payload = payload if isinstance(payload, dict) else {}
+        if event in (EVENT_SESSION_START, EVENT_USER_PROMPT_SUBMIT):
+            title = payload.get("session_title")
+            self.sync_session_title(repo_id, title if isinstance(title, str) else None)
         if event == EVENT_USER_PROMPT_SUBMIT:
             self.clear_status(repo_id)
             self.set_compacting(repo_id, False)
@@ -776,6 +802,12 @@ class RepoListModel(QAbstractListModel):
                 self._set_session_active(repo_id, False)
         elif event == EVENT_CLAUDE_EXITED:
             self.clear_session(repo_id)
+        elif event == EVENT_ROW_RENAMED:
+            # `ccwork-rename` sends only the fields it was asked to change.
+            if isinstance(payload.get("title"), str):
+                self.set_title(repo_id, payload["title"])
+            if isinstance(payload.get("emoji"), str):
+                self.set_emoji(repo_id, payload["emoji"])
 
     def set_emoji(self, repo_id: str, emoji: str) -> None:
         """Set or clear the optional leading emoji for one row.
@@ -984,6 +1016,23 @@ class RepoListModel(QAbstractListModel):
     def remove_repo_at(self, row: int) -> bool:
         if not (0 <= row < len(self._store.repos)):
             return False
+        self._remove_row(row)
+        self._store.save()
+        return True
+
+    def expire_idle(self, cutoff: float, keep_ids) -> list[Repo]:
+        """Remove every row last used before `cutoff`, except `keep_ids`,
+        with one save. Returns the removed repos."""
+        gone = [r for r in self._store.repos
+                if r.id not in keep_ids and r.last_used < cutoff]
+        for repo in gone:
+            self._remove_row(self.index_of_id(repo.id))
+        if gone:
+            self._store.save()
+        return gone
+
+    def _remove_row(self, row: int) -> None:
+        """Remove one row and its per-row state. The caller saves."""
         repo = self._store.repos[row]
         path = repo.path
         before_instances = {r.id: r.instance for r in self._store.repos}
@@ -999,7 +1048,7 @@ class RepoListModel(QAbstractListModel):
                 self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
 
         for state in (self._status, self._status_word, self._pending_tool,
-                      self._title_synced,
+                      self._title_synced, self._title_written,
                       self._last_activity, self._session_ended,
                       self._turn_started, self._live_sessions, self._subagents,
                       self._session_active):
@@ -1013,5 +1062,3 @@ class RepoListModel(QAbstractListModel):
             self._branches.pop(path, None)
             if self._last_focused == _norm(path):
                 self._last_focused = None
-        self._store.save()
-        return True

@@ -49,16 +49,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.core import repo_store
-from src.core.hook_server import (
-    EVENT_CLAUDE_EXITED,
-    EVENT_NOTIFICATION,
-    EVENT_PERMISSION_REQUEST,
-    EVENT_SESSION_END,
-    EVENT_SESSION_START,
-    EVENT_STOP,
-    EVENT_STOP_FAILURE,
-    EVENT_USER_PROMPT_SUBMIT,
-)
 from src.core.repo_store import Repo, RepoStore
 # Re-exported as this module's public surface: external code and tests import
 # the model, delegate, roles, status values, and `_format_elapsed` from
@@ -78,7 +68,9 @@ from src.ui.repo_model import (
     ROLE_STATUS_WORD,
     ROLE_SUBAGENTS,
     ROLE_WORKING,
+    REORDER_EVENTS,
     RepoListModel,
+    WALK_EVENTS,
     _CLAUDE_STATE_EVENTS,
     _format_elapsed,
 )
@@ -414,16 +406,9 @@ class RepoSidebar(QWidget):
             return
         self._model.apply_hook_event(event, repo_id, payload)
         self._refresh_spinner_timer()
-        # Only the three turn-level events feed the activity sort. Bg-agent
-        # dispatch / stop should not bump the auto-arrange schedule —
-        # otherwise long-running background work would keep reshuffling
-        # the sidebar under the user's eye.
-        if event in (EVENT_USER_PROMPT_SUBMIT, EVENT_STOP, EVENT_STOP_FAILURE,
-                     EVENT_NOTIFICATION, EVENT_PERMISSION_REQUEST):
+        if event in REORDER_EVENTS:
             self._maybe_schedule_reorder()
-        # Session start/end change group membership *and* the sort tier, so
-        # they walk directly rather than through the turn-activity debounce.
-        elif event in (EVENT_SESSION_START, EVENT_SESSION_END, EVENT_CLAUDE_EXITED):
+        elif event in WALK_EVENTS:
             self._maybe_walk()
 
     def _refresh_spinner_timer(self) -> None:

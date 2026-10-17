@@ -22,8 +22,8 @@ if [ "${CCWORK_GUI:-0}" != "1" ]; then
     exit 0
 fi
 
-_sock_dir="${XDG_RUNTIME_DIR:-$HOME/.cache}/ccwork"
-_sock="$_sock_dir/ccwork.sock"
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ccwork-lib.sh"
+
 _event="${CCWORK_EVENT:-Unknown}"
 _ts=$(date +%s)
 _cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
@@ -38,22 +38,14 @@ _payload=$(cat)
 # $_payload is safe to embed as-is.
 _payload=${_payload%$'\n'}
 
-# Escape strings for JSON in bash: handle \, ", and the C0 controls that
-# can legitimately appear in a filesystem path (newline, CR, tab). Anything
-# else below 0x20 is extremely rare; if a path contains it, the server will
-# drop the line as malformed JSON (acceptable degradation).
-_json_escape() {
-    local s=$1
-    s=${s//\\/\\\\}          # \  → \\
-    s=${s//\"/\\\"}          # "  → \"
-    s=${s//$'\n'/\\n}        # LF → \n
-    s=${s//$'\r'/\\r}        # CR → \r
-    s=${s//$'\t'/\\t}        # TAB → \t
-    printf '%s' "$s"
+# Print the value of a top-level string field of the payload, still
+# JSON-escaped. Empty when the field is absent.
+_json_str_field() {
+    printf '%s' "$_payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\(\\([^\"\\\\]\\|\\\\.\\)*\\)\".*/\\1/p"
 }
-_cwd_esc=$(_json_escape "$_cwd")
-_event_esc=$(_json_escape "$_event")
-_row_esc=$(_json_escape "${CCWORK_ROW_ID:-}")
+_cwd_esc=$(ccwork_json_escape "$_cwd")
+_event_esc=$(ccwork_json_escape "$_event")
+_row_esc=$(ccwork_json_escape "${CCWORK_ROW_ID:-}")
 
 # ── Row title ↔ Claude session title ─────────────────────────────────────
 # ccwork publishes each row's title in titles/<row id>: line 1 is the row
@@ -65,16 +57,18 @@ _row_esc=$(_json_escape "${CCWORK_ROW_ID:-}")
 _hook_out=""
 if [ "$_event" = "SessionStart" ] || [ "$_event" = "UserPromptSubmit" ]; then
     _title="" _synced=""
-    _title_file="$_sock_dir/titles/${CCWORK_ROW_ID:-none}"
+    _title_file="${CCWORK_SOCK%/*}/titles/${CCWORK_ROW_ID:-none}"
     if [ -r "$_title_file" ]; then
         { IFS= read -r _title; IFS= read -r _synced; } < "$_title_file"
     fi
-    _session_title=$(printf '%s' "$_payload" | sed -n 's/.*"session_title"[[:space:]]*:[[:space:]]*"\(\([^"\\]\|\\.\)*\)".*/\1/p')
-    _title_esc=$(_json_escape "$_title")
     _fields=""
-    if [ -n "$_title" ] && [ "$_title_esc" != "$_session_title" ] \
-       && { [ "$_title" != "$_synced" ] || [ -z "$_session_title" ]; }; then
-        _fields=",\"sessionTitle\":\"$_title_esc\""
+    if [ -n "$_title" ]; then
+        _session_title=$(_json_str_field session_title)
+        _title_esc=$(ccwork_json_escape "$_title")
+        if [ "$_title_esc" != "$_session_title" ] \
+           && { [ "$_title" != "$_synced" ] || [ -z "$_session_title" ]; }; then
+            _fields=",\"sessionTitle\":\"$_title_esc\""
+        fi
     fi
     if [ "$_event" = "SessionStart" ]; then
         _fields="$_fields,\"additionalContext\":\"You run in a ccwork sidebar row. When the task is clear, run \\\"ccwork-rename '<short topic>'\\\" to title the row. Add --badge <emoji> to set the row icon.\""
@@ -86,15 +80,8 @@ fi
 
 _line="{\"event\":\"$_event_esc\",\"row\":\"$_row_esc\",\"cwd\":\"$_cwd_esc\",\"ts\":$_ts,\"payload\":$_payload}"
 
-# Best-effort send. Short timeout so a dead socket doesn't stall Claude Code.
-if command -v socat >/dev/null 2>&1; then
-    printf '%s\n' "$_line" | timeout 1 socat - "UNIX-CONNECT:$_sock" >/dev/null 2>&1 || true
-elif command -v nc >/dev/null 2>&1; then
-    # nc -UN: UNIX + don't wait for server close.
-    printf '%s\n' "$_line" | timeout 1 nc -UN "$_sock" >/dev/null 2>&1 \
-        || printf '%s\n' "$_line" | timeout 1 nc -U "$_sock" >/dev/null 2>&1 \
-        || true
-fi
+# Best-effort send: a dead GUI must never break the claude session.
+ccwork_send "$_line" 2>/dev/null || true
 
 # Desktop notification — fires regardless of whether the GUI window is
 # visible, focused, or even running. Catches the case where you're on
@@ -119,7 +106,7 @@ if [ "$_notify_disabled" = "0" ] && command -v notify-send >/dev/null 2>&1; then
     _repo=$(basename "$_cwd")
     # Notification fires for many types; only the ones that set a badge
     # deserve a desktop toast (see docs/specs/hook-events.md).
-    _ntype=$(printf '%s' "$_payload" | sed -n 's/.*"notification_type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    _ntype=$(_json_str_field notification_type)
     _msg=""
     case "$_event" in
         Notification)

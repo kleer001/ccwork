@@ -304,7 +304,8 @@ but no widgets):
   saved at most once an hour per row. With `ui.expire_idle_repos` on
   (Preferences; off by default, `ui.expire_idle_days` default 30),
   `MainWindow._expire_idle_rows` runs at startup and hourly and moves
-  rows idle that long into `recent` via the normal remove path. A row
+  rows idle that long into `recent` through `RepoListModel.expire_idle`
+  (one save for the batch). A row
   with a terminal never expires; a repo loaded without `last_used`
   counts from the load time.
   The badge dialog is in `repo_sidebar.py`: `BADGE_GALLERY` is the
@@ -381,21 +382,18 @@ but no widgets):
   affected. Failure to reach the socket is silent by design (hooks must
   never break the user's session).
 - `bin/ccwork-rename [--badge <emoji>] [<title>]` — sets the title and/or
-  emoji of the row whose terminal runs it, via a `RowRenamed` event that
-  carries only the given fields. It fails loudly (exit 1) outside a
+  emoji of the row whose terminal runs it, via a `RowRenamed` event whose
+  payload carries only the given fields. It fails loudly (exit 1) outside a
   ccwork terminal. On `SessionStart` the sink tells Claude about it
   through `additionalContext`.
-- `bin/claude` — `PATH`-shadow wrapper for `claude`. Pings the ccwork
-  socket with a `RepoAdded` event (carrying `CCWORK_ROW_ID`) for git
-  roots, then runs the real `claude` with the user's args untouched as a
-  **child**, keeps its exit code, and sends `ClaudeExited` when it
+- `bin/claude` — `PATH`-shadow wrapper for `claude`. Runs the real
+  `claude` with the user's args untouched as a **child**, keeps its exit code, and sends `ClaudeExited` when it
   returns — however it ended, `/exit` included. Ctrl+C / Ctrl+Z reach
   claude through the terminal's foreground process group. Outside the
   GUI, or when `CCWORK_CLAUDE_DEPTH` is already set (a `claude` started
   from inside a session), it `exec`s the real binary and sends nothing.
-  MainWindow ignores a `RepoAdded` that names a row — the SessionStart
-  rebind moves that row instead — and auto-adds only for a `RepoAdded`
-  with no row.
+- `bin/ccwork-lib.sh` — sourced by the three scripts above: the socket
+  path, `ccwork_json_escape`, and `ccwork_send` (socat, else nc).
 
 ### Event flow
 
@@ -409,9 +407,8 @@ Claude Code hook ─▶ ccwork-hook-sink ─▶ unix socket ─▶ HookServer
                                             └─ desktop notify-send (gated)
 ```
 
-`MainWindow._on_hook_event` is a thin dispatcher: it special-cases
-`RepoAdded` (see `bin/claude`), lights the bell dot when a row gets a new badge,
-and routes every other event by its `row` field to exactly one row. An
+`MainWindow._on_hook_event` is a thin dispatcher: it routes each event
+by its `row` field to exactly one row. An
 event whose row id is missing or unknown is dropped with a logged
 warning — there is no fallback to path routing. On `SessionStart` it
 runs the automatic rebind (see `repo_store.py`). Then it calls
@@ -480,6 +477,12 @@ clear rules: `docs/specs/hook-events.md`):
     cascade, unlike the single-id `SessionEnd` drop. Otherwise an `/exit`
     mid-turn (or with a subagent in flight) would leave the spinner /
     twinkle animating forever.
+  • `RowRenamed` — sent by `ccwork-rename`: set the row's title and / or
+    emoji from the payload.
+
+`SessionStart` and `UserPromptSubmit` also run `sync_session_title` on
+the payload's `session_title`. When a row gets a badge word it did not
+show before, the model emits `badge_raised`, which lights the bell dot.
 
 `MainWindow` no longer keeps a parallel id-keyed `_working` set; the
 quit-confirm derives its list on demand via `model.is_working(repo_id)`
@@ -583,8 +586,8 @@ events never touch it; user navigation never touches `_status`.
   changes.** Don't sequence `set_working` + `set_status` + `clear_status`
   ad-hoc from new call sites — extend the event → mutation table on
   `RepoListModel.apply_hook_event` instead, and add the event to
-  `_CLAUDE_STATE_EVENTS` if it should drive the spinner timer +
-  reorder schedule.
+  `_CLAUDE_STATE_EVENTS` (the events the model handles), and to
+  `REORDER_EVENTS` or `WALK_EVENTS` if it should move the row.
 - **Terminals are keyed by `repo.id`, not `repo.path`.** `MainWindow._terminals`
   is a dict of repo ids so duplicate rows on the same path get
   independent xterms. Hook events carry the row id (`CCWORK_ROW_ID`) of

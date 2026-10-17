@@ -27,8 +27,8 @@ xorg or XWayland; X11 session preferred):
 - [ ] Run `claude --version` inside the embedded xterm; confirm the wrapper
       passes through (you should see Anthropic's claude version, not an
       error from our wrapper).
-- [ ] Run `claude` from a *new* git root inside the GUI — sidebar should
-      auto-add it (RepoAdded ping).
+- [ ] `cd` to another git repo inside a row's terminal and run `claude` —
+      the row should rename to that repo.
 - [ ] Trigger a Stop/Notification event; confirm sidebar status badge
       updates and (if enabled) `notify-send` fires.
 - [ ] Click the 🔊 / 🔇 toolbutton in the top bar; confirm the
