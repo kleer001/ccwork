@@ -20,13 +20,15 @@ up to `~/.local/share/ccwork/backups/` and actions are logged to
 ## Prerequisites
 
 ```bash
-sudo apt install xterm socat python3 git
+sudo apt install git python3 python3-venv xterm socat libxcb-cursor0
 ```
 
 - **xterm** — the terminal that gets reparented into the Qt window.
   `urxvt` also supports `-into` and can be swapped in later.
 - **socat** (or fallback: `nc`) — pipes hook JSON into the Unix socket.
 - **python3** + **git** — wrapper scripts and prereq checks.
+- **libxcb-cursor0** — Qt needs it to open a window on X11. Ubuntu's
+  desktop install does not include it.
 
 ## Wayland
 

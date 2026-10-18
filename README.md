@@ -70,9 +70,10 @@ a prompt or start a session.
 ## Install
 
 ccwork needs Linux with X11 or XWayland, and `git`, `python3` with `venv`,
-`xterm` and `socat`. On Debian or Ubuntu that is
-`sudo apt install git python3 python3-venv xterm socat`. Then one line
-installs ccwork:
+`xterm`, `socat`, `curl` and `libxcb-cursor0`, which Qt needs to open a
+window on X11. On Debian or Ubuntu that is
+`sudo apt install git python3 python3-venv xterm socat curl libxcb-cursor0`.
+Then one line installs ccwork:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh | bash

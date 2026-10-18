@@ -39,7 +39,8 @@ Environment:
 
 Behavior:
     Writes only under $HOME; no sudo required.
-    Missing system packages (xterm, socat) produce warnings, not errors.
+    Missing system packages (xterm, socat, libxcb-cursor0) produce warnings,
+    not errors.
     Existing clone is fast-forwarded; existing venv is reused.
     Events are logged to ~/.local/share/ccwork/bootstrap.log.
 __HELP__
@@ -124,6 +125,8 @@ _main() {
     if ! command -v socat >/dev/null 2>&1 && ! command -v nc >/dev/null 2>&1; then
         runtime_missing+=" socat"
     fi
+    # Qt's X11 plugin needs it, and Ubuntu's desktop install does not ship it.
+    ldconfig -p 2>/dev/null | grep -q 'libxcb-cursor\.so\.0' || runtime_missing+=" libxcb-cursor0"
     if [ -n "$runtime_missing" ]; then
         _say "note: runtime deps missing —${runtime_missing}. Install before launching: sudo apt install${runtime_missing}"
     fi
@@ -189,12 +192,15 @@ _main() {
     # Import both PySide6 (confirms the wheel + system libs landed) and
     # src.main (confirms the repo layout is intact and PYTHONPATH works).
     # Either failure here usually means the install silently ate an error.
+    # The last line of a failed import's traceback names the cause, such as
+    # a missing system library.
     _say "verifying install"
-    if ! "$dest/.venv/bin/python" -c 'import PySide6' 2>/dev/null; then
-        _fail "sanity check failed: the venv can't import PySide6. Check $log for details."
+    local err
+    if ! err=$("$dest/.venv/bin/python" -c 'import PySide6' 2>&1); then
+        _fail "sanity check failed: the venv can't import PySide6: ${err##*$'\n'}"
     fi
-    if ! (cd "$dest" && "$dest/.venv/bin/python" -c 'import src.main') 2>/dev/null; then
-        _fail "sanity check failed: python can't import src.main from $dest. Check $log for details."
+    if ! err=$(cd "$dest" && "$dest/.venv/bin/python" -c 'import src.main' 2>&1); then
+        _fail "sanity check failed: python can't import src.main from $dest: ${err##*$'\n'}"
     fi
     _say "verified: PySide6 + src.main import cleanly"
 

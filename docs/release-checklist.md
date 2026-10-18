@@ -19,7 +19,7 @@ ccwork has never been installed on a clean box by anyone but the author.
 Before tagging, do this on a throwaway Linux VM (Ubuntu 22.04 or 24.04 with
 xorg or XWayland; X11 session preferred):
 
-- [ ] `sudo apt install git python3 python3-venv xterm` (and `notify-send`
+- [ ] `sudo apt install git python3 python3-venv xterm socat curl libxcb-cursor0` (and `notify-send`
       via `libnotify-bin` if you want desktop notifications).
 - [ ] Run the bootstrap one-liner from README against the tag candidate.
 - [ ] Confirm `ccwork` launches; sidebar empty on first run.

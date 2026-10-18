@@ -162,10 +162,12 @@ _warn=""
 command -v xterm &>/dev/null || _warn="$_warn xterm"
 command -v socat &>/dev/null || command -v nc &>/dev/null || _warn="$_warn socat_or_nc"
 command -v notify-send &>/dev/null || _warn="$_warn notify-send"
+# Qt's X11 plugin needs it, and Ubuntu's desktop install does not ship it.
+ldconfig -p 2>/dev/null | grep -q 'libxcb-cursor\.so\.0' || _warn="$_warn libxcb-cursor0"
 if [ -n "$_warn" ]; then
-    skip "Runtime deps missing:$_warn — install before launching ccwork (e.g. sudo apt install xterm socat libnotify-bin)"
+    skip "Runtime deps missing:$_warn — install before launching ccwork (e.g. sudo apt install xterm socat libnotify-bin libxcb-cursor0)"
 else
-    ok "python3, git, xterm, socat/nc, notify-send present"
+    ok "python3, git, xterm, socat/nc, notify-send, libxcb-cursor0 present"
 fi
 
 # ── 1. Create bin/ccwork launcher ────────────────────────────────────────────
