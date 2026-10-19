@@ -21,7 +21,7 @@ installs hooks that light a status badge on each row, so you can see which
 session needs you.
 
 <p align="center">
-  <img alt="ccwork window: a sidebar of repo rows next to a Claude Code session that just started in ~/code/garden; that row shows Claude open" src="docs/images/ccwork-main.png" width="880">
+  <img alt="ccwork window: a sidebar of repo rows next to a Claude Code session that just started in ~/code/garden; that row is tinted blue and joined to the terminal by a blue bridge, frame and title tab" src="docs/images/ccwork-main.png" width="880">
 </p>
 
 ## What it does
@@ -34,6 +34,9 @@ session needs you.
 
 - **A badge per row.** Red: needs permission. Orange: needs an answer.
   Magenta: API or account error. Yellow: usage limit. Green: done.
+- **The current repo stands out.** Its row, a bridge across to the
+  terminal, the terminal frame and the title tab share one color. The
+  color follows the row number: red, orange, yellow, and on down the list.
 - **Three-line rows.** A task title, then `repo | branch`, then Claude's
   state in words: `Working · 2m`, `Compacting`, `Claude open`.
 - **A bell for the whole window.** The 🔔 gets a dot when any row gets a
