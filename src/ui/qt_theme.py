@@ -59,6 +59,15 @@ def _tones(bg: QColor, fg: QColor) -> dict[str, QColor]:
     }
 
 
+def blend(a: QColor, b: QColor, t: float) -> QColor:
+    """Opaque mix: `a` moved fraction `t` of the way toward `b`."""
+    return QColor(
+        round(a.red() + (b.red() - a.red()) * t),
+        round(a.green() + (b.green() - a.green()) * t),
+        round(a.blue() + (b.blue() - a.blue()) * t),
+    )
+
+
 def _with_alpha(color: QColor, alpha: float) -> QColor:
     out = QColor(color)
     out.setAlphaF(alpha)

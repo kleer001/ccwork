@@ -1,6 +1,6 @@
 """Left-hand repo list widget: scrollable rows + '+ Add Repo' button.
 
-`RepoSidebar` wires a `QListView` to `RepoListModel` and `RepoDelegate`,
+`RepoSidebar` wires a `RepoListView` to `RepoListModel` and `RepoDelegate`,
 owns the spinner / auto-arrange-walk timers and the sidebar-quiet gate, and
 hosts the row context menu and badge picker. The model, delegate, role
 constants, and status values are re-exported from this module so existing
@@ -37,7 +37,6 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
-    QListView,
     QListWidget,
     QListWidgetItem,
     QMenu,
@@ -54,6 +53,7 @@ from src.core.repo_store import Repo, RepoStore
 # the model, delegate, roles, status values, and `_format_elapsed` from
 # `src.ui.repo_sidebar`.
 from src.ui.badge_theme import STATUS_ATTENTION, STATUS_DONE
+from src.ui.current_highlight import Highlight, RepoListView
 from src.ui.repo_delegate import RepoDelegate
 from src.ui.repo_model import (
     ROLE_ACTIVE_GROUP,
@@ -124,6 +124,9 @@ class RepoSidebar(QWidget):
     # Dashboard button clicked — MainWindow swaps the stack to the splash as
     # an overlay, without touching selection or terminals.
     dashboard_requested = Signal()
+    # The current row may have moved, resized, scrolled or changed position
+    # in the stack — MainWindow re-syncs the current-row highlight.
+    current_geometry_changed = Signal()
 
     def __init__(self, store: RepoStore, parent=None, settings=None) -> None:
         super().__init__(parent)
@@ -138,7 +141,7 @@ class RepoSidebar(QWidget):
         )
         self._model = RepoListModel(store, self)
 
-        self._view = QListView(self)
+        self._view = RepoListView(self)
         self._view.setModel(self._model)
         layout_cfg = settings.ui.layout if settings is not None else None
         self._delegate = RepoDelegate(self._view, layout=layout_cfg)
@@ -254,13 +257,17 @@ class RepoSidebar(QWidget):
         # Keep the slots glued to the tail of the stack through every change
         # that shifts the last row: insert/remove, reset, the bubble-walk
         # (rowsMoved), grouping height changes (dataChanged), and scrolling.
-        self._model.rowsInserted.connect(self._position_tail_slots)
-        self._model.rowsRemoved.connect(self._position_tail_slots)
-        self._model.modelReset.connect(self._position_tail_slots)
-        self._model.rowsMoved.connect(self._position_tail_slots)
-        self._model.layoutChanged.connect(self._position_tail_slots)
-        self._model.dataChanged.connect(self._position_tail_slots)
-        self._view.verticalScrollBar().valueChanged.connect(self._position_tail_slots)
+        # The same changes can move the current row, so they also feed the
+        # current-row highlight.
+        for sig in (
+            self._model.rowsInserted, self._model.rowsRemoved, self._model.modelReset,
+            self._model.rowsMoved, self._model.layoutChanged, self._model.dataChanged,
+            self._view.verticalScrollBar().valueChanged,
+        ):
+            sig.connect(self._position_tail_slots)
+            sig.connect(self.current_geometry_changed)
+        self._view.verticalScrollBar().rangeChanged.connect(self.current_geometry_changed)
+        self._view.selectionModel().currentChanged.connect(self.current_geometry_changed)
 
         # Allow the splitter to drag the sidebar narrow. The status badge is
         # always reserved when present; text elides to fit.
@@ -293,6 +300,30 @@ class RepoSidebar(QWidget):
         selected. MainWindow's Esc-from-dashboard path asks for this."""
         idx = self._view.currentIndex()
         return self._model.repo_at(idx.row()) if idx.isValid() else None
+
+    def current_row(self) -> int:
+        """Stack position of the selected row, or -1 when none is selected."""
+        idx = self._view.currentIndex()
+        return idx.row() if idx.isValid() else -1
+
+    def current_row_band(self) -> tuple[int, int] | None:
+        """Top and bottom y (inclusive, window coordinates) of the selected
+        row as painted, or None when the bridge cannot reach it: no
+        selection, the row is not fully visible, or the scroll bar stands
+        between the row and the list's frame."""
+        idx = self._view.currentIndex()
+        if not idx.isValid() or self._view.verticalScrollBar().isVisible():
+            return None
+        rect = self._delegate.row_rect(idx, self._view.visualRect(idx))
+        if not self._view.viewport().rect().contains(rect):
+            return None
+        top = self._view.viewport().mapTo(self.window(), rect.topLeft()).y()
+        return top, top + rect.height() - 1
+
+    def set_highlight(self, h: Highlight | None) -> None:
+        self._delegate.highlight = h
+        self._view.update()             # the list frame (RepoListView)
+        self._view.viewport().update()  # the rows
 
     def refresh_branches(self) -> None:
         self._model.refresh_branches()

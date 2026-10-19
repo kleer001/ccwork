@@ -1,7 +1,7 @@
 """Shared pytest fixtures for the ccwork test suite.
 
-Consolidates the `qapp` session-scoped QApplication factory and the
-`stub_hook_server` factory that several MainWindow-construction tests
+Consolidates the `qapp` session-scoped QApplication factory, the
+`FakeHost` terminal stand-in, and the `stub_hook_server` factory that several MainWindow-construction tests
 previously inlined verbatim.
 """
 
@@ -14,7 +14,24 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
+
+
+class FakeHost(QWidget):
+    """TerminalHost stand-in: the API surface MainWindow touches. A real
+    xterm spawn hangs under `QT_QPA_PLATFORM=offscreen`."""
+
+    def focus_child(self) -> None:
+        pass
+
+    def is_running(self) -> bool:
+        return True
+
+    def apply_live_settings(self, xterm_settings) -> list[str]:
+        return []
+
+    def stop(self) -> None:
+        pass
 
 
 class StubHookServer(QObject):

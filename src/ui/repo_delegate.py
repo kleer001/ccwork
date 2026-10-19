@@ -26,6 +26,7 @@ from src.ui.badge_theme import (
     SUBAGENT_FRAMES,
     spinner_for_id,
 )
+from src.ui.current_highlight import Highlight, paint_row
 from src.ui.repo_model import (
     ROLE_ACTIVE_GROUP,
     ROLE_BRANCH,
@@ -108,6 +109,8 @@ class RepoDelegate(QStyledItemDelegate):
         self.show_status_text = True
         # Mirrors ui.group_active_repos. RepoSidebar keeps it in sync.
         self.group_enabled = False
+        # The current-row highlight, or None. Set by RepoSidebar.set_highlight.
+        self.highlight: Highlight | None = None
         # Layout knobs from settings; defaults match the historical hardcodes
         # so tests that construct a delegate without settings still behave.
         from src.core.settings import LayoutSettings
@@ -128,6 +131,12 @@ class RepoDelegate(QStyledItemDelegate):
             return False
         prev = index.model().index(index.row() - 1)
         return bool(prev.data(ROLE_ACTIVE_GROUP))
+
+    def row_rect(self, index: QModelIndex, rect: QRect) -> QRect:
+        """The painted row inside its item `rect`: below the group gap."""
+        if self._is_group_boundary(index):
+            return rect.adjusted(0, self.GROUP_GAP_H, 0, 0)
+        return rect
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         # Three text lines plus the 4 px top and bottom inset in paint().
@@ -164,13 +173,19 @@ class RepoDelegate(QStyledItemDelegate):
                 option.rect.width(), self.GROUP_GAP_H,
             )
             painter.fillRect(gap_rect, option.palette.window())
-            option.rect = option.rect.adjusted(0, self.GROUP_GAP_H, 0, 0)
+            option.rect = self.row_rect(index, option.rect)
 
         # Background: honor selection state. The selected row IS the active
         # repo because selecting switches the stack. Paint the Active palette
         # unconditionally so xterm stealing focus doesn't dim the highlight.
         selected = bool(option.state & option.state.State_Selected)
-        if selected:
+        current = selected and self.highlight is not None
+        if current:
+            # The row's segment of the current-row highlight shape; the
+            # side that faces the terminal stays open for the bridge.
+            paint_row(painter, option.rect, self.highlight)
+            text_color = option.palette.text().color()
+        elif selected:
             painter.fillRect(option.rect, option.palette.highlight())
             text_color = option.palette.highlightedText().color()
             # Thin accent stripe on the left edge for extra glance-ability.
@@ -194,7 +209,8 @@ class RepoDelegate(QStyledItemDelegate):
         painter.setBrush(Qt.NoBrush)
         # QRect's right/bottom are inclusive — subtract 1 so the stroke fits.
         border_rect = option.rect.adjusted(0, 0, -1, -1)
-        painter.drawRect(border_rect)
+        if not current:  # the accent edges replace it on the current row
+            painter.drawRect(border_rect)
 
         repo: Repo = index.data(ROLE_REPO)
         branch: str | None = index.data(ROLE_BRANCH)

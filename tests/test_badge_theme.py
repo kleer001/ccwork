@@ -19,6 +19,8 @@ from src.ui.badge_theme import (
     STATUS_DONE,
     STATUS_ERROR,
     STATUS_USAGE_LIMIT,
+    CURRENT_COLORS,
+    current_accent,
     load_badge_theme,
 )
 
@@ -89,6 +91,10 @@ def test_partial_override_keeps_defaults(tmp_path: Path) -> None:
     ('session_glyph = ""', "non-empty"),
     ('spinner_color = 123', "must be a color string"),
     ('subagent_frames = []', "non-empty array"),
+    ('current_colors = []', "non-empty array of colors"),
+    ('current_colors = ["nope"]', "unrecognized color"),
+    ('current_tint = 101', "integer 0–100"),
+    ('current_tint = 0.3', "integer 0–100"),
 ])
 def test_malformed_fails_loudly(tmp_path: Path, text: str, needle: str) -> None:
     with pytest.raises(ValueError, match=needle):
@@ -139,3 +145,17 @@ def test_compact_glyph_default(tmp_path: Path) -> None:
 def test_unknown_status_field_fails_loudly(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="unknown key"):
         load_badge_theme(_write(tmp_path, '[statuses.answer]\nicon = "x"\n'))
+
+
+def test_current_colors_default_to_the_solarized_rainbow(tmp_path: Path) -> None:
+    t = load_badge_theme(tmp_path / "absent.toml")
+    assert t.current_colors[0] == QColor("#dc322f")     # row 1: red
+    assert t.current_colors[2] == QColor("#b58900")     # row 3: yellow
+    assert len(t.current_colors) == 7
+    assert t.current_tint == 30
+
+
+def test_current_accent_repeats_down_the_stack() -> None:
+    assert current_accent(0) == CURRENT_COLORS[0]
+    assert current_accent(len(CURRENT_COLORS)) == CURRENT_COLORS[0]
+    assert current_accent(len(CURRENT_COLORS) + 2) == CURRENT_COLORS[2]

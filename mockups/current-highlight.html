@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Current Row Highlight</title>
+<style>
+  :root {
+    --page:#f6f7f8; --ink:#24292f; --muted:#5b6875; --line:#d5dade;
+    --sans: system-ui,-apple-system,"Segoe UI","Noto Sans","DejaVu Sans",sans-serif;
+    --mono: ui-monospace,"DejaVu Sans Mono",Menlo,monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--page); color:var(--ink); font-family:var(--sans); font-size:14px; }
+  .wrap { max-width:1240px; margin:0 auto; padding:20px 16px 48px; }
+  h1 { font-size:16px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 16px; font-size:13px; }
+
+  /* ── controls ── */
+  .controls { display:flex; flex-wrap:wrap; gap:14px 22px; align-items:center;
+    background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin-bottom:16px; }
+  .ctl { display:flex; align-items:center; gap:8px; font-size:13px; }
+  .ctl label { color:var(--muted); }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .seg button { border:0; background:#fff; padding:5px 10px; font:inherit; font-size:13px; cursor:pointer; color:var(--ink); }
+  .seg button + button { border-left:1px solid var(--line); }
+  .seg button.on { background:#24292f; color:#fff; }
+  .swatches { display:flex; gap:6px; }
+  .swatch { width:22px; height:22px; border-radius:50%; border:2px solid #fff; box-shadow:0 0 0 1px var(--line); cursor:pointer; padding:0; }
+  .swatch.on { box-shadow:0 0 0 2px var(--ink); }
+  input[type=range] { width:110px; }
+  .val { font-family:var(--mono); font-size:12px; min-width:34px; color:var(--muted); }
+  .zoom button { width:26px; height:26px; border:1px solid var(--line); background:#fff; border-radius:5px; font-size:15px; cursor:pointer; }
+  .desc { font-size:13px; color:var(--muted); margin:0 0 10px; min-height:1.3em; }
+
+  /* ── the app mock ── */
+  .stage { overflow:hidden; }
+  .scaler { transform-origin:top left; }
+  .app { --accent:#268bd2; --tint:0.18; --frame:3px; --radius:8px;
+    --app-bg:#ffffff; --app-fg:#24292f; --row-bg:#ffffff; --row-sel:#e9e9e9; --row-line:#c9ced3; --sub:#2a6496;
+    --term-bg:#ffffff; --term-fg:#24292f;
+    width:1180px; height:640px; background:var(--app-bg); color:var(--app-fg);
+    border:1px solid var(--line); border-radius:6px; position:relative; overflow:hidden;
+    display:grid; grid-template-rows:40px 1fr; font-size:13px; }
+  .app.dark { --app-bg:#2b2b2b; --app-fg:#d0d0d0; --row-bg:#1e1e1e; --row-sel:#3a3a3a; --row-line:#4a4a4a; --sub:#6fa8dc;
+    --term-bg:#1e1e1e; --term-fg:#d0d0d0; }
+  .topbar { display:flex; align-items:center; justify-content:center; position:relative; font-weight:600; font-size:16px; }
+  .topbar .icons { position:absolute; right:14px; display:flex; gap:14px; font-size:13px; opacity:.7; }
+  .body { display:grid; grid-template-columns:320px 1fr; gap:14px; padding:0 0 0 6px; min-height:0; }
+
+  .sidebar { display:flex; flex-direction:column; min-height:0; position:relative; }
+  .rows { border:1px solid var(--row-line); background:var(--row-bg); flex:1; position:relative; }
+  .row { position:relative; height:66px; padding:5px 10px 0 10px; border-bottom:1px solid var(--row-line);
+    background:var(--row-bg); cursor:pointer; }
+  .row .n { position:absolute; left:3px; top:1px; font-size:9px; opacity:.6; }
+  .row .t { font-weight:700; }
+  .row .t.idle { font-weight:400; font-style:italic; }
+  .row .r { color:var(--sub); font-size:11.5px; margin-top:3px; }
+  .row .s { font-size:11.5px; margin-top:3px; opacity:.85; }
+  .row .badge { position:absolute; right:12px; top:24px; width:11px; height:11px; border-radius:50%; }
+  .tail { display:flex; gap:2px; margin:0 0 0 0; }
+  .tail div { flex:1; height:18px; border:1px solid var(--row-line); font-size:11px; opacity:.55; padding:1px 8px; }
+  .add { margin:6px 0 6px; height:24px; border:1px solid var(--row-line); border-radius:3px; text-align:center; font-size:12px; line-height:22px; }
+
+  .main { position:relative; display:flex; flex-direction:column; min-height:0; padding-right:6px; padding-bottom:6px; }
+  .term { flex:1; background:var(--term-bg); color:var(--term-fg); border:1px solid #888; position:relative;
+    font-family:var(--mono); font-size:14px; padding:18px 16px; line-height:1.35; overflow:hidden; }
+  .term .dim { opacity:.55; }
+  .term .prompt { position:absolute; left:0; right:0; bottom:46px; border-top:1px solid rgba(128,128,128,.35);
+    border-bottom:1px solid rgba(128,128,128,.35); padding:6px 16px; }
+  .term .mode { position:absolute; left:16px; bottom:14px; }
+  .term .mode b { color:#dc322f; font-weight:400; }
+  .tab { position:absolute; top:-31px; height:31px; display:flex; align-items:center; gap:8px; padding:0 16px;
+    font-weight:600; font-size:14px; white-space:nowrap; z-index:2; }
+  .tab .br { font-weight:400; opacity:.85; font-size:12.5px; }
+  .bridge { position:absolute; z-index:1; pointer-events:none; }
+  .outline { position:absolute; left:0; top:0; z-index:4; pointer-events:none; overflow:visible; }
+  .hint { position:absolute; left:50%; transform:translateX(-50%); bottom:6px; font-size:11px; opacity:.5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Current row highlight + title tab</h1>
+  <p class="sub">Click a sidebar row to switch the project. All settings save in this browser.</p>
+
+  <div class="controls">
+    <div class="ctl"><label>Option</label>
+      <div class="seg" id="opt"></div></div>
+    <div class="ctl"><label>Accent color</label><div class="swatches" id="sw"></div></div>
+    <div class="ctl"><label>Row tint</label><input type="range" id="tint" min="0.06" max="0.6" step="0.02"><span class="val" id="tintv"></span></div>
+    <div class="ctl"><label>Frame width</label><input type="range" id="frame" min="0" max="8" step="1"><span class="val" id="framev"></span></div>
+    <div class="ctl"><label>Tab corner radius</label><input type="range" id="radius" min="0" max="16" step="1"><span class="val" id="radiusv"></span></div>
+    <div class="ctl"><label>Tab position</label><div class="seg" id="tabpos"></div></div>
+    <div class="ctl"><label>Terminal theme</label><div class="seg" id="theme"></div></div>
+    <div class="ctl zoom"><label>Zoom</label><button id="zout">−</button><span class="val" id="zoomv"></span><button id="zin">+</button></div>
+  </div>
+  <p class="desc" id="desc"></p>
+
+  <div class="stage" id="stage"><div class="scaler" id="scaler">
+    <div class="app" id="app">
+      <div class="topbar"><span id="toptitle"></span><div class="icons"><span>🔇</span><span>🔔</span><span>⚙</span></div></div>
+      <div class="body">
+        <div class="sidebar">
+          <div class="rows" id="rows"></div>
+          <div class="add">+ Add Repo</div>
+        </div>
+        <div class="main" id="main">
+          <div class="tab" id="tab"></div>
+          <div class="term" id="term">
+            <div><b>Claude Code</b> v2.1.302</div>
+            <div class="dim">Sonnet 5.5 · Claude API</div>
+            <div class="dim" id="cwd"></div>
+            <div class="prompt">❯ <span class="dim">Try "fix lint errors"</span></div>
+            <div class="mode"><b>⏵⏵ auto mode on</b> (shift+tab to cycle)</div>
+          </div>
+        </div>
+      </div>
+      <div class="bridge" id="bridge"></div>
+      <svg class="outline" id="outline" width="1180" height="640"></svg>
+    </div>
+  </div></div>
+</div>
+
+<script>
+const REPOS = [
+  { e:"🌱", t:"Write login tests", r:"garden (II)", b:"fix/login-redirect", s:"Done", badge:"#859900" },
+  { e:"🍳", t:"Add recipe search", r:"kitchen", b:"main", s:"Working · 4m", badge:"#2aa198" },
+  { e:"🔥", t:"Casting API docs", r:"foundry", b:"feat/casting-docs", s:"Working · 1m", badge:"#268bd2" },
+  { e:"🍎", t:"Tune harvest model", r:"orchard", b:"main", s:"Compacting", badge:"#6c71c4" },
+  { e:"🔧", t:"Split tool registry", r:"workshop", b:"refactor/registry", s:"Needs permission", badge:"#dc322f" },
+  { e:"🌱", t:"Fix login redirect", r:"garden (I)", b:"fix/login-redirect", s:"Claude open", badge:"" },
+  { e:"🧺", t:"Market price import", r:"pantry", b:"main", s:"", badge:"", idle:true },
+];
+const RAINBOW = ["#dc322f","#cb4b16","#b58900","#859900","#2aa198","#268bd2","#6c71c4"];
+const ACCENTS = ["rainbow","#268bd2","#2aa198","#6c71c4","#d33682","#cb4b16","#859900","#586e75"];
+const OPTIONS = {
+  folder: { name:"A · Folder tab",
+    desc:"The selected row takes a light tint and a solid accent stripe. A solid tab in the accent color sits on top of the terminal, and the terminal gets a frame in the same color." },
+  bridge: { name:"B · Bridge",
+    desc:"The selected row reaches across the splitter gap and joins the terminal frame. The row and the terminal read as one shape. The tab is on top of the frame." },
+  soft: { name:"C · Soft tab",
+    desc:"A quiet version. The row has a tint and an outline in the accent color. The tab is tinted, with an accent outline that opens into the terminal top edge. There is no full frame, only a top edge." },
+  softbridge: { name:"E · Soft bridge",
+    desc:"The soft tab of C, with the bridge of B. The tinted row opens across the splitter gap into the terminal. The terminal left and top edges take the accent, so the row, the bridge and the tab read as one shape." },
+  pill: { name:"D · Stripe + pill",
+    desc:"A minimal version. The row has only an accent stripe on the left edge. A small pill title sits above the terminal, and an accent line runs along the terminal top edge." },
+};
+const DEFAULTS = { opt:"softbridge", accent:"rainbow", tint:0.30, frame:3, radius:8, tabpos:"left", theme:"light", zoom:100, sel:5 };
+const KEY = "ccwork-current-highlight";
+let S = { ...DEFAULTS };
+try { const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
+  for (const k in DEFAULTS) if (k in saved) S[k] = saved[k]; } catch (e) {}
+if (!OPTIONS[S.opt]) S.opt = DEFAULTS.opt;
+const accentFor = i => S.accent === "rainbow" ? RAINBOW[i % RAINBOW.length] : S.accent;
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+
+const $ = id => document.getElementById(id);
+function rgba(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
+}
+function seg(el, items, key) {
+  el.innerHTML = "";
+  for (const [v, label] of items) {
+    const b = document.createElement("button");
+    b.textContent = label; b.className = S[key] === v ? "on" : "";
+    b.onclick = () => { S[key] = v; save(); renderAll(); };
+    el.appendChild(b);
+  }
+}
+
+function renderControls() {
+  seg($("opt"), Object.entries(OPTIONS).map(([k, o]) => [k, o.name]), "opt");
+  seg($("tabpos"), [["left","Left"],["center","Center"]], "tabpos");
+  seg($("theme"), [["light","Light"],["dark","Dark"]], "theme");
+  $("sw").innerHTML = "";
+  for (const c of ACCENTS) {
+    const b = document.createElement("button");
+    b.className = "swatch" + (S.accent === c ? " on" : "");
+    b.style.background = c === "rainbow" ? `conic-gradient(${RAINBOW.join(",")},${RAINBOW[0]})` : c;
+    b.title = c === "rainbow" ? "Rainbow: color follows the row number" : c;
+    b.onclick = () => { S.accent = c; save(); renderAll(); };
+    $("sw").appendChild(b);
+  }
+  for (const k of ["tint","frame","radius"]) {
+    $(k).value = S[k];
+    $(k + "v").textContent = k === "tint" ? Math.round(S[k] * 100) + "%" : S[k] + "px";
+  }
+  $("zoomv").textContent = S.zoom + "%";
+  $("desc").textContent = OPTIONS[S.opt].desc;
+}
+
+function renderApp() {
+  const app = $("app"), a = accentFor(S.sel), o = S.opt, repo = REPOS[S.sel];
+  app.classList.toggle("dark", S.theme === "dark");
+  // Opaque mix, so the bridge can paint over the borders it crosses.
+  const tint = `color-mix(in srgb, ${a} ${Math.round(S.tint * 100)}%, var(--row-bg))`;
+  const solidTab = o === "folder" || o === "bridge";
+
+  // rows
+  const rows = $("rows"); rows.innerHTML = "";
+  REPOS.forEach((r, i) => {
+    const d = document.createElement("div");
+    d.className = "row";
+    d.innerHTML = `<span class="n">${i + 1}</span>
+      <div class="t${r.idle ? " idle" : ""}">${r.e} ${r.t}</div>
+      <div class="r">${r.r} | ${r.b}</div><div class="s">${r.s}</div>
+      ${r.badge ? `<span class="badge" style="background:${r.badge}"></span>` : ""}`;
+    if (i === S.sel) {
+      const stripe = `inset 4px 0 0 ${a}`;
+      if (o === "folder") { d.style.background = tint; d.style.boxShadow = stripe; }
+      if (o === "bridge") { d.style.background = tint; d.style.boxShadow = stripe; }
+      if (o === "soft") { d.style.background = tint; d.style.boxShadow = `inset 0 0 0 2px ${a}`; }
+      if (o === "softbridge") { d.style.background = tint; d.style.borderBottomColor = "transparent"; }
+      if (o === "pill") { d.style.boxShadow = stripe; d.style.background = rgba(a, S.tint * 0.4); }
+    }
+    d.onclick = () => { S.sel = i; save(); renderAll(); };
+    rows.appendChild(d);
+  });
+  rows.insertAdjacentHTML("beforeend",
+    `<div class="tail"><div>⟲ Recent</div><div>⌂ Dashboard</div></div>`);
+
+  // top bar title: the tab carries it in every option, so the bar keeps only the icons
+  $("toptitle").textContent = "";
+
+  // terminal frame
+  const term = $("term"), f = S.frame;
+  term.style.border = "1px solid #888"; term.style.borderTop = "1px solid #888";
+  if (o === "folder" || o === "bridge") term.style.border = `${Math.max(f, 1)}px solid ${a}`;
+  if (o === "soft") term.style.borderTop = `${Math.max(f, 2)}px solid ${a}`;
+  if (o === "softbridge") { term.style.borderTop = "0"; term.style.borderLeft = "0"; }
+  if (o === "pill") term.style.borderTop = `${Math.max(f, 1)}px solid ${a}`;
+  $("cwd").textContent = "~/code/" + repo.r.replace(/ \(.*\)/, "");
+
+  // tab
+  const tab = $("tab"), R = S.radius;
+  tab.innerHTML = `<span>${repo.e} ${repo.t}</span><span class="br">${repo.r} · ${repo.b}</span>`;
+  tab.style.cssText = "";
+  tab.style.left = S.tabpos === "left" ? "0" : "50%";
+  tab.style.transform = S.tabpos === "left" ? "" : "translateX(-50%)";
+  if (solidTab) {
+    Object.assign(tab.style, { background:a, color:"#fff", borderRadius:`${R}px ${R}px 0 0`, top:"-31px", height:"31px" });
+  } else if (o === "softbridge") {
+    Object.assign(tab.style, { background:tint, color:"inherit", borderRadius:`${R}px ${R}px 0 0`,
+      top:"-31px", height:"31px" });
+  } else if (o === "soft") {
+    Object.assign(tab.style, { background:tint, color:"inherit", borderRadius:`${R}px ${R}px 0 0`,
+      border:`2px solid ${a}`, borderBottom:"0", top:"-31px", height:"31px" });
+  } else {
+    Object.assign(tab.style, { background:a, color:"#fff", borderRadius:`${Math.max(R, 12)}px`,
+      height:"24px", top:"-28px", fontSize:"13px" });
+    if (S.tabpos === "left") tab.style.left = "6px";
+  }
+
+  // bridge: a solid block from the selected row across the gap into the terminal frame
+  const br = $("bridge"), svg = $("outline");
+  br.style.display = "none"; svg.innerHTML = "";
+  if (o === "bridge") {
+    requestAnimationFrame(() => {
+      const ab = app.getBoundingClientRect(), z = S.zoom / 100;
+      const rowEl = rows.children[S.sel].getBoundingClientRect();
+      const tb = term.getBoundingClientRect();
+      const fw = Math.max(f, 1);
+      const left = (rowEl.right - ab.left) / z - 1, right = (tb.left - ab.left) / z + fw;
+      Object.assign(br.style, { display:"block", background:a, border:"0",
+        left:left + "px", width:(right - left) + "px",
+        top:(rowEl.top - ab.top) / z + "px", height:(rowEl.height / z) + "px" });
+      // tint the row's own right edge so the join reads as one shape
+      rows.children[S.sel].style.boxShadow = `inset 4px 0 0 ${a}, inset -3px 0 0 ${a}`;
+    });
+  }
+  // Soft bridge: fills are plain boxes; the accent edge is ONE stroked path,
+  // so the row, bridge, terminal edge and tab share every corner exactly.
+  if (o === "softbridge") {
+    requestAnimationFrame(() => {
+      const ab = app.getBoundingClientRect(), z = S.zoom / 100;
+      const box = el => { const r = el.getBoundingClientRect();
+        return { l:Math.round((r.left - ab.left) / z), t:Math.round((r.top - ab.top) / z),
+                 r:Math.round((r.right - ab.left) / z), b:Math.round((r.bottom - ab.top) / z) }; };
+      const row = box(rows.children[S.sel]), t = box(term), tb = box(tab);
+      Object.assign(br.style, { display:"block", background:tint, border:"0",
+        left:(row.r - 2) + "px", width:(t.l - row.r + 2) + "px", top:row.t + "px", height:(row.b - row.t) + "px" });
+      if (S.sel > 0) rows.children[S.sel - 1].style.borderBottomColor = "transparent";
+      const w = Math.max(f, 2), h = w % 2 ? 0.5 : 0;   // keep strokes on whole pixels
+      const X = v => v + h, rr = Math.min(R, (tb.r - tb.l) / 2);
+      const top = [
+        `M${X(row.l)},${X(row.b)}`, `L${X(row.l)},${X(row.t)}`, `L${X(t.l)},${X(row.t)}`,
+        `L${X(t.l)},${X(t.t)}`, `L${X(tb.l)},${X(t.t)}`, `L${X(tb.l)},${X(tb.t + rr)}`,
+        `Q${X(tb.l)},${X(tb.t)} ${X(tb.l + rr)},${X(tb.t)}`, `L${X(tb.r - rr)},${X(tb.t)}`,
+        `Q${X(tb.r)},${X(tb.t)} ${X(tb.r)},${X(tb.t + rr)}`, `L${X(tb.r)},${X(t.t)}`, `L${X(t.r)},${X(t.t)}`,
+      ].join(" ");
+      const bottom = `M${X(row.l)},${X(row.b)} L${X(t.l)},${X(row.b)} L${X(t.l)},${X(t.b)}`;
+      svg.innerHTML = [top, bottom].map(d =>
+        `<path d="${d}" fill="none" stroke="${a}" stroke-width="${w}" stroke-linejoin="miter" stroke-linecap="square"/>`).join("");
+    });
+  }
+}
+
+function renderZoom() {
+  const z = S.zoom / 100;
+  $("scaler").style.transform = `scale(${z})`;
+  $("stage").style.height = (642 * z) + "px";
+  $("stage").style.width = Math.min(1182 * z, $("stage").parentElement.clientWidth) + "px";
+}
+function renderAll() { renderControls(); renderApp(); renderZoom(); }
+
+for (const k of ["tint","frame","radius"])
+  $(k).oninput = e => { S[k] = parseFloat(e.target.value); save(); renderAll(); };
+$("zin").onclick = () => { S.zoom = Math.min(200, S.zoom + 10); save(); renderAll(); };
+$("zout").onclick = () => { S.zoom = Math.max(40, S.zoom - 10); save(); renderAll(); };
+window.addEventListener("resize", renderZoom);
+renderAll();
+</script>
+</body>
+</html>

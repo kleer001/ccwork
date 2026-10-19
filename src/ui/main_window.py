@@ -30,14 +30,13 @@ import binascii
 import logging
 import time
 
-from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
-    QSplitter,
     QStackedWidget,
     QToolButton,
     QVBoxLayout,
@@ -66,16 +65,18 @@ from src.core.settings import Settings, load_settings, save_settings
 from src.core.terminal_session import build_session
 from src.core import x11
 from src.core.x11 import XDisplay
+from src.ui import badge_theme
 from src.ui.bell_button import BellButton
 from src.ui.ctrl_z_warning import show_ctrl_z_warning
+from src.ui.current_highlight import BridgeSplitter, CurrentFrame, Highlight
 from src.ui.empty_state import EmptyState
 from src.ui.preferences_dialog import PreferencesDialog
-from src.ui.qt_theme import apply_theme
+from src.ui.qt_theme import apply_theme, blend
 from src.ui.repo_sidebar import RepoSidebar
 from src.ui.shortcuts_dialog import ShortcutsDialog
 from src.ui.terminal_context_menu import build_terminal_menu
 from src.ui.terminal_host import TerminalHost
-from src.ui.title_label import TitleLabel
+from src.ui.title_tab import TitleTab
 
 
 # Logo lives at <repo>/logo/v2-icon.svg. Resolve relative to this module
@@ -123,8 +124,16 @@ class MainWindow(QMainWindow):
         # Ctrl+Z must not stack another dialog.
         self._ctrl_z_dialog_open: bool = False
 
-        # ── top strip: centered repo · branch + right-side icon cluster ──
-        self._title = TitleLabel(self)
+        # ── top strip: title tab over the terminal + right-side icon cluster ──
+        top = QWidget(self)
+        # Placed by _place_title_tab, not by the layout: it tracks the
+        # terminal's corner as the splitter moves.
+        self._title = TitleTab(top)
+        self._highlight: Highlight | None = None
+        self._highlight_timer = QTimer(self)
+        self._highlight_timer.setSingleShot(True)
+        self._highlight_timer.setInterval(0)  # coalesce bursts of geometry changes
+        self._highlight_timer.timeout.connect(self._sync_highlight)
 
         self._alerts_btn = QToolButton(self)
         self._alerts_btn.setAutoRaise(True)
@@ -143,11 +152,10 @@ class MainWindow(QMainWindow):
         self._gear_btn.setAutoRaise(True)
         self._gear_btn.clicked.connect(self._open_preferences)
 
-        top = QWidget(self)
         top_lay = QHBoxLayout(top)
         top_lay.setContentsMargins(6, 2, 6, 2)
         top_lay.setSpacing(4)
-        top_lay.addWidget(self._title, 1)        # absorbs all slack so label sits centered
+        top_lay.addStretch(1)
         top_lay.addWidget(self._alerts_btn, 0)
         top_lay.addWidget(self._bell_btn, 0)
         top_lay.addWidget(self._gear_btn, 0)
@@ -163,6 +171,7 @@ class MainWindow(QMainWindow):
         self._empty_placeholder = self._make_empty_placeholder()
         self._stack.addWidget(self._empty_placeholder)
         self._stack.setCurrentWidget(self._empty_placeholder)
+        self._frame = CurrentFrame(self._stack, self)
         self._empty_placeholder.recovery_dismissed.connect(
             lambda: session_recovery.dismiss())
         self._empty_placeholder.status_message.connect(
@@ -179,7 +188,7 @@ class MainWindow(QMainWindow):
         if crashed:
             self._empty_placeholder.show_recovery(crashed)
 
-        splitter = QSplitter(Qt.Horizontal, self)
+        splitter = BridgeSplitter(Qt.Horizontal, self)
         self._splitter = splitter
         # Debounce sidebar-width persistence: drags fire splitterMoved many
         # times per second, but we only need to write the final value.
@@ -205,7 +214,7 @@ class MainWindow(QMainWindow):
         central = QWidget(self)
         v = QVBoxLayout(central)
         v.setContentsMargins(6, 6, 6, 6)
-        v.setSpacing(4)
+        v.setSpacing(0)  # the title tab sits directly on the terminal frame
         v.addWidget(top)
         v.addWidget(splitter, 1)
         self.setCentralWidget(central)
@@ -220,6 +229,9 @@ class MainWindow(QMainWindow):
 
         # ── wiring ──
         self._sidebar.repo_selected.connect(self._on_repo_selected)
+        self._sidebar.current_geometry_changed.connect(self._schedule_highlight)
+        self._stack.currentChanged.connect(self._schedule_highlight)
+        self._splitter.splitterMoved.connect(self._schedule_highlight)
         self._sidebar.repo_clicked.connect(self._on_repo_clicked)
         self._sidebar.dashboard_requested.connect(self._show_dashboard)
         self._sidebar.repo_added.connect(self._on_repo_added)
@@ -427,7 +439,7 @@ class MainWindow(QMainWindow):
         """(Re)wire the splitter to honor ui.sidebar_side and sidebar_width.
 
         QSplitter lays children left→right in insertion order; "right side"
-        means the stack goes first, sidebar second. We use insertWidget so
+        means the terminal frame goes first, sidebar second. We use insertWidget so
         an already-parented widget is *moved* rather than re-parented —
         critical for the TerminalHost's embedded xterm, which would lose
         its XEmbed if we briefly setParent(None) it.
@@ -435,8 +447,10 @@ class MainWindow(QMainWindow):
         sp = self._splitter
         side = self._settings.ui.sidebar_side
         width = max(60, min(600, int(self._settings.ui.sidebar_width)))
+        self._frame.set_sidebar_side(side)
+        self._schedule_highlight()
         if side == "right":
-            sp.insertWidget(0, self._stack)
+            sp.insertWidget(0, self._frame)
             sp.insertWidget(1, self._sidebar)
             sp.setStretchFactor(0, 1)
             sp.setStretchFactor(1, 0)
@@ -444,7 +458,7 @@ class MainWindow(QMainWindow):
             sp.setSizes([total - width, width])
         else:
             sp.insertWidget(0, self._sidebar)
-            sp.insertWidget(1, self._stack)
+            sp.insertWidget(1, self._frame)
             sp.setStretchFactor(0, 0)
             sp.setStretchFactor(1, 1)
             total = max(sp.width(), width + 600)
@@ -606,6 +620,7 @@ class MainWindow(QMainWindow):
             if was_current:
                 self._stack.setCurrentWidget(self._empty_placeholder)
                 self._title.set_repo(None, None)
+                self._schedule_highlight()
 
     def _reload_terminal(self, repo: Repo) -> None:
         """Respawn the terminal for a repo with the current settings.
@@ -741,6 +756,7 @@ class MainWindow(QMainWindow):
         # Refresh branches first so the title gets a fresh subtitle on click.
         self._sidebar.refresh_branches()
         self._title.set_repo(repo.display_name, self._branch_for(repo.path))
+        self._schedule_highlight()
         # _ensure_terminal handles setCurrentWidget on first spawn; for a
         # pre-existing host we still need to swap to it.
         host = self._ensure_terminal(repo)
@@ -844,10 +860,60 @@ class MainWindow(QMainWindow):
         # X input focus to the currently selected repo's xterm. Deferred to
         # the next tick so Qt's own activation bookkeeping has settled.
         super().changeEvent(event)
+        if event.type() == QEvent.PaletteChange:
+            self._schedule_highlight()  # the tint mixes over the palette base
         if event.type() == QEvent.ActivationChange and self.isActiveWindow():
             current = self._stack.currentWidget()
             if isinstance(current, TerminalHost):
                 QTimer.singleShot(0, current.focus_child)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._schedule_highlight()
+
+    # ── current-row highlight (see current_highlight.py) ──
+
+    def _schedule_highlight(self) -> None:
+        self._highlight_timer.start()
+
+    def _place_title_tab(self) -> tuple[int, int]:
+        """Put the title tab over the terminal's sidebar-side corner.
+        Returns its left and right x (inclusive, window coordinates)."""
+        strip = self._title.parentWidget()
+        frame_x = strip.mapFrom(self, self._frame.mapTo(self, QPoint(0, 0))).x()
+        width = min(self._title.preferred_width(), self._frame.width())
+        if self._settings.ui.sidebar_side == "right":
+            x = frame_x + self._frame.width() - width
+        else:
+            x = frame_x
+            width = min(width, self._alerts_btn.x() - 4 - x)  # clear the icons
+        width = max(width, 0)
+        self._title.setGeometry(x, 0, width, strip.height())
+        left = self._title.mapTo(self, QPoint(0, 0)).x()
+        return left, left + width - 1
+
+    def _sync_highlight(self) -> None:
+        """Push the current-row highlight to every widget that paints a
+        segment of it. Off while no row is selected or the stack shows the
+        splash (the dashboard overlay included)."""
+        tab = self._place_title_tab()
+        row = self._sidebar.current_row()
+        if row < 0 or self._stack.currentWidget() is self._empty_placeholder:
+            h = None
+        else:
+            accent = badge_theme.current_accent(row)
+            h = Highlight(
+                accent=accent,
+                tint=blend(self.palette().base().color(), accent, badge_theme.CURRENT_TINT / 100),
+                sidebar_side=self._settings.ui.sidebar_side,
+                band=self._sidebar.current_row_band(),
+                tab=tab,
+            )
+        if h == self._highlight:
+            return
+        self._highlight = h
+        for target in (self._sidebar, self._splitter, self._frame, self._title):
+            target.set_highlight(h)
 
     def _branch_for(self, path: str) -> str | None:
         """Pull the cached branch for `path` from the sidebar model."""

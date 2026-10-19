@@ -21,28 +21,12 @@ import pytest
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication
 
 from src.core.repo_store import Repo, RepoStore
 from src.core.settings import Settings
 
-from tests.conftest import StubHookServer
-
-
-class FakeHost(QWidget):
-    """Minimal TerminalHost stand-in: the API surface MainWindow touches."""
-
-    def focus_child(self) -> None:
-        pass
-
-    def is_running(self) -> bool:
-        return True
-
-    def apply_live_settings(self, xterm_settings) -> list[str]:
-        return []
-
-    def stop(self) -> None:
-        pass
+from tests.conftest import FakeHost, StubHookServer
 
 
 def _make_store(tmp_path: Path, repos: list[Repo]) -> RepoStore:

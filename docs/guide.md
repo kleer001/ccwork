@@ -21,6 +21,13 @@ does not switch the terminal. The menu can reload the terminal, clone the
 row, open the folder, copy the path, rebind the row to another directory,
 set the title or icon, or remove the row.
 
+The current repo takes an accent color, picked by its position in the list:
+row 1 is red, row 2 orange, row 3 yellow, and so on through the rainbow. The
+row fills with a tint of that color, a bridge joins it to the terminal, and
+the terminal gets a frame and a title tab in the same color. Set the colors
+and the tint strength with `current_colors` and `current_tint` in
+`~/.config/ccwork/badges.toml`.
+
 The title line of a repo you haven't opened this session is regular italic.
 It turns bold upright once a terminal exists.
 

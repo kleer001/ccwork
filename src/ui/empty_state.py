@@ -51,6 +51,7 @@ from src.core.repo_stats import (
 from src.ui.badge_theme import (
     AMBIENT_COLOR, SPINNER_COLOR, STATUS_COLORS, STATUS_DONE, SUBAGENT_COLOR,
 )
+from src.ui.qt_theme import blend
 
 
 log = logging.getLogger(__name__)
@@ -88,14 +89,6 @@ _ACCENT_GREEN = STATUS_COLORS[STATUS_DONE]   # THE celebration accent
 _ACCENT_DIRTY = QColor("#cb4b16")            # solarized orange (crash banner)
 _DEL_COLOR = QColor("#c98a5e")               # churn deletions — muted, not alarm
 _MUTED = AMBIENT_COLOR
-
-
-def _blend(a: QColor, b: QColor, t: float) -> QColor:
-    return QColor(
-        round(a.red() + (b.red() - a.red()) * t),
-        round(a.green() + (b.green() - a.green()) * t),
-        round(a.blue() + (b.blue() - a.blue()) * t),
-    )
 
 
 def _knum(n: int) -> str:
@@ -283,7 +276,7 @@ class EmptyState(QWidget):
         # lightens a dark theme; black darkens a light one — so the boxes
         # read either way. Pick the direction from the bg's lightness.
         self._overlay = "0,0,0" if bg.lightnessF() > 0.5 else "255,255,255"
-        self._faint = _blend(_MUTED, bg, 0.45)
+        self._faint = blend(_MUTED, bg, 0.45)
 
         # The dashboard can outgrow the window; scroll instead of clipping.
         shell = QVBoxLayout(self)

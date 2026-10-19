@@ -136,7 +136,12 @@ with zero indirection.
 The top bar holds, right-to-left: the gear (Preferences), the 🔔 unread
 indicator, and a 🔊/🔇 toolbutton mirroring the "Show desktop
 notifications" preference (single source of truth:
-`Settings.ui.desktop_notifications`).
+`Settings.ui.desktop_notifications`). The title is a `TitleTab`
+(`title_tab.py`) placed over the terminal's corner.
+
+**Current-row highlight:** see the `current_highlight.py` docstring. Each
+widget paints its own segment because an overlay next to the native
+`TerminalHost` would turn opaque.
 
 - `terminal_host.py` spawns `xterm -into <winId>` via `QProcess`, polls for
   the reparented child window through `src/core/x11.py`, then resizes the X
@@ -192,7 +197,8 @@ notifications" preference (single source of truth:
   frames are arrays, and the five statuses are `[statuses.done]`,
   `[statuses.attention]`, `[statuses.answer]`, `[statuses.error]` and
   `[statuses.usage_limit]` sub-tables of `{color, glyph, label}`. The
-  compaction glyph is `compact_glyph` / `compact_color`. Omitted
+  compaction glyph is `compact_glyph` / `compact_color`; the current-row
+  accents are `current_colors` (array) and `current_tint` (percent). Omitted
   keys keep their default; a malformed value (bad color, empty glyph,
   unknown key) fails loudly at startup via `load_badge_theme`. The module
   docstring carries the full example schema.

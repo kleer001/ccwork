@@ -27,6 +27,11 @@ Example `badges.toml`::
     compact_color   = "#6c71c4"
     compact_glyph   = "◐"
     subagent_frames = ["✲", "✵", "✷", "✱", "❂", "✹", "✺", "✸", "❉", "❊", "❋"]
+    # The current row's accent, picked by its position in the stack (row 1
+    # takes the first color; the list repeats). current_tint is the percent
+    # of accent mixed into the row background for the current-row fill.
+    current_colors  = ["#dc322f", "#cb4b16", "#b58900", "#859900", "#2aa198", "#268bd2", "#6c71c4"]
+    current_tint    = 30
 
     [statuses.done]
     color = "#859900"
@@ -141,7 +146,8 @@ USAGE_LIMIT_WORDS = {
 #   solarized yellow, compaction = solarized violet
 #   spinner = solarized blue, subagent = solarized cyan (live parallel
 #   work), ambient = solarized base01 (quiet presence), last-focused =
-#   solarized violet.
+#   solarized violet. current_colors run the solarized rainbow red → violet
+#   down the stack.
 # subagent_frames are concentric asterisk-stars (all center-aligned, similar
 # size) ordered light→heavy→light, so the twinkle blooms and contracts as a
 # smooth pulse without the glyph jittering off-center — the eye reads "a
@@ -159,6 +165,8 @@ _DEFAULTS: dict = {
     "compact_color": "#6c71c4",
     "compact_glyph": "◐",
     "subagent_frames": ["✲", "✵", "✷", "✱", "❂", "✹", "✺", "✸", "❉", "❊", "❋", "❊", "❉", "✸", "✺", "✹", "❂", "✱", "✷", "✵"],
+    "current_colors": ["#dc322f", "#cb4b16", "#b58900", "#859900", "#2aa198", "#268bd2", "#6c71c4"],
+    "current_tint": 30,
     "spinner_variants": [
         ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
         ["⠋", "⠙", "⠚", "⠞", "⠖", "⠦", "⠴", "⠲", "⠳", "⠓"],
@@ -192,6 +200,8 @@ class BadgeTheme:
     compact_glyph: str
     subagent_frames: tuple[str, ...]
     spinner_variants: tuple[tuple[str, ...], ...]
+    current_colors: tuple[QColor, ...]
+    current_tint: int                       # percent of accent in the fill
     statuses: dict[str, StatusDefinition]   # keyed by status value
 
 
@@ -332,6 +342,18 @@ def _require_variants(value, *, where: str) -> tuple[tuple[str, ...], ...]:
     return tuple(_require_frames(row, where=f"{where}[{i}]") for i, row in enumerate(value))
 
 
+def _require_colors(value, *, where: str) -> tuple[QColor, ...]:
+    if not isinstance(value, list) or len(value) == 0:
+        raise ValueError(f"badges.toml: {where} must be a non-empty array of colors")
+    return tuple(_parse_color(v, where=f"{where}[{i}]") for i, v in enumerate(value))
+
+
+def _require_percent(value, *, where: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+        raise ValueError(f"badges.toml: {where} must be an integer 0–100, got {value!r}")
+    return value
+
+
 def _status(cfg: dict, name: str) -> StatusDefinition:
     sub = cfg["statuses"][name]
     return StatusDefinition(
@@ -357,6 +379,8 @@ def load_badge_theme(path: Path | None = None) -> BadgeTheme:
         compact_glyph=_require_glyph(cfg["compact_glyph"], where="compact_glyph"),
         subagent_frames=_require_frames(cfg["subagent_frames"], where="subagent_frames"),
         spinner_variants=_require_variants(cfg["spinner_variants"], where="spinner_variants"),
+        current_colors=_require_colors(cfg["current_colors"], where="current_colors"),
+        current_tint=_require_percent(cfg["current_tint"], where="current_tint"),
         statuses={name: _status(cfg, name) for name in STATUS_RANK},
     )
 
@@ -374,6 +398,8 @@ COMPACT_COLOR = _THEME.compact_color
 COMPACT_GLYPH = _THEME.compact_glyph
 SUBAGENT_FRAMES = _THEME.subagent_frames
 SPINNER_VARIANTS = _THEME.spinner_variants
+CURRENT_COLORS = _THEME.current_colors
+CURRENT_TINT = _THEME.current_tint
 
 _ALL_STATUSES = tuple(_THEME.statuses.values())
 
@@ -394,3 +420,8 @@ def spinner_for_id(repo_id: str) -> tuple[str, ...]:
     launch, which would feel like a bug.
     """
     return SPINNER_VARIANTS[zlib.crc32(repo_id.encode("utf-8")) % len(SPINNER_VARIANTS)]
+
+
+def current_accent(row: int) -> QColor:
+    """Accent for the current row at stack position `row` (0-based)."""
+    return CURRENT_COLORS[row % len(CURRENT_COLORS)]
