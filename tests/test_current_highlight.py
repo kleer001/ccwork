@@ -115,3 +115,19 @@ def test_title_tab_sits_on_the_terminal_corner(win, qapp: QApplication, side: st
         assert left == frame_left
     else:
         assert right == frame_left + win._frame.width() - 1
+
+
+def test_sidebar_slot_never_exceeds_the_sidebar(qapp: QApplication, tmp_path: Path,
+                                               monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sidebar_width above the sidebar's maximum would leave a gap that
+    breaks the bridge between the row and the splitter handle."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from src.ui.main_window import MainWindow
+    settings = Settings()
+    settings.ui.sidebar_width = 10_000
+    w = MainWindow(store=_store(tmp_path), hook_server=StubHookServer(), settings=settings)
+    w.resize(1000, 600)
+    w.show()
+    qapp.processEvents()
+    assert w._splitter.sizes()[0] == w._sidebar.width()
+    w.close()

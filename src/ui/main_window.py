@@ -446,7 +446,10 @@ class MainWindow(QMainWindow):
         """
         sp = self._splitter
         side = self._settings.ui.sidebar_side
-        width = max(60, min(600, int(self._settings.ui.sidebar_width)))
+        # setSizes ignores the sidebar's size limits; a slot wider than the
+        # sidebar leaves a gap between it and the splitter handle.
+        width = max(self._sidebar.minimumWidth(),
+                    min(self._sidebar.maximumWidth(), int(self._settings.ui.sidebar_width)))
         self._frame.set_sidebar_side(side)
         self._schedule_highlight()
         if side == "right":
