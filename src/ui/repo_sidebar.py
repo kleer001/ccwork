@@ -368,7 +368,30 @@ class RepoSidebar(QWidget):
             obj is self._view or obj is self._view.viewport()
         ):
             self._bump_activity()
+        # Right-click opens the row menu without activating the row: the
+        # view would otherwise move the selection on any button press. The
+        # ContextMenu event is delivered separately, so the menu still opens.
+        if (
+            obj is self._view.viewport()
+            and event.type() in self._RIGHT_CLICK_EVENTS
+            and event.button() == Qt.RightButton
+        ):
+            return True
+        # Focus coming back from the closed menu would make the first row
+        # current when no row is current (QAbstractItemView.focusInEvent).
+        if (
+            obj is self._view
+            and event.type() == QEvent.FocusIn
+            and event.reason() == Qt.PopupFocusReason
+        ):
+            return True
         return super().eventFilter(obj, event)
+
+    _RIGHT_CLICK_EVENTS = frozenset({
+        QEvent.MouseButtonPress,
+        QEvent.MouseButtonRelease,
+        QEvent.MouseButtonDblClick,
+    })
 
     def set_badge_style(self, style: str) -> None:
         """Switch between the colored dot and single-glyph badge."""

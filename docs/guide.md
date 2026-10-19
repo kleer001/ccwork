@@ -16,9 +16,10 @@ Each row has three lines:
 3. What Claude is doing: the badge word, `Working · 2m`, `Compacting`, or
    `Claude open`. A bare shell shows nothing.
 
-Click a repo to bring up its terminal. Right-click for the row menu: reload
-the terminal, clone the row, open the folder, copy the path, rebind the row
-to another directory, set the title or icon, or remove the row.
+Click a repo to bring up its terminal. Right-click for the row menu; this
+does not switch the terminal. The menu can reload the terminal, clone the
+row, open the folder, copy the path, rebind the row to another directory,
+set the title or icon, or remove the row.
 
 The title line of a repo you haven't opened this session is regular italic.
 It turns bold upright once a terminal exists.
