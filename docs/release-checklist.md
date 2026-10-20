@@ -7,7 +7,6 @@ by a human in one sitting; nothing here is automated.
 
 - [ ] `git status` clean on `main`.
 - [ ] `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q` — green.
-- [ ] CI green on the latest `main` commit (`.github/workflows/test.yml`).
 - [ ] Bump `version` in `pyproject.toml` and `__version__` in `src/__init__.py`.
       Keep them in lockstep; nothing reads from a single source today.
 - [ ] Skim `README.md`, `CLAUDE.md`, and the Preferences dialog text for

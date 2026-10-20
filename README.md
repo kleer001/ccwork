@@ -8,7 +8,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kleer001/ccwork/actions/workflows/test.yml"><img alt="Tests" src="https://github.com/kleer001/ccwork/actions/workflows/test.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue.svg">
   <img alt="Platform: Linux · X11/XWayland" src="https://img.shields.io/badge/platform-Linux%20%C2%B7%20X11%2FXWayland-lightgrey.svg">
