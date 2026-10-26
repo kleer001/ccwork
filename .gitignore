@@ -215,3 +215,9 @@ BREADCRUMB.md
 
 # Scratch / disposable staging (keep work you mind losing in a real dir)
 tmp/
+
+# Launch and publicity material (research notes, launch guide)
+publicity/
+
+# Playwright MCP output (page snapshots, console logs, screenshots)
+.playwright-mcp/
