@@ -74,6 +74,7 @@ Claude can name its own row:
 ```bash
 ccwork-rename "fix login bug"           # set the title
 ccwork-rename --badge 🐛 "fix login"    # set the title and the row icon
+ccwork-rename "fix login" --badge 🐛    # the same; the flag can go last
 ccwork-rename --badge 🐛                # set only the row icon
 ```
 
