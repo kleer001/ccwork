@@ -2,7 +2,8 @@
 
 Save writes `~/.config/ccwork/settings.toml`. Font / bg / fg apply live
 to running terminals via OSC (see `xterm_osc.py`); scrollback, scrollbar,
-and extra args need a respawn (right-click a repo → Reload terminal).
+and extra args need a respawn (right-click a repo → Reload terminal). The
+Rows tab previews each edit in the sidebar through `rows_previewed`.
 """
 
 from __future__ import annotations
@@ -12,28 +13,45 @@ import shlex
 from dataclasses import dataclass, replace
 
 from PySide6.QtCore import Signal, Qt
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFontComboBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMessageBox,
     QPushButton,
     QSpinBox,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from src.core.settings import Settings, UISettings, XtermSettings, save_settings
+from src.core.settings import (
+    ROW_LINE_IDS,
+    RowLineSettings,
+    RowSettings,
+    Settings,
+    UISettings,
+    XtermSettings,
+    save_settings,
+)
+
+ROW_LINE_NAMES = {"title": "Title", "repo": "Repo · branch", "status": "Status"}
+ROW_LAYOUT_NAMES = {"equal": "Equal thirds", "sized": "Sized to each line", "packed": "Packed with a gap"}
+ROW_COLOR_NAMES = {"text": "Text", "sub": "Sub", "muted": "Muted", "accent": "Row accent"}
+ROW_HIGHLIGHT_NAMES = {"accent": "Row accent, light", "marker": "Yellow marker"}
+CUSTOM = "Custom"
 
 
 # ── Color-scheme presets ────────────────────────────────────────────────────
@@ -142,6 +160,7 @@ class PreferencesDialog(QDialog):
     """
 
     applied = Signal(Settings)
+    rows_previewed = Signal(object)  # RowSettings, after each Rows tab edit
 
     def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -154,6 +173,7 @@ class PreferencesDialog(QDialog):
         tabs.addTab(self._build_colors_tab(), "Colors")
         tabs.addTab(self._build_scrolling_tab(), "Scrolling")
         tabs.addTab(self._build_ui_tab(), "UI")
+        tabs.addTab(self._build_rows_tab(), "Rows")
         tabs.addTab(self._build_advanced_tab(), "Advanced")
 
         hint = QLabel(
@@ -394,6 +414,247 @@ class PreferencesDialog(QDialog):
 
     # ── Advanced tab ──
 
+    # ── Rows tab ──
+
+    def _build_rows_tab(self) -> QWidget:
+        w = QWidget(self)
+        root = QVBoxLayout(w)
+        row_form = QFormLayout()
+        root.addLayout(row_form)
+
+        def spin(lo: int, hi: int, suffix: str) -> QSpinBox:
+            box = QSpinBox(w)
+            box.setRange(lo, hi)
+            box.setSuffix(suffix)
+            return box
+
+        def dspin(lo: float, hi: float, step: float, suffix: str) -> QDoubleSpinBox:
+            box = QDoubleSpinBox(w)
+            box.setRange(lo, hi)
+            box.setSingleStep(step)
+            box.setDecimals(1)
+            box.setSuffix(suffix)
+            return box
+
+        def combo(names: dict[str, str], custom: bool) -> QComboBox:
+            box = QComboBox(w)
+            for key, name in names.items():
+                box.addItem(name, key)
+            if custom:
+                box.addItem(CUSTOM, CUSTOM)
+            return box
+
+        self._row_height = spin(16, 200, " px")
+        self._row_inset = spin(0, 30, " px")
+        self._row_layout = combo(ROW_LAYOUT_NAMES, custom=False)
+        self._row_gap = spin(0, 30, " px")
+        self._row_collapse = QCheckBox("A hidden line gives its space to the others", w)
+        row_form.addRow("Row height", self._row_height)
+        row_form.addRow("Top and bottom inset", self._row_inset)
+        row_form.addRow("Line layout", self._row_layout)
+        row_form.addRow("Gap between lines", self._row_gap)
+        row_form.addRow("", self._row_collapse)
+
+        # The lines in paint order, with buttons to move the selected one.
+        self._line_list = QListWidget(w)
+        up, down = QToolButton(w), QToolButton(w)
+        up.setText("▲")
+        down.setText("▼")
+        up.setToolTip("Move the line up")
+        down.setToolTip("Move the line down")
+        up.clicked.connect(lambda: self._move_line(-1))
+        down.clicked.connect(lambda: self._move_line(1))
+        moves = QVBoxLayout()
+        moves.addWidget(up)
+        moves.addWidget(down)
+        moves.addStretch(1)
+        order_row = QHBoxLayout()
+        order_row.addWidget(self._line_list, 1)
+        order_row.addLayout(moves)
+        row_form.addRow("Line order", order_row)
+
+        line_form = QFormLayout()
+        root.addLayout(line_form)
+        self._ln_visible = QCheckBox("Shown", w)
+        self._ln_size = dspin(4, 40, 0.5, " px")
+        self._ln_family = QComboBox(w)
+        self._ln_family.addItem("App font", "")
+        for family in QFontDatabase.families():
+            self._ln_family.addItem(family, family)
+        self._ln_follow = QCheckBox("Bold with a terminal, italic without", w)
+        self._ln_styles: dict[str, QToolButton] = {}
+        styles = QHBoxLayout()
+        for key, label, tip in (
+            ("bold", "B", "Bold"), ("italic", "I", "Italic"), ("underline", "U", "Underline"),
+            ("strike", "S", "Strikeout"), ("caps", "ABC", "All capitals"), ("small_caps", "Small caps", "Small capitals"),
+        ):
+            btn = QToolButton(w)
+            btn.setText(label)
+            btn.setToolTip(tip)
+            btn.setCheckable(True)
+            btn.toggled.connect(self._on_line_edited)
+            styles.addWidget(btn)
+            self._ln_styles[key] = btn
+        styles.addStretch(1)
+        self._ln_color = combo(ROW_COLOR_NAMES, custom=True)
+        self._ln_color_btn = _ColorButton("#24292f", w)
+        color_row = QHBoxLayout()
+        color_row.addWidget(self._ln_color)
+        color_row.addWidget(self._ln_color_btn)
+        color_row.addStretch(1)
+        self._ln_highlight = QCheckBox("Highlight", w)
+        self._ln_hl_color = combo(ROW_HIGHLIGHT_NAMES, custom=True)
+        self._ln_hl_btn = _ColorButton("#fff1a8", w)
+        hl_row = QHBoxLayout()
+        hl_row.addWidget(self._ln_highlight)
+        hl_row.addWidget(self._ln_hl_color)
+        hl_row.addWidget(self._ln_hl_btn)
+        hl_row.addStretch(1)
+        self._ln_opacity = spin(0, 100, " %")
+        self._ln_tracking = dspin(-1, 4, 0.1, " px")
+        self._ln_title = QLabel(w)
+        line_form.addRow(self._ln_title)
+        line_form.addRow("", self._ln_visible)
+        line_form.addRow("Size", self._ln_size)
+        line_form.addRow("Font", self._ln_family)
+        line_form.addRow("Style", styles)
+        line_form.addRow("", self._ln_follow)
+        line_form.addRow("Color", color_row)
+        line_form.addRow("", hl_row)
+        line_form.addRow("Opacity", self._ln_opacity)
+        line_form.addRow("Letter spacing", self._ln_tracking)
+
+        self._load_rows()
+        self._line_list.setFixedHeight(
+            self._line_list.sizeHintForRow(0) * len(ROW_LINE_IDS) + 2 * self._line_list.frameWidth())
+        for box in (self._row_height, self._row_inset, self._row_gap):
+            box.valueChanged.connect(self._on_row_edited)
+        self._row_layout.currentIndexChanged.connect(self._on_row_edited)
+        self._row_collapse.toggled.connect(self._on_row_edited)
+        self._line_list.currentRowChanged.connect(lambda _: self._load_line())
+        for box in (self._ln_size, self._ln_tracking, self._ln_opacity):
+            box.valueChanged.connect(self._on_line_edited)
+        for box in (self._ln_family, self._ln_color, self._ln_hl_color):
+            box.currentIndexChanged.connect(self._on_line_edited)
+        for check in (self._ln_visible, self._ln_follow, self._ln_highlight):
+            check.toggled.connect(self._on_line_edited)
+        for btn in (self._ln_color_btn, self._ln_hl_btn):
+            btn.color_changed.connect(self._on_line_edited)
+        return w
+
+    def _line_id(self) -> str:
+        return self._line_list.currentItem().data(Qt.UserRole)
+
+    def _load_rows(self) -> None:
+        """Show `self._settings.ui.rows` in the Rows tab without previewing."""
+        rows = self._settings.ui.rows
+        widgets = (self._row_height, self._row_inset, self._row_layout, self._row_gap,
+                   self._row_collapse, self._line_list)
+        for widget in widgets:
+            widget.blockSignals(True)
+        self._row_height.setValue(rows.height)
+        self._row_inset.setValue(rows.inset)
+        self._row_layout.setCurrentIndex(self._row_layout.findData(rows.layout))
+        self._row_gap.setValue(rows.gap)
+        self._row_gap.setEnabled(rows.layout == "packed")
+        self._row_collapse.setChecked(rows.collapse_hidden)
+        self._line_list.clear()
+        for line_id in rows.order:
+            self._line_list.addItem(ROW_LINE_NAMES[line_id])
+            self._line_list.item(self._line_list.count() - 1).setData(Qt.UserRole, line_id)
+        self._line_list.setCurrentRow(0)
+        for widget in widgets:
+            widget.blockSignals(False)
+        self._load_line()
+
+    def _load_line(self) -> None:
+        """Show the selected line's settings in the line editor."""
+        line_id = self._line_id()
+        line: RowLineSettings = getattr(self._settings.ui.rows, line_id)
+        widgets = (self._ln_visible, self._ln_size, self._ln_family, self._ln_follow,
+                   self._ln_color, self._ln_color_btn, self._ln_highlight, self._ln_hl_color,
+                   self._ln_hl_btn, self._ln_opacity, self._ln_tracking, *self._ln_styles.values())
+        for widget in widgets:
+            widget.blockSignals(True)
+        self._ln_title.setText(f"<b>{ROW_LINE_NAMES[line_id]}</b>")
+        self._ln_visible.setChecked(line.visible)
+        self._ln_size.setValue(line.size)
+        family = self._ln_family.findData(line.family)
+        if family < 0:  # a family this machine lacks still shows by name
+            self._ln_family.addItem(line.family, line.family)
+            family = self._ln_family.count() - 1
+        self._ln_family.setCurrentIndex(family)
+        self._ln_follow.setVisible(line_id == "title")
+        self._ln_follow.setChecked(line.follow_terminal)
+        for key, btn in self._ln_styles.items():
+            btn.setChecked(getattr(line, key))
+        self._set_color_pick(self._ln_color, self._ln_color_btn, line.color)
+        self._ln_highlight.setChecked(line.highlight)
+        self._set_color_pick(self._ln_hl_color, self._ln_hl_btn, line.highlight_color)
+        self._ln_opacity.setValue(line.opacity)
+        self._ln_tracking.setValue(line.tracking)
+        for widget in widgets:
+            widget.blockSignals(False)
+        self._sync_line_enabled()
+
+    @staticmethod
+    def _set_color_pick(box: QComboBox, btn: _ColorButton, value: str) -> None:
+        idx = box.findData(value)
+        box.setCurrentIndex(idx if idx >= 0 else box.findData(CUSTOM))
+        if idx < 0:
+            btn.set_value(value)
+
+    @staticmethod
+    def _color_pick(box: QComboBox, btn: _ColorButton) -> str:
+        key = box.currentData()
+        return btn.value() if key == CUSTOM else key
+
+    def _sync_line_enabled(self) -> None:
+        follow = self._ln_follow.isVisible() and self._ln_follow.isChecked()
+        self._ln_styles["bold"].setEnabled(not follow)
+        self._ln_styles["italic"].setEnabled(not follow)
+        self._ln_color_btn.setVisible(self._ln_color.currentData() == CUSTOM)
+        self._ln_hl_color.setEnabled(self._ln_highlight.isChecked())
+        self._ln_hl_btn.setVisible(self._ln_highlight.isChecked() and self._ln_hl_color.currentData() == CUSTOM)
+
+    def _on_row_edited(self, *_: object) -> None:
+        rows = self._settings.ui.rows
+        rows.height = self._row_height.value()
+        rows.inset = self._row_inset.value()
+        rows.layout = self._row_layout.currentData()
+        rows.gap = self._row_gap.value()
+        rows.collapse_hidden = self._row_collapse.isChecked()
+        self._row_gap.setEnabled(rows.layout == "packed")
+        self.rows_previewed.emit(copy.deepcopy(rows))
+
+    def _on_line_edited(self, *_: object) -> None:
+        line: RowLineSettings = getattr(self._settings.ui.rows, self._line_id())
+        line.visible = self._ln_visible.isChecked()
+        line.size = self._ln_size.value()
+        line.family = self._ln_family.currentData()
+        line.follow_terminal = self._ln_follow.isChecked()
+        for key, btn in self._ln_styles.items():
+            setattr(line, key, btn.isChecked())
+        line.color = self._color_pick(self._ln_color, self._ln_color_btn)
+        line.highlight = self._ln_highlight.isChecked()
+        line.highlight_color = self._color_pick(self._ln_hl_color, self._ln_hl_btn)
+        line.opacity = self._ln_opacity.value()
+        line.tracking = self._ln_tracking.value()
+        self._sync_line_enabled()
+        self.rows_previewed.emit(copy.deepcopy(self._settings.ui.rows))
+
+    def _move_line(self, step: int) -> None:
+        order = self._settings.ui.rows.order
+        i = self._line_list.currentRow()
+        j = i + step
+        if not 0 <= j < len(order):
+            return
+        order[i], order[j] = order[j], order[i]
+        item = self._line_list.takeItem(i)
+        self._line_list.insertItem(j, item)
+        self._line_list.setCurrentRow(j)
+        self.rows_previewed.emit(copy.deepcopy(self._settings.ui.rows))
+
     def _build_advanced_tab(self) -> QWidget:
         w = QWidget(self)
         form = QFormLayout(w)
@@ -500,6 +761,9 @@ class PreferencesDialog(QDialog):
         self._fg.blockSignals(False)
         self._scheme.setCurrentText(self._match_scheme_name(d.bg, d.fg))
         self._extras.setText("")
+        self._settings.ui.rows = RowSettings()
+        self._load_rows()
+        self.rows_previewed.emit(copy.deepcopy(self._settings.ui.rows))
         self._refresh_preview()
 
     def _on_save(self) -> None:

@@ -11,15 +11,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QAbstractAnimation, QPoint
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication
 
 from src.core.repo_store import Repo, RepoStore
 from src.core.settings import Settings
 from src.ui import badge_theme
-from src.ui.current_highlight import EDGE_W, Highlight
+from src.ui.current_highlight import EDGE_W, SLIDE_MS, Highlight, lerp_highlight
 from src.ui.qt_theme import blend
+from src.ui.repo_delegate import REPO_LINE_SEP, fit_line
 from src.ui.repo_sidebar import RepoSidebar
 from tests.conftest import FakeHost, StubHookServer
 
@@ -37,6 +38,17 @@ def _store(tmp_path: Path) -> RepoStore:
 def test_blend_is_an_opaque_mix() -> None:
     assert blend(QColor(0, 0, 0), QColor(200, 100, 0), 0.5) == QColor(100, 50, 0)
     assert blend(QColor(255, 255, 255), QColor(200, 100, 0), 0) == QColor(255, 255, 255)
+
+
+def test_lerp_moves_band_and_colors_but_not_tab() -> None:
+    a = Highlight(QColor(0, 0, 0), QColor(0, 0, 0), "left", (100, 160), (0, 50))
+    b = Highlight(QColor(200, 100, 0), QColor(20, 40, 60), "left", (200, 260), (0, 80))
+    mid = lerp_highlight(a, b, 0.5)
+    assert mid.band == (150, 210)
+    assert mid.accent == QColor(100, 50, 0)
+    assert mid.tint == QColor(10, 20, 30)
+    assert mid.tab == b.tab
+    assert lerp_highlight(a, b, 1.0) == b
 
 
 def test_current_row_and_bridge_paint_one_shape(qapp: QApplication, tmp_path: Path) -> None:
@@ -131,3 +143,82 @@ def test_sidebar_slot_never_exceeds_the_sidebar(qapp: QApplication, tmp_path: Pa
     qapp.processEvents()
     assert w._splitter.sizes()[0] == w._sidebar.width()
     w.close()
+
+
+def test_new_row_slides_and_the_band_paints_between_rows(win, qapp: QApplication) -> None:
+    host_b = FakeHost()
+    win._terminals["r-b"] = host_b
+    win._stack.addWidget(host_b)
+    win._sidebar.select_id("r-b")
+    qapp.processEvents()
+    start = win._highlight
+    assert start is not None and start.band is not None    # from the splash: no slide
+
+    win._sidebar.select_id("r-c")
+    win._sync_highlight()
+    assert win._slide.state() == QAbstractAnimation.Running
+    target = win._highlight_target
+    assert target.band[0] > start.band[0]
+
+    win._slide.setCurrentTime(SLIDE_MS // 2)
+    mid = win._highlight
+    assert start.band[0] < mid.band[0] < target.band[0]
+    # The band straddles rows b and c: both paint their part of it.
+    sidebar = win._sidebar
+    img = sidebar.grab().toImage()
+    vp = sidebar._view.viewport()
+    x = vp.mapTo(sidebar, QPoint(40, 0)).x()
+    to_local = lambda y: sidebar.mapFrom(win, QPoint(0, y)).y()
+    assert img.pixelColor(x, to_local(mid.band[0])) == mid.accent
+    assert img.pixelColor(x, to_local(mid.band[1])) == mid.accent
+    assert img.pixelColor(x, to_local(target.band[0] + 1)) == mid.tint   # row c's top
+    assert img.pixelColor(x, to_local(start.band[1] - 1)) == mid.tint    # row b's bottom
+
+    win._slide.setCurrentTime(SLIDE_MS)
+    assert win._highlight == target
+
+
+def test_scroll_or_resize_snaps(win, qapp: QApplication) -> None:
+    win._sidebar.select_id("r-c")
+    qapp.processEvents()
+    win.resize(1100, 640)
+    qapp.processEvents()
+    win._sync_highlight()
+    assert win._slide.state() != QAbstractAnimation.Running
+    assert win._highlight == win._highlight_target
+
+
+def test_title_tab_shows_the_current_title_and_follows_edits(win, qapp: QApplication) -> None:
+    win._sidebar.select_id("r-c")
+    qapp.processEvents()
+    bare = win._title.preferred_width()
+    win._sidebar.model.set_title("r-c", "Fix the flash timing")
+    qapp.processEvents()
+    assert win._title._title == "Fix the flash timing"
+    assert win._title.preferred_width() > bare
+    win._sidebar.model.set_title("r-a", "Another row")      # not the current row
+    assert win._title._title == "Fix the flash timing"
+
+
+def test_title_tab_drops_the_title_before_the_repo(qapp: QApplication) -> None:
+    from src.ui.title_tab import TitleTab
+    tab = TitleTab()
+    tab.set_repo("garden", "main", "Fix the flash timing")
+    fm = tab.fontMetrics()
+    head = f"garden{REPO_LINE_SEP}main"
+    assert fit_line(fm, tab._head, tab._title, 10_000) == f"{head}{REPO_LINE_SEP}Fix the flash timing"
+    assert fit_line(fm, tab._head, tab._title, fm.horizontalAdvance(head) + 2) == head
+
+
+def test_row_settings_preview_resizes_rows_and_the_band(win, qapp: QApplication) -> None:
+    from src.core.settings import RowSettings
+    win._sidebar.select_id("r-c")
+    qapp.processEvents()
+    win._sidebar.set_rows(RowSettings(height=90))
+    qapp.processEvents()
+    top, bottom = win._sidebar.current_row_band()
+    assert bottom - top + 1 == 90
+    win._sidebar.set_rows(win._settings.ui.rows)              # what Cancel does
+    qapp.processEvents()
+    top, bottom = win._sidebar.current_row_band()
+    assert bottom - top + 1 == win._settings.ui.rows.height

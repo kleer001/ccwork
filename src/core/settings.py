@@ -28,13 +28,37 @@ expire_idle_repos = false
 expire_idle_days = 30
 
 [ui.layout]
-row_height = 66
 padding_x = 10
 group_gap_h = 10
 glyph_w = 14
 glyph_gap = 4
 active_stripe_w = 3
 last_focused_stripe_w = 2
+
+[ui.rows]
+height = 70
+inset = 4
+layout = "sized"     # "equal" | "sized" | "packed"
+gap = 5              # px between lines, "packed" only
+collapse_hidden = false
+order = ["repo", "title", "status"]
+
+[ui.rows.title]      # also [ui.rows.repo] and [ui.rows.status]
+visible = true
+size = 12.0          # px
+family = "Liberation Sans"   # "" = the app font
+follow_terminal = true       # bold with a terminal, italic without
+bold = false
+italic = false
+underline = false
+strike = false
+highlight = false
+highlight_color = "marker"   # "accent" | "marker" | "#rrggbb"
+caps = false
+small_caps = false
+color = "sub"        # "text" | "sub" | "muted" | "accent" | "#rrggbb"
+opacity = 75         # percent
+tracking = 1.0       # px between letters
 
 [ui.animation]
 spinner_interval_ms = 100
@@ -64,6 +88,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
@@ -172,11 +197,9 @@ class XtermSettings:
 class LayoutSettings:
     """Sidebar row geometry. Power-user knobs — TOML-only, no GUI control.
 
-    Tweak these to make rows denser, badges chunkier, or stripes thicker.
+    Tweak these to make badges chunkier or stripes thicker. Row height and
+    text live in RowSettings.
     """
-    # Minimum row height. A row always grows to fit its three text lines
-    # in the current font, so a small value cannot clip them.
-    row_height: int = 66
     padding_x: int = 10
     # Vertical gap painted above the first inactive row when grouping is on.
     group_gap_h: int = 10
@@ -186,6 +209,53 @@ class LayoutSettings:
     # Left-edge stripes: selection accent and "last focused" bookmark.
     active_stripe_w: int = 3
     last_focused_stripe_w: int = 2
+
+
+ROW_LINE_IDS = ("title", "repo", "status")
+ROW_LAYOUTS = ("equal", "sized", "packed")
+ROW_COLOR_KEYWORDS = ("text", "sub", "muted", "accent")
+ROW_HIGHLIGHT_KEYWORDS = ("accent", "marker")
+_HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
+
+
+@dataclass
+class RowLineSettings:
+    """One text line of a sidebar row. `size` and `tracking` are px."""
+    visible: bool = True
+    size: float = 12.0
+    family: str = ""                  # "" = the app font
+    # Title line only: bold when the row has a terminal, italic when not.
+    follow_terminal: bool = False
+    bold: bool = False
+    italic: bool = False
+    underline: bool = False
+    strike: bool = False
+    highlight: bool = False
+    highlight_color: str = "marker"   # ROW_HIGHLIGHT_KEYWORDS or "#rrggbb"
+    caps: bool = False
+    small_caps: bool = False
+    color: str = "sub"                # ROW_COLOR_KEYWORDS or "#rrggbb"
+    opacity: int = 100                # percent
+    tracking: float = 0.0
+
+
+@dataclass
+class RowSettings:
+    """Sidebar row text: the row height, the order of the three lines, how
+    they share the height, and each line's type. The text shrinks to fit
+    the height. mockups/panel-text.html is the design sandbox."""
+    height: int = 70
+    inset: int = 4                    # px above and below the text
+    layout: str = "sized"             # ROW_LAYOUTS
+    gap: int = 5                      # px between lines, "packed" only
+    collapse_hidden: bool = False     # a hidden line gives up its space
+    order: list[str] = field(default_factory=lambda: ["repo", "title", "status"])
+    title: RowLineSettings = field(default_factory=lambda: RowLineSettings(
+        size=12.0, family="Liberation Sans", follow_terminal=True, opacity=75, tracking=1.0))
+    repo: RowLineSettings = field(default_factory=lambda: RowLineSettings(
+        size=14.0, family="Inter", bold=True))
+    status: RowLineSettings = field(default_factory=lambda: RowLineSettings(
+        size=12.0, underline=True))
 
 
 @dataclass
@@ -243,6 +313,7 @@ class UISettings:
     expire_idle_repos: bool = False
     expire_idle_days: int = 30
     layout: LayoutSettings = field(default_factory=LayoutSettings)
+    rows: RowSettings = field(default_factory=RowSettings)
     animation: AnimationSettings = field(default_factory=AnimationSettings)
 
 
@@ -298,13 +369,59 @@ def _coerce_layout(raw: dict | None) -> LayoutSettings:
     d = LayoutSettings()
     raw = raw if isinstance(raw, dict) else {}
     return LayoutSettings(
-        row_height=int(raw.get("row_height", d.row_height)),
         padding_x=int(raw.get("padding_x", d.padding_x)),
         group_gap_h=int(raw.get("group_gap_h", d.group_gap_h)),
         glyph_w=int(raw.get("glyph_w", d.glyph_w)),
         glyph_gap=int(raw.get("glyph_gap", d.glyph_gap)),
         active_stripe_w=int(raw.get("active_stripe_w", d.active_stripe_w)),
         last_focused_stripe_w=int(raw.get("last_focused_stripe_w", d.last_focused_stripe_w)),
+    )
+
+
+def _coerce_color(value: Any, keywords: tuple[str, ...], default: str) -> str:
+    value = str(value)
+    return value if value in keywords or _HEX_COLOR.fullmatch(value) else default
+
+
+def _coerce_row_line(raw: Any, d: RowLineSettings) -> RowLineSettings:
+    raw = raw if isinstance(raw, dict) else {}
+    return RowLineSettings(
+        visible=bool(raw.get("visible", d.visible)),
+        size=max(4.0, min(40.0, float(raw.get("size", d.size)))),
+        family=str(raw.get("family", d.family)),
+        follow_terminal=bool(raw.get("follow_terminal", d.follow_terminal)),
+        bold=bool(raw.get("bold", d.bold)),
+        italic=bool(raw.get("italic", d.italic)),
+        underline=bool(raw.get("underline", d.underline)),
+        strike=bool(raw.get("strike", d.strike)),
+        highlight=bool(raw.get("highlight", d.highlight)),
+        highlight_color=_coerce_color(raw.get("highlight_color", d.highlight_color),
+                                      ROW_HIGHLIGHT_KEYWORDS, d.highlight_color),
+        caps=bool(raw.get("caps", d.caps)),
+        small_caps=bool(raw.get("small_caps", d.small_caps)),
+        color=_coerce_color(raw.get("color", d.color), ROW_COLOR_KEYWORDS, d.color),
+        opacity=max(0, min(100, int(raw.get("opacity", d.opacity)))),
+        tracking=max(-1.0, min(4.0, float(raw.get("tracking", d.tracking)))),
+    )
+
+
+def _coerce_rows(raw: dict | None) -> RowSettings:
+    d = RowSettings()
+    raw = raw if isinstance(raw, dict) else {}
+    layout = str(raw.get("layout", d.layout))
+    order = [str(x) for x in raw.get("order", d.order)] if isinstance(raw.get("order", d.order), list) else d.order
+    if sorted(order) != sorted(ROW_LINE_IDS):
+        order = list(d.order)
+    return RowSettings(
+        height=max(16, min(200, int(raw.get("height", d.height)))),
+        inset=max(0, min(30, int(raw.get("inset", d.inset)))),
+        layout=layout if layout in ROW_LAYOUTS else d.layout,
+        gap=max(0, min(30, int(raw.get("gap", d.gap)))),
+        collapse_hidden=bool(raw.get("collapse_hidden", d.collapse_hidden)),
+        order=order,
+        title=_coerce_row_line(raw.get("title"), d.title),
+        repo=_coerce_row_line(raw.get("repo"), d.repo),
+        status=_coerce_row_line(raw.get("status"), d.status),
     )
 
 
@@ -343,6 +460,7 @@ def _coerce_ui(raw: dict | None) -> UISettings:
         expire_idle_repos=bool(raw.get("expire_idle_repos", d.expire_idle_repos)),
         expire_idle_days=max(1, int(raw.get("expire_idle_days", d.expire_idle_days))),
         layout=_coerce_layout(raw.get("layout") if isinstance(raw.get("layout"), dict) else None),
+        rows=_coerce_rows(raw.get("rows") if isinstance(raw.get("rows"), dict) else None),
         animation=_coerce_animation(raw.get("animation") if isinstance(raw.get("animation"), dict) else None),
     )
 
@@ -462,6 +580,7 @@ def _ui_to_toml(ui: UISettings) -> dict[str, Any]:
         "expire_idle_repos": ui.expire_idle_repos,
         "expire_idle_days": ui.expire_idle_days,
         "layout": asdict(ui.layout),
+        "rows": asdict(ui.rows),
         "animation": asdict(ui.animation),
     }
 

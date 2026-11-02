@@ -123,6 +123,7 @@ ROLE_COMPACTING   = Qt.UserRole + 11  # bool — Claude is compacting its contex
 ROLE_STATUS_WORD  = Qt.UserRole + 12  # str — the badge's word ("Rate limited", …), "" with no badge
 ROLE_TITLE        = Qt.UserRole + 13  # str — the row's editable title, "" when unset
 ROLE_STATUS_TEXT  = Qt.UserRole + 14  # str — line-3 status text ("Working · 2m", …)
+ROLE_PRIORITY     = Qt.UserRole + 15  # bool — the row flashes when its next badge shows
 
 
 def _norm(path: str) -> str:
@@ -180,9 +181,12 @@ class RepoListModel(QAbstractListModel):
     # duplicate broadcasts. The window-title counter listens here so it
     # doesn't have to re-scan _working on every row repaint.
     working_changed = Signal()
-    # Emitted when a row gets a badge word it did not show before — the
-    # main window's bell follows it.
-    badge_raised = Signal()
+    # Emitted with the repo id when a row gets a badge word it did not show
+    # before. The main window's bell follows it; the sidebar pops the badge.
+    badge_raised = Signal(str)
+    # Emitted with the repo id when a row with priority set gets a badge.
+    # Priority clears at the same time; the sidebar flashes the row.
+    priority_fired = Signal(str)
 
     def __init__(self, store: RepoStore, parent=None) -> None:
         super().__init__(parent)
@@ -261,6 +265,9 @@ class RepoListModel(QAbstractListModel):
         # near the top reads as unfinished business. Cleared by the next
         # activity on the row (and by a fresh SessionStart).
         self._session_ended: dict[str, float] = {}
+        # Rows with priority set (right-click → Set priority). One-shot: the
+        # next badge on the row clears it and emits priority_fired.
+        self._priority: set[str] = set()
 
     # ── Qt model API ──
 
@@ -299,6 +306,8 @@ class RepoListModel(QAbstractListModel):
             return repo.title
         if role == ROLE_STATUS_TEXT:
             return self._status_text(repo)
+        if role == ROLE_PRIORITY:
+            return repo.id in self._priority
         if role == ROLE_SESSION_ACTIVE:
             return self.is_session_active(repo.id)
         if role == ROLE_ACTIVE_GROUP:
@@ -412,12 +421,30 @@ class RepoListModel(QAbstractListModel):
             self._status_word.pop(repo_id, None)
         if status != STATUS_ATTENTION:
             self._pending_tool.pop(repo_id, None)
-        self._emit_changed_for_id(
-            repo_id, [ROLE_STATUS, ROLE_STATUS_WORD, Qt.ToolTipRole],
-        )
+        roles = [ROLE_STATUS, ROLE_STATUS_WORD, Qt.ToolTipRole]
+        fired = bool(status) and repo_id in self._priority
+        if fired:
+            self._priority.discard(repo_id)
+            roles.append(ROLE_PRIORITY)
+        self._emit_changed_for_id(repo_id, roles)
         after = self.status_word(repo_id)
         if after and after != before:
-            self.badge_raised.emit()
+            self.badge_raised.emit(repo_id)
+        if fired:
+            self.priority_fired.emit(repo_id)
+
+    def set_priority(self, repo_id: str, on: bool) -> None:
+        """Set or clear priority for one row. See `_priority`."""
+        if on == (repo_id in self._priority):
+            return
+        if on:
+            self._priority.add(repo_id)
+        else:
+            self._priority.discard(repo_id)
+        self._emit_changed_for_id(repo_id, [ROLE_PRIORITY])
+
+    def has_priority(self, repo_id: str) -> bool:
+        return repo_id in self._priority
 
     def status_word(self, repo_id: str) -> str:
         """The badge's word for one row, or "" when no badge shows."""
@@ -636,6 +663,9 @@ class RepoListModel(QAbstractListModel):
                 roles.append(ROLE_COMPACTING)
             if self._subagents.pop(repo_id, None) is not None:
                 roles.append(ROLE_SUBAGENTS)
+            if repo_id in self._priority:
+                self._priority.discard(repo_id)
+                roles.append(ROLE_PRIORITY)
             self._turn_started.pop(repo_id, None)
         if roles:
             self._emit_changed_for_id(repo_id, roles)
@@ -1055,6 +1085,7 @@ class RepoListModel(QAbstractListModel):
             state.pop(repo.id, None)
         self._working.discard(repo.id)
         self._compacting.discard(repo.id)
+        self._priority.discard(repo.id)
         remove_row_title(repo.id)
         # Path-keyed caches stay only while at least one row still uses the
         # path — drop them once the last duplicate is gone.

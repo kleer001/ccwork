@@ -17,12 +17,15 @@ import shutil
 import time
 
 from PySide6.QtCore import (
+    QAbstractAnimation,
+    QEasingCurve,
     QEvent,
     QModelIndex,
     QPoint,
     QProcess,
     Qt,
     QTimer,
+    QVariantAnimation,
     Signal,
 )
 from PySide6.QtGui import QAction, QFont, QGuiApplication
@@ -89,6 +92,14 @@ BADGE_GALLERY = (
     "🛠️", "📊", "🧹", "🗃️", "🎬",
 )
 
+# Priority flash: FLASH_COUNT flashes, each phase (on or off) FLASH_INTERVAL_MS.
+FLASH_COUNT = 5
+FLASH_INTERVAL_MS = 250
+# Badge pop: a new status badge grows to about 120% and settles at 100%.
+# OutBack with overshoot s peaks at 1 + 4s³ / (27(s+1)²); 2.6 gives 1.2.
+POP_MS = 300
+POP_OVERSHOOT = 2.6
+
 # External one-shot emoji pickers tried in order. First found wins; the
 # rest depend on the user's desktop. Fallback path is the line edit's own
 # OS-level shortcut (Ctrl+. / Ctrl+;).
@@ -144,7 +155,8 @@ class RepoSidebar(QWidget):
         self._view = RepoListView(self)
         self._view.setModel(self._model)
         layout_cfg = settings.ui.layout if settings is not None else None
-        self._delegate = RepoDelegate(self._view, layout=layout_cfg)
+        rows_cfg = settings.ui.rows if settings is not None else None
+        self._delegate = RepoDelegate(self._view, layout=layout_cfg, rows=rows_cfg)
         self._view.setItemDelegate(self._delegate)
 
         # Braille-spinner ticker. Only runs while at least one repo is in
@@ -189,6 +201,16 @@ class RepoSidebar(QWidget):
         self._arrange_step_timer.timeout.connect(self._step_arrange)
         # Resets at every walk start. Drives the easing curve.
         self._arrange_steps_taken = 0
+        # Priority flash: remaining on/off phases per repo id. Odd counts
+        # are "on", so FLASH_COUNT flashes start at 2 * FLASH_COUNT.
+        self._flash_phases: dict[str, int] = {}
+        self._flash_timer = QTimer(self)
+        self._flash_timer.setInterval(FLASH_INTERVAL_MS)
+        self._flash_timer.timeout.connect(self._advance_flash)
+        self._model.priority_fired.connect(self._start_flash)
+        # Badge pop: one running animation per repo id.
+        self._pops: dict[str, QVariantAnimation] = {}
+        self._model.badge_raised.connect(self._start_pop)
         self._view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._view.setSelectionMode(QAbstractItemView.SingleSelection)
         # Per-row sizeHint: the group-boundary row is taller than the rest
@@ -339,9 +361,20 @@ class RepoSidebar(QWidget):
     def set_last_focused(self, path: str) -> None:
         self._model.set_last_focused(path)
 
+    def set_rows(self, rows) -> None:
+        """Paint the rows with `rows` (a RowSettings). Preferences previews
+        each Rows tab edit through here."""
+        self._delegate.rows = rows
+        self._view.doItemsLayout()
+        self._view.viewport().update()
+        self._position_tail_slots()
+        self.current_geometry_changed.emit()
+
     def set_settings(self, settings) -> None:
         """Swap in a fresh Settings reference (called after Preferences edits)."""
         self._settings = settings
+        if self._delegate.rows != settings.ui.rows:
+            self.set_rows(settings.ui.rows)
         if self._delegate.show_status_text != settings.ui.show_status_text:
             self._delegate.show_status_text = settings.ui.show_status_text
             self._view.viewport().update()
@@ -633,6 +666,46 @@ class RepoSidebar(QWidget):
             if idx.data(ROLE_WORKING) or (idx.data(ROLE_SUBAGENTS) or 0) > 0:
                 self._view.update(idx)
 
+    def _start_flash(self, repo_id: str) -> None:
+        self._flash_phases[repo_id] = 2 * FLASH_COUNT
+        self._advance_flash()
+        self._flash_timer.start()
+
+    def _advance_flash(self) -> None:
+        self._flash_phases = {i: n - 1 for i, n in self._flash_phases.items() if n > 1}
+        lit = {i for i, n in self._flash_phases.items() if n % 2}
+        for repo_id in lit ^ self._delegate.flash_ids:
+            idx = self._model.index(self._model.index_of_id(repo_id))
+            self._view.update(idx)
+        self._delegate.flash_ids = lit
+        if not self._flash_phases:
+            self._flash_timer.stop()
+
+    def _start_pop(self, repo_id: str) -> None:
+        if repo_id in self._pops:
+            self._pops.pop(repo_id).stop()
+        curve = QEasingCurve(QEasingCurve.OutBack)
+        curve.setOvershoot(POP_OVERSHOOT)
+        anim = QVariantAnimation(self)
+        anim.setDuration(POP_MS)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(curve)
+        anim.valueChanged.connect(lambda v, r=repo_id: self._set_pop(r, v))
+        anim.finished.connect(lambda r=repo_id: self._set_pop(r, None))
+        self._pops[repo_id] = anim
+        self._set_pop(repo_id, 0.0)  # hidden until the first frame
+        anim.start(QAbstractAnimation.DeleteWhenStopped)
+
+    def _set_pop(self, repo_id: str, scale: float | None) -> None:
+        """Set the badge scale for one row; None ends its pop."""
+        if scale is None:
+            self._pops.pop(repo_id, None)
+            self._delegate.pop_scale.pop(repo_id, None)
+        else:
+            self._delegate.pop_scale[repo_id] = scale
+        self._view.update(self._model.index(self._model.index_of_id(repo_id)))
+
     # ── signals ──
 
     def _on_current_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
@@ -794,7 +867,7 @@ class RepoSidebar(QWidget):
         popup = QWidget(self, Qt.Popup)
         popup.setObjectName("recentPopup")
         pal = self.palette()
-        hover_bg = pal.base().color().darker(108).name()
+        hover_bg = pal.highlight().color().name()   # the menus' hover
         popup.setStyleSheet(
             f"""
             QWidget#recentPopup {{
@@ -897,6 +970,17 @@ class RepoSidebar(QWidget):
         ``_on_context_menu`` so tests can inspect actions (enabled state,
         tooltips, ordering) without simulating an actual right-click."""
         menu = QMenu(self)
+
+        # Priority: offered while Claude works, cancelable while set.
+        armed = self._model.has_priority(repo.id)
+        if armed or self._model.is_working(repo.id):
+            priority_act = QAction("Clear priority" if armed else "Set priority", menu)
+            priority_act.setToolTip("Flash this row once when Claude stops or needs you.")
+            priority_act.triggered.connect(
+                lambda _=False, r=repo, on=not armed: self._model.set_priority(r.id, on)
+            )
+            menu.addAction(priority_act)
+            menu.addSeparator()
 
         reload_act = QAction("Reload terminal", menu)
         reload_act.setToolTip("Respawn xterm to pick up new settings. Loses in-flight shell state.")

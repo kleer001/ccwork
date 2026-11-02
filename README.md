@@ -36,8 +36,9 @@ session needs you.
 - **The current repo stands out.** Its row, a bridge across to the
   terminal, the terminal frame and the title tab share one color. The
   color follows the row number: red, orange, yellow, and on down the list.
-- **Three-line rows.** A task title, then `repo | branch`, then Claude's
-  state in words: `Working · 2m`, `Compacting`, `Claude open`.
+- **Three-line rows.** `repo · branch`, a task title, and Claude's state
+  in words: `Working · 2m`, `Compacting`, `Claude open`. The Rows tab in
+  Preferences sets their order, sizes and type, live.
 - **A bell for the whole window.** The 🔔 gets a dot when any row gets a
   new badge. 🔊 / 🔇 mutes desktop notifications.
 - **One title, two places.** The row title is the Claude session title.

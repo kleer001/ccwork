@@ -30,7 +30,7 @@ import binascii
 import logging
 import time
 
-from PySide6.QtCore import QEvent, QPoint, QSignalBlocker, Qt, QTimer
+from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QSignalBlocker, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
@@ -68,10 +68,13 @@ from src.core.x11 import XDisplay
 from src.ui import badge_theme
 from src.ui.bell_button import BellButton
 from src.ui.ctrl_z_warning import show_ctrl_z_warning
-from src.ui.current_highlight import BridgeSplitter, CurrentFrame, Highlight
+from src.ui.current_highlight import (
+    SLIDE_MS, BridgeSplitter, CurrentFrame, Highlight, lerp_highlight,
+)
 from src.ui.empty_state import EmptyState
 from src.ui.preferences_dialog import PreferencesDialog
 from src.ui.qt_theme import apply_theme, blend
+from src.ui.repo_model import ROLE_BRANCH, ROLE_TITLE
 from src.ui.repo_sidebar import RepoSidebar
 from src.ui.shortcuts_dialog import ShortcutsDialog
 from src.ui.terminal_context_menu import build_terminal_menu
@@ -89,6 +92,9 @@ log = logging.getLogger(__name__)
 
 # How often the idle-row expiry re-checks (ms).
 EXPIRY_CHECK_MS = 3600 * 1000
+
+# Model roles that the title tab's text reads.
+_TITLE_TAB_ROLES = {int(Qt.DisplayRole), ROLE_BRANCH, ROLE_TITLE}
 
 
 class MainWindow(QMainWindow):
@@ -129,7 +135,19 @@ class MainWindow(QMainWindow):
         # Placed by _place_title_tab, not by the layout: it tracks the
         # terminal's corner as the splitter moves.
         self._title = TitleTab(top)
+        # The highlight on screen, and the one it slides toward.
         self._highlight: Highlight | None = None
+        self._highlight_target: Highlight | None = None
+        self._highlight_row = -1
+        self._slide_from: Highlight | None = None
+        self._slide = QVariantAnimation(self)
+        self._slide.setDuration(SLIDE_MS)
+        self._slide.setStartValue(0.0)
+        self._slide.setEndValue(1.0)
+        self._slide.setEasingCurve(QEasingCurve.OutCubic)
+        self._slide.valueChanged.connect(
+            lambda t: self._show_highlight(lerp_highlight(self._slide_from, self._highlight_target, t))
+        )
         self._highlight_timer = QTimer(self)
         self._highlight_timer.setSingleShot(True)
         self._highlight_timer.setInterval(0)  # coalesce bursts of geometry changes
@@ -166,7 +184,7 @@ class MainWindow(QMainWindow):
         # Bell dot: glanceable "something happened" signal even when desktop
         # notifications are off or the sidebar is scrolled. It follows the
         # badges, so an ignored notification type stays quiet.
-        self._sidebar.model.badge_raised.connect(lambda: self._bell_btn.set_unseen(True))
+        self._sidebar.model.badge_raised.connect(lambda _id: self._bell_btn.set_unseen(True))
         self._stack = QStackedWidget(self)
         self._empty_placeholder = self._make_empty_placeholder()
         self._stack.addWidget(self._empty_placeholder)
@@ -239,6 +257,7 @@ class MainWindow(QMainWindow):
         self._sidebar.repo_removed.connect(self._on_repo_removed)
         self._sidebar.path_copied.connect(self._on_path_copied)
         self._sidebar.model.working_changed.connect(self._refresh_title)
+        self._sidebar.model.dataChanged.connect(self._on_rows_changed)
         self._hook_server.event_received.connect(self._on_hook_event)
         self._sidebar.model.publish_titles()
 
@@ -539,7 +558,9 @@ class MainWindow(QMainWindow):
     def _open_preferences(self) -> None:
         dlg = PreferencesDialog(self._settings, self)
         dlg.applied.connect(self._on_settings_changed)
-        dlg.exec()
+        dlg.rows_previewed.connect(self._sidebar.set_rows)
+        if not dlg.exec():
+            self._sidebar.set_rows(self._settings.ui.rows)  # Cancel drops the preview
 
     def _open_shortcuts(self) -> None:
         """Show the modal cheatsheet. Triggered by F1 via the MainWindow-scoped
@@ -758,8 +779,7 @@ class MainWindow(QMainWindow):
         self._store.mark_used(repo.id)
         # Refresh branches first so the title gets a fresh subtitle on click.
         self._sidebar.refresh_branches()
-        self._title.set_repo(repo.display_name, self._branch_for(repo.path))
-        self._schedule_highlight()
+        self._show_title(repo)
         # _ensure_terminal handles setCurrentWidget on first spawn; for a
         # pre-existing host we still need to swap to it.
         host = self._ensure_terminal(repo)
@@ -874,6 +894,18 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         self._schedule_highlight()
 
+    def _show_title(self, repo: Repo) -> None:
+        self._title.set_repo(repo.display_name, self._branch_for(repo.path), repo.title)
+        self._schedule_highlight()  # places the tab at its new width
+
+    def _on_rows_changed(self, top, bottom, roles: list[int]) -> None:
+        """Keep the title tab in step with the current row's name, branch
+        and title."""
+        repo = self._sidebar.current_repo()
+        if (repo is not None and top.row() <= self._sidebar.current_row() <= bottom.row()
+                and (not roles or _TITLE_TAB_ROLES.intersection(roles))):
+            self._show_title(repo)
+
     # ── current-row highlight (see current_highlight.py) ──
 
     def _schedule_highlight(self) -> None:
@@ -898,7 +930,8 @@ class MainWindow(QMainWindow):
     def _sync_highlight(self) -> None:
         """Push the current-row highlight to every widget that paints a
         segment of it. Off while no row is selected or the stack shows the
-        splash (the dashboard overlay included)."""
+        splash (the dashboard overlay included). A new current row gets a
+        slide over SLIDE_MS."""
         tab = self._place_title_tab()
         row = self._sidebar.current_row()
         if row < 0 or self._stack.currentWidget() is self._empty_placeholder:
@@ -912,15 +945,25 @@ class MainWindow(QMainWindow):
                 band=self._sidebar.current_row_band(),
                 tab=tab,
             )
-        if h == self._highlight:
+        if h == self._highlight_target:
             return
+        start, moved = self._highlight, row != self._highlight_row
+        self._highlight_target, self._highlight_row = h, row
+        self._slide.stop()
+        # Slide only to a new row. Other changes (scroll, resize) snap.
+        if moved and start and h and start.band and h.band and start.sidebar_side == h.sidebar_side:
+            self._slide_from = start
+            self._slide.start()
+        else:
+            self._show_highlight(h)
+
+    def _show_highlight(self, h: Highlight | None) -> None:
         self._highlight = h
         for target in (self._sidebar, self._splitter, self._frame, self._title):
             target.set_highlight(h)
 
     def _branch_for(self, path: str) -> str | None:
         """Pull the cached branch for `path` from the sidebar model."""
-        from src.ui.repo_sidebar import ROLE_BRANCH
         row = self._sidebar.model.index_of(path)
         if row < 0:
             return None

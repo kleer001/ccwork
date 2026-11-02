@@ -1,7 +1,7 @@
 """Item delegate that paints each repo row: name + branch + edge badges.
 
-Three-line rows (title / "repo | branch" / status text) with two reserved
-right-edge badge slots:
+Three text lines (title, "repo · branch", status text) in the order, sizes
+and type of `settings.ui.rows`, with two reserved right-edge badge slots:
   • OUTBOARD (rightmost): main-turn indicators — alert dots / compaction
     glyph / working spinner / DONE dot / ambient terminal state.
   • INBOARD (one slot to its left, only when subagents > 0): the
@@ -14,19 +14,24 @@ colors come from `badge_theme`. Row roles are defined in `repo_model`.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QModelIndex, QRect, QSize, Qt
+from PySide6.QtCore import QModelIndex, QPoint, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 
 from src.core.repo_store import Repo
+from src.core.settings import LayoutSettings, RowLineSettings, RowSettings
 from src.ui import badge_theme
 from src.ui.badge_theme import (
+    PRIORITY_GLYPH,
+    PRIORITY_TEXT,
     SESSION_ACTIVE_GLYPH,
     STATUS_DONE,
     SUBAGENT_FRAMES,
+    current_accent,
     spinner_for_id,
 )
-from src.ui.current_highlight import Highlight, paint_row
+from src.ui.current_highlight import Highlight, paint_row, row_band
+from src.ui.qt_theme import blend
 from src.ui.repo_model import (
     ROLE_ACTIVE_GROUP,
     ROLE_BRANCH,
@@ -34,6 +39,7 @@ from src.ui.repo_model import (
     ROLE_HAS_TERMINAL,
     ROLE_LAST_FOCUSED,
     ROLE_PATH_MISSING,
+    ROLE_PRIORITY,
     ROLE_REPO,
     ROLE_SESSION_ACTIVE,
     ROLE_STATUS,
@@ -59,32 +65,69 @@ SUBAGENT_SLOWDOWN = 3
 # enlarged relative to the row font so they read as marks, not body text.
 GLYPH_FONT_SCALE = 1.4
 
-# Separator between the repo name and the branch on line 2.
-REPO_LINE_SEP = " | "
+# Separator between the repo name, the branch and the title, on line 2 and
+# in the title tab.
+REPO_LINE_SEP = "  ·  "
 
 
-def _repo_line(fm, name: str, branch: str, width: int) -> str:
-    """Fit "name | branch" into `width` px. The branch elides first; once
-    no branch character fits, the name alone elides."""
-    full = f"{name}{REPO_LINE_SEP}{branch}" if branch else name
-    if fm.horizontalAdvance(full) <= width or not branch:
+# Natural line height per px of font size. The "sized" and "packed" layouts
+# share the row's text height in proportion to it, as mockups/panel-text.html
+# does.
+LINE_HEIGHT = 1.15
+
+# The "marker" highlight color for a row text line.
+MARKER_COLOR = QColor("#fff1a8")
+
+
+def line_slots(rows: RowSettings, line_ids: list[str]) -> tuple[float, list[tuple[str, float, float]]]:
+    """Share the row's text height between `line_ids`, per `rows.layout`.
+    Returns the text scale (at most 1, so the text fits the height) and
+    each line's (id, top, height), with top measured from the text top."""
+    avail = rows.height - 2 * rows.inset
+    natural = [getattr(rows, i).size * LINE_HEIGHT for i in line_ids]
+    total = sum(natural)
+    if rows.layout == "equal":
+        slot = avail / len(line_ids)
+        return min(1.0, slot / max(natural)), [(i, n * slot, slot) for n, i in enumerate(line_ids)]
+    slots = []
+    if rows.layout == "sized":
+        y = 0.0
+        for i, h in zip(line_ids, natural):
+            slots.append((i, y, avail * h / total))
+            y += avail * h / total
+        return min(1.0, avail / total), slots
+    gaps = rows.gap * (len(line_ids) - 1)
+    scale = min(1.0, max(0.0, avail - gaps) / total)
+    y = (avail - (total * scale + gaps)) / 2
+    for i, h in zip(line_ids, natural):
+        slots.append((i, y, h * scale))
+        y += h * scale + rows.gap
+    return scale, slots
+
+
+def fit_line(fm, head: str, tail: str, width: int) -> str:
+    """Fit "head · tail" into `width` px. The tail elides first; once no
+    tail character fits, the head alone elides."""
+    full = f"{head}{REPO_LINE_SEP}{tail}" if tail else head
+    if fm.horizontalAdvance(full) <= width or not tail:
         return fm.elidedText(full, Qt.ElideRight, width)
-    head = f"{name}{REPO_LINE_SEP}"
-    room = width - fm.horizontalAdvance(head)
-    tail = fm.elidedText(branch, Qt.ElideRight, room) if room > 0 else ""
-    if tail and tail != "…":
-        return head + tail
-    return fm.elidedText(name, Qt.ElideRight, width)
+    lead = f"{head}{REPO_LINE_SEP}"
+    room = width - fm.horizontalAdvance(lead)
+    rest = fm.elidedText(tail, Qt.ElideRight, room) if room > 0 else ""
+    if rest and rest != "…":
+        return lead + rest
+    return fm.elidedText(head, Qt.ElideRight, width)
 
 
 class RepoDelegate(QStyledItemDelegate):
-    """Three-line row: title (bold), "repo | branch", status text; badges right-aligned.
+    """Three-line row: title (bold), "repo · branch", status text; badges right-aligned.
 
-    All numeric layout knobs (row_height, padding_x, group_gap_h, glyph_w,
-    glyph_gap, active_stripe_w, last_focused_stripe_w) come from
-    `settings.ui.layout` — assigned as instance attributes by __init__ so
-    they're read consistently as `self.ROW_HEIGHT` etc. The legacy uppercase
-    names are kept to minimize delta in the paint code.
+    All numeric layout knobs (padding_x, group_gap_h, glyph_w, glyph_gap,
+    active_stripe_w, last_focused_stripe_w) come from `settings.ui.layout`
+    — assigned as instance attributes by __init__ so they're read
+    consistently as `self.PADDING_X` etc. The legacy uppercase names are
+    kept to minimize delta in the paint code. The row height and text come
+    from `settings.ui.rows`, kept as `self.rows`.
     """
 
     # Badge palette lives in badge_theme (the single theming source).
@@ -99,7 +142,7 @@ class RepoDelegate(QStyledItemDelegate):
     COMPACT_GLYPH = badge_theme.COMPACT_GLYPH
     LAST_FOCUSED_BASE = badge_theme.LAST_FOCUSED_BASE
 
-    def __init__(self, parent=None, layout=None) -> None:
+    def __init__(self, parent=None, layout=None, rows: RowSettings | None = None) -> None:
         super().__init__(parent)
         # Advanced by RepoSidebar's QTimer; read every paint.
         self.spinner_frame = 0
@@ -111,11 +154,16 @@ class RepoDelegate(QStyledItemDelegate):
         self.group_enabled = False
         # The current-row highlight, or None. Set by RepoSidebar.set_highlight.
         self.highlight: Highlight | None = None
+        # Repo ids whose priority flash is in its "on" phase. Set by
+        # RepoSidebar's flash timer.
+        self.flash_ids: set[str] = set()
+        # Repo ids whose status badge pops in, mapped to the badge's scale.
+        # Set by RepoSidebar's pop animations.
+        self.pop_scale: dict[str, float] = {}
         # Layout knobs from settings; defaults match the historical hardcodes
         # so tests that construct a delegate without settings still behave.
-        from src.core.settings import LayoutSettings
         L = layout or LayoutSettings()
-        self.ROW_HEIGHT = L.row_height
+        self.rows = rows or RowSettings()
         self.PADDING_X = L.padding_x
         self.GROUP_GAP_H = L.group_gap_h
         self.GLYPH_W = L.glyph_w
@@ -139,9 +187,8 @@ class RepoDelegate(QStyledItemDelegate):
         return rect
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
-        # Three text lines plus the 4 px top and bottom inset in paint().
-        # ROW_HEIGHT is a floor, so a small configured value cannot clip.
-        h = max(self.ROW_HEIGHT, 3 * QFontMetrics(option.font).height() + 8)
+        # The text shrinks to fit the row height (line_slots).
+        h = self.rows.height
         if self._is_group_boundary(index):
             h += self.GROUP_GAP_H
         return QSize(option.rect.width(), h)
@@ -159,6 +206,46 @@ class RepoDelegate(QStyledItemDelegate):
         if base.lightness() < 128:
             return cls.LAST_FOCUSED_BASE.darker(160)
         return cls.LAST_FOCUSED_BASE.lighter(140)
+
+    @staticmethod
+    def _line_color(line: RowLineSettings, text: QColor, base: QColor, row: int) -> QColor:
+        if line.color == "text":
+            color = QColor(text)
+        elif line.color == "sub":
+            color = text.lighter(130) if text.lightness() < 128 else text.darker(140)
+        elif line.color == "muted":
+            color = blend(text, base, 0.35)
+        elif line.color == "accent":
+            color = QColor(current_accent(row))
+        else:
+            color = QColor(line.color)
+        color.setAlphaF(color.alphaF() * line.opacity / 100)
+        return color
+
+    @staticmethod
+    def _highlight_color(line: RowLineSettings, base: QColor, row: int) -> QColor:
+        if line.highlight_color == "accent":
+            return blend(base, current_accent(row), 0.25)
+        if line.highlight_color == "marker":
+            return QColor(MARKER_COLOR)
+        return QColor(line.highlight_color)
+
+    @staticmethod
+    def _line_font(base: QFont, line: RowLineSettings, scale: float, bold: bool, italic: bool) -> QFont:
+        font = QFont(base)
+        if line.family:
+            font.setFamily(line.family)
+        font.setPixelSize(max(1, round(line.size * scale)))
+        font.setBold(bold)
+        font.setItalic(italic)
+        font.setUnderline(line.underline)
+        font.setStrikeOut(line.strike)
+        font.setLetterSpacing(QFont.AbsoluteSpacing, line.tracking)
+        if line.caps:
+            font.setCapitalization(QFont.AllUppercase)
+        elif line.small_caps:
+            font.setCapitalization(QFont.SmallCaps)
+        return font
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         painter.save()
@@ -179,13 +266,21 @@ class RepoDelegate(QStyledItemDelegate):
         # repo because selecting switches the stack. Paint the Active palette
         # unconditionally so xterm stealing focus doesn't dim the highlight.
         selected = bool(option.state & option.state.State_Selected)
-        current = selected and self.highlight is not None
+        h = self.highlight
+        band = row_band(option.widget.viewport(), option.rect, h) if h and h.band else None
+        # The band slides from row to row, so every row it touches paints
+        # its part. Without a band, the selected row paints the shape.
+        current = h is not None and (band.intersects(option.rect) if band else selected)
         if current:
             # The row's segment of the current-row highlight shape; the
             # side that faces the terminal stays open for the bridge.
-            paint_row(painter, option.rect, self.highlight)
+            painter.fillRect(option.rect, option.palette.base())
+            painter.save()
+            painter.setClipRect(option.rect, Qt.IntersectClip)
+            paint_row(painter, band or option.rect, h)
+            painter.restore()
             text_color = option.palette.text().color()
-        elif selected:
+        elif selected and h is None:
             painter.fillRect(option.rect, option.palette.highlight())
             text_color = option.palette.highlightedText().color()
             # Thin accent stripe on the left edge for extra glance-ability.
@@ -198,6 +293,9 @@ class RepoDelegate(QStyledItemDelegate):
         else:
             painter.fillRect(option.rect, option.palette.base())
             text_color = option.palette.text().color()
+        repo: Repo = index.data(ROLE_REPO)
+        if repo and repo.id in self.flash_ids:
+            painter.fillRect(option.rect, current_accent(index.row()))
 
         # Thin border around the row so each repo reads as a discrete button
         # rather than a continuous list. palette.mid() is the Qt-blessed
@@ -212,7 +310,6 @@ class RepoDelegate(QStyledItemDelegate):
         if not current:  # the accent edges replace it on the current row
             painter.drawRect(border_rect)
 
-        repo: Repo = index.data(ROLE_REPO)
         branch: str | None = index.data(ROLE_BRANCH)
         status: str = index.data(ROLE_STATUS) or ""
         working: bool = bool(index.data(ROLE_WORKING))
@@ -262,16 +359,11 @@ class RepoDelegate(QStyledItemDelegate):
             )
             painter.drawText(num_rect, Qt.AlignLeft | Qt.AlignTop, str(row_num))
 
-        rect = option.rect.adjusted(self.PADDING_X, 4, -self.PADDING_X, -4)
+        rows = self.rows
+        rect = option.rect.adjusted(self.PADDING_X, rows.inset, -self.PADDING_X, -rows.inset)
 
         # Reserve the right-edge glyph column whenever the row has a status
         # to show. Text elides to fit; the badge stays put.
-        # Untouched-this-session rows render italic + regular weight so the
-        # eye can pick out which repos already have a live terminal without
-        # using color (which would compete with the status badge).
-        name_font = QFont(option.font)
-        name_font.setBold(has_terminal)
-        name_font.setItalic(not has_terminal)
         show_right_glyph = (
             working
             or compacting
@@ -286,31 +378,22 @@ class RepoDelegate(QStyledItemDelegate):
         right_cols = (1 if show_right_glyph else 0) + (1 if show_subagent else 0)
         text_w = max(0, rect.width() - right_cols * glyph_room)
 
-        line_h = rect.height() // 3
-
-        # Line 1: emoji + editable title (bold). Blank when no title is set,
-        # apart from the emoji. Elides at the right so it doesn't bleed
-        # under the glyph column.
-        painter.setFont(name_font)
-        painter.setPen(QPen(text_color))
-        title = " ".join(p for p in ((repo.emoji, title_text) if repo else ()) if p)
-        painter.drawText(
-            QRect(rect.left(), rect.top(), text_w, line_h),
-            Qt.AlignLeft | Qt.AlignVCenter,
-            painter.fontMetrics().elidedText(title, Qt.ElideRight, text_w),
-        )
-
-        sub_font = QFont(option.font)
-        sub_font.setPointSizeF(option.font.pointSizeF() * 0.9)
-        painter.setFont(sub_font)
-        painter.setPen(QPen(text_color.lighter(130) if text_color.lightness() < 128 else text_color.darker(140)))
-        fm = painter.fontMetrics()
-
-        # Line 2: "name (II) | branch". Three-way pick for the branch part:
-        # a missing path masks the detached/branch question because git
-        # can't tell us anything about a dir that isn't there.
+        # Line text. The title is the flag, the emoji and the editable title.
+        # The repo line is "name (II) · branch", with a three-way pick for
+        # the branch part: a missing path masks the detached/branch question
+        # because git can't tell us anything about a dir that isn't there.
         # current_branch() returns None for both detached HEAD and missing
         # path, so we lean on the separate path_missing axis to disambiguate.
+        # Priority reads as words on the status line, in the row's accent;
+        # with no status line to carry them, the glyph leads line 1 instead.
+        priority = bool(index.data(ROLE_PRIORITY))
+        status_shown = self.show_status_text and rows.status.visible
+        flag = PRIORITY_GLYPH if priority and not status_shown else ""
+        priority_mark = f"{PRIORITY_GLYPH} {PRIORITY_TEXT}" if priority and status_shown else ""
+        texts = {
+            "title": " ".join(p for p in ((flag, repo.emoji, title_text) if repo else ()) if p),
+            "status": status_text if self.show_status_text else "",
+        }
         if not repo:
             name, branch_text = "", ""
         else:
@@ -321,19 +404,45 @@ class RepoDelegate(QStyledItemDelegate):
                 branch_text = branch
             else:
                 branch_text = "(detached)"
-        painter.drawText(
-            QRect(rect.left(), rect.top() + line_h, text_w, line_h),
-            Qt.AlignLeft | Qt.AlignVCenter,
-            _repo_line(fm, name, branch_text, text_w),
-        )
 
-        # Line 3: status text — the badge word or the live state.
-        if self.show_status_text and status_text:
-            painter.drawText(
-                QRect(rect.left(), rect.top() + 2 * line_h, text_w, line_h),
-                Qt.AlignLeft | Qt.AlignVCenter,
-                fm.elidedText(status_text, Qt.ElideRight, text_w),
-            )
+        line_ids = [i for i in rows.order if getattr(rows, i).visible or not rows.collapse_hidden]
+        scale, slots = line_slots(rows, line_ids)
+        base = option.palette.base().color()
+        for line_id, top, height in slots:
+            line: RowLineSettings = getattr(rows, line_id)
+            if not line.visible:
+                continue
+            # A title that follows the terminal paints bold when the row has
+            # one and italic when not, so the eye can pick out the live
+            # repos without a color that competes with the status badge.
+            if line_id == "title" and line.follow_terminal:
+                bold, italic = has_terminal, not has_terminal
+            else:
+                bold, italic = line.bold, line.italic
+            painter.setFont(self._line_font(option.font, line, scale, bold, italic))
+            fm = painter.fontMetrics()
+            pri = priority_mark if line_id == "status" else ""
+            if pri and texts[line_id]:
+                pri = f" · {pri}"
+            pri_w = fm.horizontalAdvance(pri)
+            if line_id == "repo":
+                text = fit_line(fm, name, branch_text, text_w)
+            else:
+                text = fm.elidedText(texts[line_id], Qt.ElideRight, max(0, text_w - pri_w))
+            slot = QRectF(rect.left(), rect.top() + top, text_w, height)
+            if line.highlight and text:
+                mark_h = fm.height()
+                painter.fillRect(
+                    QRectF(slot.left() - 2, slot.center().y() - mark_h / 2,
+                           fm.horizontalAdvance(text) + 4, mark_h),
+                    self._highlight_color(line, base, index.row()),
+                )
+            painter.setPen(QPen(self._line_color(line, text_color, base, index.row())))
+            painter.drawText(slot, Qt.AlignLeft | Qt.AlignVCenter, text)
+            if pri:
+                painter.setPen(QPen(current_accent(index.row())))
+                painter.drawText(slot.adjusted(fm.horizontalAdvance(text), 0, 0, 0),
+                                 Qt.AlignLeft | Qt.AlignVCenter, fm.elidedText(pri, Qt.ElideRight, text_w))
 
         # Subagent twinkle — paints whenever subagents > 0, independent of
         # the main turn's working state. Sits one slot inboard of the
@@ -392,6 +501,15 @@ class RepoDelegate(QStyledItemDelegate):
         else:
             color = self.STATUS_COLORS.get(status)
             if color is not None:
+                dot_d = 10
+                scale = self.pop_scale.get(repo.id, 1.0)
+                if scale != 1.0:
+                    # Grow the badge from its center. Both styles sit
+                    # right-aligned, so the dot's center serves the glyph too.
+                    center = QPoint(rect.right() - dot_d // 2, rect.center().y())
+                    painter.translate(center)
+                    painter.scale(scale, scale)
+                    painter.translate(-center)
                 if self.badge_style == "glyph":
                     glyph = self.STATUS_GLYPHS.get(status, "")
                     g_font = QFont(option.font)
@@ -403,7 +521,6 @@ class RepoDelegate(QStyledItemDelegate):
                                    self.GLYPH_W, rect.height())
                     painter.drawText(g_rect, Qt.AlignRight | Qt.AlignVCenter, glyph)
                 else:
-                    dot_d = 10
                     dot_rect = QRect(
                         rect.right() - dot_d,
                         rect.top() + (rect.height() - dot_d) // 2,

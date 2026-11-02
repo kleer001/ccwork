@@ -220,7 +220,6 @@ def test_layout_defaults_match_legacy_hardcodes() -> None:
     """Defaults must match the previous class-constants in RepoDelegate so
     nothing visually changes when no TOML is present."""
     L = S.LayoutSettings()
-    assert L.row_height == 66
     assert L.padding_x == 10
     assert L.group_gap_h == 10
     assert L.glyph_w == 14
@@ -242,15 +241,15 @@ def test_animation_defaults_match_legacy_hardcodes() -> None:
 def test_layout_and_animation_round_trip(tmp_path: Path) -> None:
     p = tmp_path / "s.toml"
     orig = S.Settings(ui=S.UISettings(
-        layout=S.LayoutSettings(row_height=70, glyph_w=18),
+        layout=S.LayoutSettings(padding_x=12, glyph_w=18),
         animation=S.AnimationSettings(spinner_interval_ms=50, arrange_step_max_ms=400),
     ))
     S.save_settings(orig, p)
     loaded = S.load_settings(p)
-    assert loaded.ui.layout.row_height == 70
+    assert loaded.ui.layout.padding_x == 12
     assert loaded.ui.layout.glyph_w == 18
     # Unspecified knobs in the same section should still load from defaults.
-    assert loaded.ui.layout.padding_x == S.LayoutSettings().padding_x
+    assert loaded.ui.layout.group_gap_h == S.LayoutSettings().group_gap_h
     assert loaded.ui.animation.spinner_interval_ms == 50
     assert loaded.ui.animation.arrange_step_max_ms == 400
 
@@ -379,3 +378,29 @@ def test_show_status_text_round_trip(tmp_path: Path) -> None:
 
     S.save_settings(S.Settings(ui=S.UISettings(show_status_text=True)), p)
     assert S.load_settings(p).ui.show_status_text is True
+
+
+def test_rows_round_trip(tmp_path: Path) -> None:
+    p = tmp_path / "s.toml"
+    rows = S.RowSettings(height=80, layout="packed", gap=3, order=["status", "title", "repo"],
+                         repo=S.RowLineSettings(size=16.0, family="Inter", color="#123abc", opacity=60))
+    S.save_settings(S.Settings(ui=S.UISettings(rows=rows)), p)
+    assert S.load_settings(p).ui.rows == rows
+
+
+def test_rows_reject_bad_values(tmp_path: Path) -> None:
+    p = tmp_path / "s.toml"
+    p.write_text(
+        '[ui.rows]\nlayout = "zigzag"\norder = ["title", "title", "repo"]\nheight = 999\n'
+        '[ui.rows.title]\ncolor = "chartreuse-ish"\nhighlight_color = "#12"\nopacity = 300\nsize = 1\n'
+    )
+    rows = S.load_settings(p).ui.rows
+    d = S.RowSettings()
+    assert rows.layout == d.layout
+    assert rows.order == d.order
+    assert rows.height == 200
+    assert rows.title.color == d.title.color
+    assert rows.title.highlight_color == d.title.highlight_color
+    assert rows.title.opacity == 100
+    assert rows.title.size == 4.0
+

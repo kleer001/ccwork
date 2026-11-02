@@ -137,7 +137,9 @@ The top bar holds, right-to-left: the gear (Preferences), the 🔔 unread
 indicator, and a 🔊/🔇 toolbutton mirroring the "Show desktop
 notifications" preference (single source of truth:
 `Settings.ui.desktop_notifications`). The title is a `TitleTab`
-(`title_tab.py`) placed over the terminal's corner.
+(`title_tab.py`) placed over the terminal's corner. It shows
+`repo · branch · title` for the current row and follows edits to that
+row through `MainWindow._on_rows_changed`.
 
 **Current-row highlight:** see the `current_highlight.py` docstring. Each
 widget paints its own segment because an overlay next to the native
@@ -197,20 +199,26 @@ widget paints its own segment because an overlay next to the native
   frames are arrays, and the five statuses are `[statuses.done]`,
   `[statuses.attention]`, `[statuses.answer]`, `[statuses.error]` and
   `[statuses.usage_limit]` sub-tables of `{color, glyph, label}`. The
-  compaction glyph is `compact_glyph` / `compact_color`; the current-row
-  accents are `current_colors` (array) and `current_tint` (percent). Omitted
-  keys keep their default; a malformed value (bad color, empty glyph,
-  unknown key) fails loudly at startup via `load_badge_theme`. The module
-  docstring carries the full example schema.
+  compaction glyph is `compact_glyph` / `compact_color`; the priority mark
+  is `priority_glyph`; the current-row accents are `current_colors` (array)
+  and `current_tint` (percent). Omitted keys keep their default; a malformed
+  value (bad color, empty glyph, unknown key) fails loudly at startup via
+  `load_badge_theme`. The module docstring carries the full example schema.
 
-  Each row paints three lines (`repo_delegate.py`): line 1 is the emoji
-  plus the editable **title** (`ROLE_TITLE`, blank when unset); line 2 is
-  `instance_name | branch` (`_repo_line` elides the branch first, then
-  the name); line 3 is the **status text** (`ROLE_STATUS_TEXT`): the
-  badge word, else `Working · 2m`, `Compacting` or `Claude open`, else
-  empty. `ui.show_status_text` (Preferences, default on) blanks line 3
-  without changing the row height. `ui.layout.row_height` is a floor —
-  `sizeHint` always fits three lines of the current font.
+  Each row paints three lines (`repo_delegate.py`): the emoji plus the
+  editable **title** (`ROLE_TITLE`, blank when unset);
+  `instance_name · branch` (`fit_line` elides the branch first, then the
+  name; the title tab uses it to fit the title after the branch); and the
+  **status text** (`ROLE_STATUS_TEXT`): the badge word, else
+  `Working · 2m`, `Compacting` or `Claude open`, else empty, then
+  `· ⚑ Priority` in the row's accent while priority is set (with no
+  status line, the ⚑ leads line 1).
+  `ui.rows` (`RowSettings`) sets the row height, the line order, how the
+  lines share the height (`line_slots`; the text shrinks to fit) and each
+  line's type. The Preferences Rows tab edits it and previews each edit
+  through `RepoSidebar.set_rows`; `mockups/panel-text.html` is the design
+  sandbox. `ui.show_status_text` (Preferences, default on) blanks the
+  status line without changing the row height.
 
   The title is mirrored with the Claude session title. `RepoListModel`
   publishes each row's title to `$XDG_RUNTIME_DIR/ccwork/titles/<row id>`
@@ -274,6 +282,9 @@ widget paints its own segment because an overlay next to the native
   `apply_terminal_grouping()` and `apply_auto_arrange()` (instant) are
   still used when toggling the preference on, where animation would
   feel laggy after the dialog closes.
+  **Priority** (right-click → *Set priority*) is a one-shot flag: see
+  `RepoListModel._priority` and `RepoSidebar._start_flash`. It is user
+  state that a Claude event clears: the next badge consumes it.
   The working spinner uses one of five braille variants in
   `SPINNER_VARIANTS`, picked per `repo.id` via `spinner_for_id()`
   (`zlib.crc32` so the choice is stable across launches — Python's built-in
@@ -290,10 +301,11 @@ but no widgets):
   so hand-edited files survive a GUI save. A legacy `settings.json` is
   migrated in place on first launch and renamed to `settings.json.bak`.
   `XtermSettings.to_xterm_args()` is the single source of truth for spawn
-  flags. `UISettings` nests `layout: LayoutSettings` (row geometry) and
-  `animation: AnimationSettings` (spinner / bubble-walk / debounce timings)
-  — these are **TOML-only power knobs** with no GUI control; tweak by
-  hand and restart. The save path uses `_merge_into` (key-by-key) rather
+  flags. `UISettings` nests `layout: LayoutSettings` (badge and stripe
+  geometry) and `animation: AnimationSettings` (spinner / bubble-walk /
+  debounce timings) — these are **TOML-only power knobs** with no GUI
+  control; tweak by hand and restart. It also nests `rows: RowSettings`
+  (row height and text), which the Preferences Rows tab edits. The save path uses `_merge_into` (key-by-key) rather
   than table reassignment so in-section comments survive.
 - `repo_store.py` — `~/.config/ccwork/repos.json`. Plain value object; no
   file watcher. Each `Repo` carries a uuid `id`, an `instance` integer,
@@ -488,7 +500,8 @@ clear rules: `docs/specs/hook-events.md`):
 
 `SessionStart` and `UserPromptSubmit` also run `sync_session_title` on
 the payload's `session_title`. When a row gets a badge word it did not
-show before, the model emits `badge_raised`, which lights the bell dot.
+show before, the model emits `badge_raised` with the row id: the bell
+dot lights and the badge pops (`RepoSidebar._start_pop`).
 
 `MainWindow` no longer keeps a parallel id-keyed `_working` set; the
 quit-confirm derives its list on demand via `model.is_working(repo_id)`

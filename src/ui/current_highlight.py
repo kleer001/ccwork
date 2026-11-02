@@ -14,18 +14,26 @@ A transparent overlay cannot draw the shape: TerminalHost is a native X
 window, and Qt makes the siblings of a native widget native too, so an
 overlay would turn into an opaque window. Every segment maps the band from
 window coordinates, so the edges meet to the pixel.
+
+When the current row changes, MainWindow slides the band to the new row over
+SLIDE_MS (`lerp_highlight`). Mid-slide the band straddles two rows, so every
+row it touches paints its own part.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QEvent, QPoint, QRect
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QListView, QSplitter, QSplitterHandle, QVBoxLayout, QWidget
 
+from src.ui.qt_theme import blend
+
 # Width (px) of every accent edge in the shape.
 EDGE_W = 3
+# Duration (ms) of the slide from one current row to the next.
+SLIDE_MS = 150
 
 
 @dataclass(frozen=True)
@@ -45,6 +53,19 @@ class Highlight:
 def _local_band(widget: QWidget, h: Highlight) -> tuple[int, int]:
     top = widget.mapFrom(widget.window(), QPoint(0, h.band[0])).y()
     return top, top + h.band[1] - h.band[0]
+
+
+def lerp_highlight(a: Highlight, b: Highlight, t: float) -> Highlight:
+    """`b` with its band and colors moved fraction `t` of the way from `a`.
+    Both bands must be set. The tab is `b`'s: the title tab does not slide."""
+    band = tuple(round(x + (y - x) * t) for x, y in zip(a.band, b.band))
+    return replace(b, accent=blend(a.accent, b.accent, t), tint=blend(a.tint, b.tint, t), band=band)
+
+
+def row_band(viewport: QWidget, row: QRect, h: Highlight) -> QRect:
+    """The band in `viewport` coordinates, as wide as `row`."""
+    top, bottom = _local_band(viewport, h)
+    return QRect(row.left(), top, row.width(), bottom - top + 1)
 
 
 def paint_band(painter: QPainter, x: int, width: int, top: int, bottom: int, h: Highlight) -> None:

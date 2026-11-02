@@ -1,4 +1,5 @@
-"""Top-strip tab above the terminal, showing the active `repo · branch`.
+"""Top-strip tab above the terminal, showing the active `repo · branch · title`.
+The title elides first and drops out when no character of it fits.
 
 MainWindow places it over the terminal's sidebar-side corner. While a row is
 current, it paints as a rounded tab in that row's accent, open at the bottom
@@ -7,11 +8,14 @@ where it meets the terminal frame (see current_highlight.py).
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QFont, QPainter, QPainterPath
+from PySide6.QtGui import QFont, QFontMetricsF, QPainter, QPainterPath
 from PySide6.QtWidgets import QWidget
 
 from src.ui.current_highlight import EDGE_W, Highlight
+from src.ui.repo_delegate import REPO_LINE_SEP, fit_line
 
 PAD_X = 14
 RADIUS = 8
@@ -27,15 +31,20 @@ class TitleTab(QWidget):
         self._highlight: Highlight | None = None
         self.set_repo(None, None)
 
-    def set_repo(self, name: str | None, branch: str | None = None) -> None:
+    def set_repo(self, name: str | None, branch: str | None = None, title: str = "") -> None:
         if not name:
-            self._text = "ccwork"
+            self._head, self._title = "ccwork", ""
         else:
-            self._text = f"{name}  ·  {branch}" if branch else name
+            self._head = f"{name}{REPO_LINE_SEP}{branch}" if branch else name
+            self._title = title
         self.update()
 
     def preferred_width(self) -> int:
-        return self.fontMetrics().horizontalAdvance(self._text) + 2 * (PAD_X + EDGE_W)
+        text = f"{self._head}{REPO_LINE_SEP}{self._title}" if self._title else self._head
+        # Round the fractional width up: elidedText measures fractions, so a
+        # tab cut to the rounded-down width would elide its last character.
+        width = math.ceil(QFontMetricsF(self.font()).horizontalAdvance(text))
+        return width + 2 * (PAD_X + EDGE_W)
 
     def set_highlight(self, h: Highlight | None) -> None:
         self._highlight = h
@@ -59,6 +68,6 @@ class TitleTab(QWidget):
             p.fillPath(inner, h.tint)
         text_rect = self.rect().adjusted(EDGE_W + PAD_X, EDGE_W, -(EDGE_W + PAD_X), 0)
         p.setPen(self.palette().text().color())
-        elided = self.fontMetrics().elidedText(self._text, Qt.ElideMiddle, text_rect.width())
-        p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, elided)
+        text = fit_line(self.fontMetrics(), self._head, self._title, text_rect.width())
+        p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, text)
         p.end()

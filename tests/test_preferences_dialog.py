@@ -187,12 +187,62 @@ def test_save_keeps_toml_only_layout_and_animation(qapp, tmp_path, monkeypatch) 
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     settings = S.Settings()
-    settings.ui.layout.row_height = 90
+    settings.ui.layout.glyph_w = 22
     settings.ui.animation.spinner_interval_ms = 250
     settings.ui.sidebar_width = 333
     dlg = PreferencesDialog(settings)
     dlg._on_save()
 
-    assert settings.ui.layout.row_height == 90
+    assert settings.ui.layout.glyph_w == 22
     assert settings.ui.animation.spinner_interval_ms == 250
     assert settings.ui.sidebar_width == 333
+
+
+# ── Rows tab ──
+
+
+def test_rows_tab_previews_each_edit_and_saves_it(qapp, tmp_path, monkeypatch) -> None:
+    from src.core import settings as S
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    settings = S.Settings()
+    dlg = PD.PreferencesDialog(settings)
+    previews: list = []
+    dlg.rows_previewed.connect(previews.append)
+
+    dlg._line_list.setCurrentRow(dlg._settings.ui.rows.order.index("status"))
+    dlg._ln_size.setValue(15.5)
+    dlg._ln_styles["strike"].setChecked(True)
+    dlg._ln_color.setCurrentIndex(dlg._ln_color.findData(PD.CUSTOM))
+    dlg._ln_color_btn.set_value("#336699")
+    dlg._move_line(-1)
+    dlg._row_height.setValue(84)
+
+    last = previews[-1]
+    assert last.height == 84
+    assert last.status.size == 15.5 and last.status.strike and last.status.color == "#336699"
+    assert last.order.index("status") == S.RowSettings().order.index("status") - 1
+    assert settings.ui.rows == S.RowSettings()      # the caller's settings stay put until Save
+
+    dlg._on_save()
+    assert S.load_settings().ui.rows == last
+
+
+def test_rows_tab_restore_defaults_resets_the_rows(qapp, tmp_path, monkeypatch) -> None:
+    from src.core import settings as S
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    settings = S.Settings(ui=S.UISettings(rows=S.RowSettings(height=40, layout="equal")))
+    dlg = PD.PreferencesDialog(settings)
+    dlg._on_restore_defaults()
+    assert dlg._settings.ui.rows == S.RowSettings()
+    assert dlg._row_height.value() == S.RowSettings().height
+
+
+def test_rows_tab_keeps_a_font_this_machine_lacks(qapp) -> None:
+    from src.core import settings as S
+
+    rows = S.RowSettings(title=S.RowLineSettings(family="No Such Font 9000"))
+    dlg = PD.PreferencesDialog(S.Settings(ui=S.UISettings(rows=rows)))
+    dlg._line_list.setCurrentRow(rows.order.index("title"))
+    assert dlg._ln_family.currentData() == "No Such Font 9000"

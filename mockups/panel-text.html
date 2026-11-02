@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Panel Text Sandbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Arimo:ital,wght@0,400;0,700;1,400;1,700&family=Cousine:ital,wght@0,400;0,700;1,400;1,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Inter:ital,wght@0,400;0,700;1,400;1,700&family=Tinos:ital,wght@0,400;0,700;1,400;1,700&display=swap">
+<style>
+/* Layout: controls column on the left, the live sidebar preview on the right; stacks on a phone. Single light look by choice. */
+:root {
+  color-scheme: light;
+  --bg: #f3f4f7;
+  --panel: #ffffff;
+  --ink: #1c2230;
+  --muted: #5b6474;
+  --line: #d7dbe3;
+  --accent: #1f6fb2;
+  --on: #1c2230;
+  --on-ink: #ffffff;
+  --warn: #9a5b00;
+  --ui: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --num: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink); font: 14px/1.45 var(--ui);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+}
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-bottom: 16px; }
+h1 { font-size: 22px; margin: 0; text-wrap: balance; }
+header p { margin: 0; color: var(--muted); }
+.layout { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 860px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+.controls { display: grid; gap: 14px; min-width: 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 10px; }
+.card h2 { font-size: 13px; margin: 0; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.field { display: grid; grid-template-columns: 9.5em minmax(0, 1fr); align-items: center; gap: 8px; }
+.field > label, .field > .lab { color: var(--muted); }
+.stepper { display: inline-flex; align-items: center; gap: 4px; }
+.stepper input { width: 4.6em; font: 13px var(--num); text-align: right; padding: 3px 4px; border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--ink); }
+.stepper .unit { font: 12px var(--num); color: var(--muted); min-width: 1.6em; }
+button { font: inherit; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 5px; padding: 3px 9px; cursor: pointer; }
+button:hover { border-color: #aab2c0; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button.sq { width: 26px; height: 26px; padding: 0; font: 15px/1 var(--num); }
+button[aria-pressed="true"] { background: var(--on); color: var(--on-ink); border-color: var(--on); }
+button:disabled { opacity: 0.4; cursor: default; }
+select { font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--ink); max-width: 100%; }
+input[type="color"] { width: 32px; height: 26px; padding: 0 2px; border: 1px solid var(--line); border-radius: 4px; background: #fff; vertical-align: middle; }
+.check { display: flex; align-items: center; gap: 8px; }
+.check input { width: 16px; height: 16px; margin: 0; }
+.inline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+.line-card { border-left: 4px solid var(--line); }
+.line-head { display: flex; align-items: center; gap: 6px; }
+.line-head .name { font-weight: 600; flex: 1; min-width: 0; }
+.line-head .pos { font: 12px var(--num); color: var(--muted); }
+.styles { display: flex; flex-wrap: wrap; gap: 5px; }
+.styles button { min-width: 30px; }
+.b-bold { font-weight: 700; } .b-italic { font-style: italic; } .b-under { text-decoration: underline; }
+.b-strike { text-decoration: line-through; } .b-hl { background: #fff1a8; } .b-hl[aria-pressed="true"] { background: var(--on); }
+.b-caps { font-size: 12px; letter-spacing: 0.06em; } .b-sc { font-variant: small-caps; }
+.note { font-size: 12.5px; color: var(--muted); margin: 0; }
+.note.warn { color: var(--warn); }
+
+.stage { display: grid; gap: 10px; min-width: 0; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.toolbar .zoom { display: inline-flex; align-items: center; gap: 4px; }
+.toolbar .zoom output { font: 13px var(--num); min-width: 3.6em; text-align: center; }
+.fit { font-size: 13px; }
+.viewport { overflow: auto; background: #e9ebf0; border: 1px solid var(--line); border-radius: 8px; padding: 16px; max-height: 78vh; }
+.scaler-box { position: relative; }
+.scaler { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+
+/* The preview itself: the app's own palette and geometry, in app pixels. */
+.app { position: relative; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+.strip { position: absolute; left: 0; right: 0; top: 0; }
+.list { position: absolute; left: 0; overflow: hidden; background: #ffffff; }
+.row { position: absolute; left: 0; overflow: hidden; }
+.row .num { position: absolute; font-family: "Liberation Mono", Cousine, monospace; line-height: 1; white-space: nowrap; }
+.row .ln { position: absolute; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.row .badge { position: absolute; display: flex; align-items: center; font-family: "Liberation Mono", Cousine, monospace; font-weight: 700; line-height: 1; }
+.term { position: absolute; background: #ffffff; overflow: hidden; }
+.term pre { margin: 0; font: 8px/1.2 "Liberation Mono", Cousine, monospace; color: #24292f; padding: 6px 8px; white-space: pre; }
+.tab { position: absolute; font-family: "Liberation Mono", Cousine, monospace; font-weight: 700; font-size: 17px; color: #24292f; white-space: pre; display: flex; align-items: center; padding: 0 17px; }
+.legend-note { font-size: 12.5px; color: var(--muted); margin: 0; }
+
+@media (prefers-reduced-motion: reduce) { .row .badge { transition: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Panel Text Sandbox</h1>
+  <p>Tune the three text lines of each sidebar row. Settings save in this browser.</p>
+</header>
+<div class="layout">
+  <aside class="controls" id="controls"></aside>
+  <main class="stage">
+    <div class="toolbar">
+      <span class="zoom">
+        <button class="sq" id="zoom-out" type="button" aria-label="Zoom out">−</button>
+        <output id="zoom-val">150%</output>
+        <button class="sq" id="zoom-in" type="button" aria-label="Zoom in">+</button>
+        <button id="zoom-fit" type="button">Fit width</button>
+      </span>
+      <span class="fit" id="fit-note"></span>
+    </div>
+    <div class="viewport" id="viewport"><div class="scaler-box" id="scaler-box"><div class="scaler" id="scaler"></div></div></div>
+    <p class="legend-note">Click a row to make it the current row. The preview uses your palette (white terminal theme) and the app font, Liberation Mono 8 pt.</p>
+  </main>
+</div>
+
+<script>
+const KEY = "ccwork.panelText.v1";
+// App constants, from repo_delegate.py, current_highlight.py, title_tab.py and badge_theme.py.
+const ACCENTS = ["#dc322f", "#cb4b16", "#b58900", "#859900", "#2aa198", "#268bd2", "#6c71c4"];
+const PAL = { window: "#ffffff", base: "#fafafa", text: "#24292f", mid: "#e4e4e4", highlight: "#f1f1f1", highlightedText: "#24292f", sub: "#2f353d", muted: "#6e7781" };
+const TINT = 0.30, EDGE = 3, PAD_X = 10, GLYPH_W = 14, GLYPH_GAP = 4, BADGE_COL_W = 16, GROUP_GAP = 10;
+const BASE_PX = 11, GLYPH_PX = BASE_PX * 1.4, LH = 1.15;
+const STRIP_H = 36, TAB_H = 32, HANDLE_W = 6, ICONS_W = 96, LIST_PAD_BOTTOM = 40;
+// Separator between the repo, the branch and the title, on line 2 and in the tab.
+const SEP = "  ·  ";
+const BADGE = {
+  attention: { glyph: "!", color: "#dc322f" }, answer: { glyph: "?", color: "#cb4b16" },
+  error: { glyph: "✗", color: "#d33682" }, usage_limit: { glyph: "⏸", color: "#b58900" },
+  done: { glyph: "✓", color: "#859900" },
+};
+const SPINNERS = [
+  ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
+  ["⠋", "⠙", "⠚", "⠞", "⠖", "⠦", "⠴", "⠲", "⠳", "⠓"],
+  ["⣀", "⣄", "⣤", "⣦", "⣶", "⣷", "⣿", "⣷", "⣶", "⣦", "⣤", "⣄"],
+];
+const TWINKLE = ["✲", "✵", "✷", "✱", "❂", "✹", "✺", "✸", "❉", "❊", "❋", "❊", "❉", "✸", "✺", "✹", "❂", "✱", "✷", "✵"];
+const FAMILIES = {
+  app: { label: "App font (Liberation Mono)", css: '"Liberation Mono", Cousine, monospace' },
+  sans: { label: "Liberation Sans", css: '"Liberation Sans", Arimo, sans-serif' },
+  serif: { label: "Liberation Serif", css: '"Liberation Serif", Tinos, serif' },
+  inter: { label: "Inter", css: 'Inter, sans-serif' },
+};
+const COLORS = {
+  text: { label: "Text", value: () => PAL.text },
+  sub: { label: "Sub (app today)", value: () => PAL.sub },
+  muted: { label: "Muted grey", value: () => PAL.muted },
+  accent: { label: "Row accent", value: (i) => ACCENTS[i % ACCENTS.length] },
+  custom: { label: "Custom", value: (i, line) => line.custom },
+};
+const HL_COLORS = {
+  accent: { label: "Row accent, light", value: (i) => blend(PAL.base, ACCENTS[i % ACCENTS.length], 0.25) },
+  marker: { label: "Yellow marker", value: () => "#fff1a8" },
+  custom: { label: "Custom", value: (i, line) => line.hlCustom },
+};
+const LINE_NAMES = { title: "Title", repo: "Repo · branch", status: "Status" };
+const LAYOUTS = { equal: "Equal thirds (app today)", sized: "Sized to each line", packed: "Packed with a gap" };
+
+const ROWS = [
+  { emoji: "🧩", title: "Panel text sandbox", name: "ccwork", branch: "main", status: "Working · 2m", badge: "spin", terminal: true, session: true, spin: 0 },
+  { emoji: "🦊", title: "Tatum press lines", name: "ferine_town", branch: "main", status: "Needs permission", badge: "attention", terminal: true, session: true, priority: true },
+  { emoji: "🎷", title: "Humanize the vibes", name: "music_loom", branch: "jazz-voices", status: "Done", badge: "done", terminal: true, session: true },
+  { emoji: "", title: "Upscale pass", name: "image_gen", branch: "feat/upscale-tiles-and-seams", status: "Claude open", badge: "ambient", terminal: true, session: true, subagents: 2 },
+  { emoji: "🎬", title: "Demo video cut", name: "ccwork (II)", branch: "demo-video", status: "Compacting", badge: "compact", terminal: true, session: true },
+  { emoji: "", title: "", name: "cyber_synth", branch: "main", status: "", badge: "", terminal: false, session: false },
+  { emoji: "🔧", title: "Spectrum checks", name: "utilities", branch: "main", status: "", badge: "", terminal: false, session: false },
+];
+
+const LINE_DEFAULT = { visible: true, size: 10, family: "app", followTerminal: false, bold: false, italic: false, underline: false, strike: false, highlight: false, hlColor: "marker", hlCustom: "#fff1a8", caps: false, smallCaps: false, color: "sub", custom: "#24292f", opacity: 100, tracking: 0 };
+const DEFAULTS = {
+  rowHeight: 52, inset: 4, layout: "equal", gap: 2, collapseHidden: false, sidebarWidth: 320, termWidth: 600, highlight: true, zoom: 150, current: 1,
+  order: ["title", "repo", "status"],
+  lines: {
+    title: { ...LINE_DEFAULT, size: 11, followTerminal: true, color: "text" },
+    repo: { ...LINE_DEFAULT },
+    status: { ...LINE_DEFAULT },
+  },
+};
+
+function clone(o) { return JSON.parse(JSON.stringify(o)); }
+// Merge-based load: a saved value applies only where the default has the same key and type.
+function merge(def, saved) {
+  if (saved === null || typeof saved !== typeof def || Array.isArray(def) !== Array.isArray(saved)) return clone(def);
+  if (typeof def !== "object" || Array.isArray(def)) return saved;
+  const out = {};
+  for (const k of Object.keys(def)) out[k] = k in saved ? merge(def[k], saved[k]) : clone(def[k]);
+  return out;
+}
+function load() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(KEY)); } catch (e) { saved = null; }
+  return fromSaved(saved);
+}
+function fromSaved(saved) {
+  const s = saved ? merge(DEFAULTS, saved) : clone(DEFAULTS);
+  const ids = Object.keys(DEFAULTS.lines);
+  if (s.order.length !== ids.length || !ids.every((id) => s.order.includes(id))) s.order = clone(DEFAULTS.order);
+  if (!(s.layout in LAYOUTS)) s.layout = DEFAULTS.layout;
+  for (const id of ids) {
+    const l = s.lines[id];
+    if (!(l.family in FAMILIES)) l.family = "app";
+    if (!(l.color in COLORS)) l.color = DEFAULTS.lines[id].color;
+    if (!(l.hlColor in HL_COLORS)) l.hlColor = "marker";
+  }
+  return s;
+}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* private mode */ } }
+let state = load();
+
+function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function blend(a, b, t) {
+  const x = hexToRgb(a), y = hexToRgb(b);
+  return "#" + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, "0")).join("");
+}
+function rgba(hex, alpha) { const [r, g, b] = hexToRgb(hex); return `rgba(${r},${g},${b},${alpha})`; }
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "style") Object.assign(el.style, v);
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) if (kid != null) el.append(kid);
+  return el;
+}
+
+// BEGIN save transport: the artifact build replaces this block.
+const STORE_URL = "http://127.0.0.1:8481/panel-text-settings";
+async function loadSettings() {
+  const res = await fetch(STORE_URL);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`the save server answered ${res.status}`);
+  return res.json();
+}
+async function sendSettings(json) {
+  const res = await fetch(STORE_URL, { method: "POST", body: json });
+  if (!res.ok) throw new Error(`the save server answered ${res.status}`);
+}
+// END save transport
+
+// Settings go to ccwork as they change: one write per pause, only when they differ.
+let saveTimer = 0, saving = Promise.resolve(), lastSent = "", loadFailed = false;
+const saveStatus = h("p", { class: "note", id: "save-status", role: "status" }, "Loading the saved settings…");
+function queueSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushSave, 500);
+}
+// The store holds the settings; this browser's copy only paints the first frame.
+// Saving waits for the load, so a stale copy never overwrites the store.
+const loading = loadSettings().then((saved) => {
+  if (saved) {
+    const { zoom, current } = state;
+    state = fromSaved(saved);
+    Object.assign(state, { zoom, current });
+    save();
+    renderControls();
+    renderPreview();
+  }
+  lastSent = settingsJson();
+  saveStatus.className = "note";
+  saveStatus.textContent = saved ? "Loaded the saved settings. Changes save as you go." : "Changes save for ccwork as you go.";
+}, (e) => {
+  saveStatus.className = "note warn";
+  saveStatus.textContent = `Not loaded: ${e.message}. Changes do not save until the page loads them.`;
+  loadFailed = true;
+});
+function settingsJson() {
+  const { zoom, current, ...data } = state;
+  return JSON.stringify(data, null, 2);
+}
+async function flushSave() {
+  await loading;
+  if (loadFailed) return;
+  await saving;
+  const json = settingsJson();
+  if (json === lastSent) return;
+  saving = sendSettings(json).then(
+    () => { lastSent = json; saveStatus.className = "note"; saveStatus.textContent = `Saved for ccwork at ${new Date().toLocaleTimeString("en-GB")}.`; },
+    (e) => { saveStatus.className = "note warn"; saveStatus.textContent = `Not saved: ${e.message}.`; });
+}
+
+function change(fn, structural = false) {
+  fn();
+  save();
+  if (structural) renderControls();
+  renderPreview();
+  queueSave();
+}
+
+/* ---------- controls ---------- */
+function stepper(id, value, { min, max, step, unit, decimals = 0 }, onSet) {
+  const input = h("input", { id, type: "number", min, max, step, value: value.toFixed(decimals), "aria-label": id });
+  const set = (v) => {
+    const clamped = Math.min(max, Math.max(min, Math.round(v / step) * step));
+    input.value = clamped.toFixed(decimals);
+    change(() => onSet(clamped));
+  };
+  input.addEventListener("change", () => { const v = parseFloat(input.value); if (!Number.isNaN(v)) set(v); });
+  return h("span", { class: "stepper" },
+    h("button", { class: "sq", type: "button", "aria-label": "Less", onclick: () => set(parseFloat(input.value) - step) }, "−"),
+    input,
+    h("button", { class: "sq", type: "button", "aria-label": "More", onclick: () => set(parseFloat(input.value) + step) }, "+"),
+    h("span", { class: "unit" }, unit || ""));
+}
+function field(label, control, forId) {
+  return h("div", { class: "field" }, forId ? h("label", { for: forId }, label) : h("span", { class: "lab" }, label), h("div", { class: "inline" }, control));
+}
+function select(id, options, value, onSet, structural = false) {
+  const el = h("select", { id }, Object.entries(options).map(([k, v]) => h("option", { value: k, selected: k === value }, typeof v === "string" ? v : v.label)));
+  el.addEventListener("change", () => change(() => onSet(el.value), structural));
+  return el;
+}
+function toggle(id, label, cls, pressed, onSet, disabled = false, title = "") {
+  return h("button", { id, type: "button", class: cls, "aria-pressed": String(pressed), disabled, title: title || false,
+    onclick: (e) => change(() => onSet(e.currentTarget.getAttribute("aria-pressed") !== "true"), true) }, label);
+}
+
+function renderControls() {
+  const focusId = document.activeElement && document.activeElement.id;
+  const root = document.getElementById("controls");
+  root.replaceChildren();
+
+  const rowCard = h("section", { class: "card", "aria-labelledby": "row-h" }, h("h2", { id: "row-h" }, "Row"),
+    field("Row height", stepper("row-height", state.rowHeight, { min: 24, max: 120, step: 1, unit: "px" }, (v) => { state.rowHeight = v; }), "row-height"),
+    field("Top and bottom inset", stepper("inset", state.inset, { min: 0, max: 20, step: 1, unit: "px" }, (v) => { state.inset = v; }), "inset"),
+    field("Line layout", select("layout", LAYOUTS, state.layout, (v) => { state.layout = v; }, true), "layout"),
+    state.layout === "packed" ? field("Gap between lines", stepper("gap", state.gap, { min: 0, max: 24, step: 1, unit: "px" }, (v) => { state.gap = v; }), "gap") : null,
+    h("label", { class: "check" }, h("input", { id: "collapse", type: "checkbox", checked: state.collapseHidden,
+      onchange: (e) => change(() => { state.collapseHidden = e.target.checked; }) }), "A hidden line gives its space to the others"),
+    field("Sidebar width", stepper("sidebar-width", state.sidebarWidth, { min: 140, max: 520, step: 10, unit: "px" }, (v) => { state.sidebarWidth = v; }), "sidebar-width"),
+    field("Terminal width", stepper("term-width", state.termWidth, { min: 240, max: 1400, step: 20, unit: "px" }, (v) => { state.termWidth = v; }), "term-width"),
+    h("label", { class: "check" }, h("input", { id: "highlight", type: "checkbox", checked: state.highlight,
+      onchange: (e) => change(() => { state.highlight = e.target.checked; }) }), "Colored highlight on the current row and its tab"));
+
+  const lineCards = state.order.map((id, pos) => {
+    const l = state.lines[id];
+    const isTitle = id === "title";
+    const styleLock = isTitle && l.followTerminal;
+    return h("section", { class: "card line-card", "aria-label": `Line ${pos + 1}: ${LINE_NAMES[id]}`, style: { borderLeftColor: l.visible ? "#1f6fb2" : "#d7dbe3" } },
+      h("div", { class: "line-head" },
+        h("button", { id: `${id}-up`, class: "sq", type: "button", "aria-label": `Move ${LINE_NAMES[id]} up`, disabled: pos === 0,
+          onclick: () => change(() => { state.order.splice(pos - 1, 0, state.order.splice(pos, 1)[0]); }, true) }, "▲"),
+        h("button", { id: `${id}-down`, class: "sq", type: "button", "aria-label": `Move ${LINE_NAMES[id]} down`, disabled: pos === state.order.length - 1,
+          onclick: () => change(() => { state.order.splice(pos + 1, 0, state.order.splice(pos, 1)[0]); }, true) }, "▼"),
+        h("span", { class: "pos" }, `Line ${pos + 1}`),
+        h("span", { class: "name" }, LINE_NAMES[id]),
+        toggle(`${id}-visible`, l.visible ? "Shown" : "Hidden", "", l.visible, (v) => { l.visible = v; })),
+      field("Size", stepper(`${id}-size`, l.size, { min: 6, max: 28, step: 0.5, unit: "px", decimals: 1 }, (v) => { l.size = v; }), `${id}-size`),
+      field("Font", select(`${id}-family`, FAMILIES, l.family, (v) => { l.family = v; }), `${id}-family`),
+      h("div", { class: "styles", role: "group", "aria-label": "Formatting" },
+        toggle(`${id}-bold`, "B", "b-bold", styleLock ? false : l.bold, (v) => { l.bold = v; }, styleLock, "Bold"),
+        toggle(`${id}-italic`, "I", "b-italic", styleLock ? false : l.italic, (v) => { l.italic = v; }, styleLock, "Italic"),
+        toggle(`${id}-underline`, "U", "b-under", l.underline, (v) => { l.underline = v; }, false, "Underline"),
+        toggle(`${id}-strike`, "S", "b-strike", l.strike, (v) => { l.strike = v; }, false, "Strikeout"),
+        toggle(`${id}-hl`, "Highlight", "b-hl", l.highlight, (v) => { l.highlight = v; }),
+        toggle(`${id}-caps`, "ABC", "b-caps", l.caps, (v) => { l.caps = v; }, false, "All caps"),
+        toggle(`${id}-sc`, "Small caps", "b-sc", l.smallCaps, (v) => { l.smallCaps = v; })),
+      isTitle ? h("label", { class: "check" }, h("input", { id: "title-follow", type: "checkbox", checked: l.followTerminal,
+        onchange: (e) => change(() => { l.followTerminal = e.target.checked; }, true) }), "Bold when its terminal is open, italic when not (app today)") : null,
+      l.highlight ? field("Highlight color", [select(`${id}-hlc`, HL_COLORS, l.hlColor, (v) => { l.hlColor = v; }, true),
+        l.hlColor === "custom" ? h("input", { id: `${id}-hlcustom`, type: "color", value: l.hlCustom, "aria-label": "Custom highlight color",
+          oninput: (e) => change(() => { l.hlCustom = e.target.value; }) }) : null], `${id}-hlc`) : null,
+      field("Color", [select(`${id}-color`, COLORS, l.color, (v) => { l.color = v; }, true),
+        l.color === "custom" ? h("input", { id: `${id}-custom`, type: "color", value: l.custom, "aria-label": "Custom text color",
+          oninput: (e) => change(() => { l.custom = e.target.value; }) }) : null], `${id}-color`),
+      field("Opacity", stepper(`${id}-opacity`, l.opacity, { min: 20, max: 100, step: 5, unit: "%" }, (v) => { l.opacity = v; }), `${id}-opacity`),
+      field("Letter spacing", stepper(`${id}-tracking`, l.tracking, { min: -1, max: 4, step: 0.1, unit: "px", decimals: 1 }, (v) => { l.tracking = v; }), `${id}-tracking`));
+  });
+
+  let armed = false;
+  const resetBtn = h("button", { id: "reset", type: "button", onclick: () => {
+    if (!armed) { armed = true; resetBtn.textContent = "Click again to reset"; return; }
+    const zoom = state.zoom;
+    change(() => { state = clone(DEFAULTS); state.zoom = zoom; }, true);
+  } }, "Reset to app defaults");
+  const exportCard = h("section", { class: "card", "aria-labelledby": "export-h" }, h("h2", { id: "export-h" }, "Settings"),
+    saveStatus,
+    h("div", { class: "inline" }, resetBtn));
+
+  root.append(rowCard, ...lineCards, exportCard);
+  if (focusId) { const el = document.getElementById(focusId); if (el && !el.disabled) el.focus(); }
+}
+
+/* ---------- preview ---------- */
+function rowLayout(st) {
+  const avail = st.rowHeight - 2 * st.inset;
+  const ids = st.order.filter((id) => !st.collapseHidden || st.lines[id].visible);
+  const nat = ids.map((id) => st.lines[id].size * LH);
+  const total = nat.reduce((a, b) => a + b, 0);
+  let scale = 1, slots = [];
+  if (st.layout === "equal") {
+    const slot = avail / ids.length;
+    scale = Math.min(1, slot / Math.max(...nat));
+    slots = ids.map((id, i) => ({ id, top: i * slot, height: slot }));
+  } else if (st.layout === "sized") {
+    scale = Math.min(1, avail / total);
+    let y = 0;
+    slots = ids.map((id, i) => { const hgt = avail * nat[i] / total; const s = { id, top: y, height: hgt }; y += hgt; return s; });
+  } else {
+    const gaps = st.gap * (ids.length - 1);
+    scale = Math.min(1, Math.max(0, avail - gaps) / total);
+    let y = (avail - (total * scale + gaps)) / 2;
+    slots = ids.map((id, i) => { const hgt = nat[i] * scale; const s = { id, top: y, height: hgt }; y += hgt + st.gap; return s; });
+  }
+  return { avail, total, scale, slots };
+}
+
+// Mirrors fit_line in repo_delegate.py: the tail elides first; once no tail
+// character fits, the head shows alone.
+function fitLine(span, head, tail, width) {
+  span.textContent = tail ? head + SEP + tail : head;
+  if (!tail || span.offsetWidth <= width) return;
+  let lo = 1, hi = tail.length, best = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    span.textContent = head + SEP + tail.slice(0, mid) + "…";
+    if (span.offsetWidth <= width) { best = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  span.textContent = best ? head + SEP + tail.slice(0, best) + "…" : head;
+}
+
+const badgeEls = [];
+function renderPreview() {
+  const st = state;
+  const W = st.sidebarWidth;
+  const lay = rowLayout(st);
+  const app = h("div", { class: "app" });
+  const list = h("div", { class: "list", style: { top: `${STRIP_H}px`, width: `${W}px` } });
+  badgeEls.length = 0;
+
+  let y = 0, band = null, prevActive = false;
+  ROWS.forEach((r, i) => {
+    const active = r.terminal && r.session;
+    if (i > 0 && prevActive && !active) {
+      list.append(h("div", { style: { position: "absolute", left: 0, top: `${y}px`, width: `${W}px`, height: `${GROUP_GAP}px`, background: PAL.window } }));
+      y += GROUP_GAP;
+    }
+    prevActive = active;
+    const H = st.rowHeight, current = i === st.current, accent = ACCENTS[i % ACCENTS.length];
+    const tint = blend(PAL.base, accent, TINT);
+    const row = h("div", { class: "row", style: { top: `${y}px`, width: `${W}px`, height: `${H}px`, cursor: "pointer" },
+      onclick: () => change(() => { state.current = i; }) });
+    let textColor = PAL.text;
+    if (current && st.highlight) {
+      band = [y, y + H - 1];
+      row.style.background = tint;
+      row.append(h("div", { style: { position: "absolute", left: 0, top: 0, width: "100%", height: `${EDGE}px`, background: accent } }),
+        h("div", { style: { position: "absolute", left: 0, bottom: 0, width: "100%", height: `${EDGE}px`, background: accent } }),
+        h("div", { style: { position: "absolute", left: 0, top: 0, width: `${EDGE}px`, height: "100%", background: accent } }));
+    } else {
+      row.style.background = current ? PAL.highlight : PAL.base;
+      row.style.boxShadow = `inset 0 0 0 1px ${PAL.mid}`;
+      if (current) {
+        textColor = PAL.highlightedText;
+        row.append(h("div", { style: { position: "absolute", left: 0, top: 0, width: `${EDGE}px`, height: "100%", background: PAL.highlightedText } }));
+      }
+    }
+    if (i < 9) row.append(h("div", { class: "num", style: { left: `${EDGE + 1}px`, top: "2px", fontSize: `${BASE_PX * 0.75}px`, color: rgba(textColor, 140 / 255) } }, String(i + 1)));
+
+    const right = r.badge ? 1 : 0, cols = right + (r.subagents ? 1 : 0);
+    const rectW = W - 2 * PAD_X, textW = Math.max(0, rectW - cols * (GLYPH_W + GLYPH_GAP));
+    const content = {
+      title: [r.priority ? "⚑" : "", r.emoji, r.title].filter(Boolean).join(" "),
+      repo: null,
+      status: r.status,
+    };
+    for (const slot of lay.slots) {
+      const l = st.lines[slot.id];
+      const isTitle = slot.id === "title";
+      const bold = isTitle && l.followTerminal ? r.terminal : l.bold;
+      const italic = isTitle && l.followTerminal ? !r.terminal : l.italic;
+      const color = rgba(COLORS[l.color].value(i, l), l.opacity / 100);
+      const deco = [l.underline ? "underline" : "", l.strike ? "line-through" : ""].filter(Boolean).join(" ") || "none";
+      const marked = l.highlight && (slot.id === "repo" || content[slot.id]);
+      const span = h("span", { style: {
+        textDecoration: deco,
+        background: marked ? HL_COLORS[l.hlColor].value(i, l) : "transparent",
+        padding: marked ? "0 2px" : "0",
+      } });
+      const line = h("div", { class: "ln", style: {
+        left: `${PAD_X}px`, top: `${st.inset + slot.top}px`, width: `${textW}px`, height: `${slot.height}px`, lineHeight: `${slot.height}px`,
+        fontFamily: FAMILIES[l.family].css, fontSize: `${l.size * lay.scale}px`, fontWeight: bold ? 700 : 400, fontStyle: italic ? "italic" : "normal",
+        textTransform: l.caps ? "uppercase" : "none", fontVariant: l.smallCaps ? "small-caps" : "normal", letterSpacing: `${l.tracking}px`,
+        color, visibility: l.visible ? "visible" : "hidden",
+      } }, span);
+      row.append(line);
+      if (slot.id === "repo") line.dataset.repo = "1";
+      else span.textContent = content[slot.id];
+    }
+
+    const rectTop = st.inset, rectH = H - 2 * st.inset, rectRight = W - PAD_X;
+    if (r.badge) {
+      const kind = r.badge;
+      let glyph = "", color = "", width = BADGE_COL_W;
+      if (BADGE[kind]) { glyph = BADGE[kind].glyph; color = BADGE[kind].color; width = GLYPH_W; }
+      else if (kind === "spin") { glyph = SPINNERS[r.spin || 0][0]; color = "#268bd2"; }
+      else if (kind === "compact") { glyph = "◐"; color = "#6c71c4"; }
+      else if (kind === "ambient") { glyph = "⠿"; color = "#586e75"; }
+      const el = h("div", { class: "badge", style: { left: `${rectRight - width}px`, top: `${rectTop}px`, width: `${width}px`, height: `${rectH}px`,
+        justifyContent: "flex-end", fontSize: `${GLYPH_PX}px`, color, fontWeight: kind === "ambient" ? 400 : 700 } }, glyph);
+      row.append(el);
+      if (kind === "spin") badgeEls.push({ el, frames: SPINNERS[r.spin || 0], slow: 1 });
+    }
+    if (r.subagents) {
+      const slotN = r.badge ? 2 : 1;
+      const el = h("div", { class: "badge", style: { left: `${rectRight - slotN * BADGE_COL_W}px`, top: `${rectTop}px`, width: `${BADGE_COL_W}px`, height: `${rectH}px`,
+        justifyContent: "center", fontSize: `${GLYPH_PX}px`, color: "#2aa198" } }, TWINKLE[0]);
+      row.append(el);
+      badgeEls.push({ el, frames: TWINKLE, slow: 3 });
+    }
+    row.dataset.name = r.name;
+    row.dataset.branch = r.branch;
+    row.dataset.textw = textW;
+    list.append(row);
+    y += H;
+  });
+  const listH = y + LIST_PAD_BOTTOM;
+  list.style.height = `${listH}px`;
+  app.append(list);
+
+  // Title strip, splitter handle, terminal frame and title tab.
+  const termX = W + HANDLE_W, cur = ROWS[st.current], accent = ACCENTS[st.current % ACCENTS.length];
+  const tint = blend(PAL.base, accent, TINT);
+  const TERM_W = st.termWidth;
+  const tabSpan = h("span", { style: { display: "inline-block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "pre" } });
+  const term = h("div", { class: "term", style: { left: `${termX}px`, top: `${STRIP_H}px`, width: `${TERM_W}px`, height: `${listH}px` } },
+    h("pre", {}, `Claude Code\n~/code/${cur.name}\n\n> ${cur.title || "…"}\n\n● Reading 2 files…\n`));
+  const tab = h("div", { class: "tab", style: { left: `${termX}px`, top: `${STRIP_H - TAB_H}px`, height: `${TAB_H}px` } }, tabSpan);
+  const icons = h("div", { style: { position: "absolute", top: `${STRIP_H - TAB_H}px`, height: `${TAB_H}px`, left: `${termX + TERM_W - ICONS_W}px`, width: `${ICONS_W}px`,
+    display: "flex", alignItems: "center", justifyContent: "space-evenly", fontSize: "13px" } }, "🔇", "🔔", "⚙");
+  app.append(term, tab, icons);
+  if (st.highlight) {
+    const edge = (x, yy, w, hh, c) => app.append(h("div", { style: { position: "absolute", left: `${x}px`, top: `${yy}px`, width: `${w}px`, height: `${hh}px`, background: c } }));
+    edge(termX, STRIP_H, TERM_W, EDGE, accent);
+    edge(termX, STRIP_H, EDGE, listH, accent);
+    if (band) {
+      const top = STRIP_H + band[0], bottom = STRIP_H + band[1], hh = bottom - top + 1;
+      edge(W, top, HANDLE_W, EDGE, accent);
+      edge(W, top + EDGE, HANDLE_W, hh - 2 * EDGE, tint);
+      edge(W, bottom - EDGE + 1, HANDLE_W, EDGE, accent);
+      edge(termX, top + EDGE, EDGE, hh - 2 * EDGE, tint);
+    }
+    tab.style.background = tint;
+    tab.style.boxShadow = `inset ${EDGE}px ${EDGE}px 0 ${accent}, inset -${EDGE}px 0 0 ${accent}`;
+    tab.style.borderRadius = "8px 8px 0 0";
+    requestAnimationFrame(() => edge(termX + EDGE, STRIP_H, tab.offsetWidth - 2 * EDGE, EDGE, tint));
+  }
+
+  const totalW = termX + TERM_W, totalH = STRIP_H + listH;
+  app.style.width = `${totalW}px`;
+  app.style.height = `${totalH}px`;
+  const scaler = document.getElementById("scaler");
+  scaler.replaceChildren(app);
+  scaler.style.transform = `scale(${st.zoom / 100})`;
+  const box = document.getElementById("scaler-box");
+  box.style.width = `${totalW * st.zoom / 100}px`;
+  box.style.height = `${totalH * st.zoom / 100}px`;
+  document.getElementById("zoom-val").textContent = `${st.zoom}%`;
+
+  for (const line of app.querySelectorAll('[data-repo="1"]')) {
+    const row = line.parentElement;
+    fitLine(line.firstChild, row.dataset.name, row.dataset.branch, parseFloat(row.dataset.textw));
+  }
+  // The tab holds "repo · branch · title" and stops short of the icons.
+  const tabTextW = TERM_W - ICONS_W - 4 - 2 * (EDGE + 14);
+  fitLine(tabSpan, `${[cur.emoji, cur.name].filter(Boolean).join(" ")}${SEP}${cur.branch}`, cur.title, tabTextW);
+  tabSpan.style.maxWidth = `${tabTextW}px`;
+
+  const note = document.getElementById("fit-note");
+  const need = Math.round(lay.total * 10) / 10;
+  if (lay.scale < 0.999) {
+    note.className = "fit note warn";
+    note.textContent = `Text shrinks to ${Math.round(lay.scale * 100)}% to fit: the lines need ${need} px, the row has ${lay.avail} px.`;
+  } else {
+    note.className = "fit note";
+    note.textContent = `Lines fit: they need ${need} px of the row's ${lay.avail} px.`;
+  }
+}
+
+let tick = 0;
+setInterval(() => {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  tick++;
+  for (const b of badgeEls) b.el.textContent = b.frames[Math.floor(tick / b.slow) % b.frames.length];
+}, 100);
+
+const setZoom = (z) => change(() => { state.zoom = Math.min(400, Math.max(50, z)); });
+document.getElementById("zoom-in").addEventListener("click", () => setZoom(state.zoom + 25));
+document.getElementById("zoom-out").addEventListener("click", () => setZoom(state.zoom - 25));
+document.getElementById("zoom-fit").addEventListener("click", () => {
+  const vp = document.getElementById("viewport");
+  const natural = state.sidebarWidth + HANDLE_W + state.termWidth;
+  setZoom(Math.floor(((vp.clientWidth - 32) / natural) * 100 / 5) * 5);
+});
+
+renderControls();
+renderPreview();
+document.fonts.ready.then(renderPreview);
+</script>
+</body>
+</html>

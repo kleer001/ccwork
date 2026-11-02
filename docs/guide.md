@@ -8,11 +8,11 @@ Everything ccwork does, in more detail than the [README](../README.md).
   <img alt="One sidebar row up close, with numbered highlights: 1 row number, 2 row icon, 3 title, 4 repo name, 5 git branch, 6 status text, 7 subagent twinkle, 8 status badge; and the status badge colors" src="images/ccwork-row.png" width="560">
 </p>
 
-Each row has three lines:
+Each row has three lines. In the default order:
 
-1. The row icon and a task title. The line is blank when no title is set.
-2. `repo | branch`. The branch shows `(detached)` for a detached HEAD and
+1. `repo · branch`. The branch shows `(detached)` for a detached HEAD and
    `(path missing)` when the directory is gone.
+2. The row icon and a task title. The line is blank when no title is set.
 3. What Claude is doing: the badge word, `Working · 2m`, `Compacting`, or
    `Claude open`. A bare shell shows nothing.
 
@@ -21,18 +21,28 @@ does not switch the terminal. The menu can reload the terminal, clone the
 row, open the folder, copy the path, rebind the row to another directory,
 set the title or icon, or remove the row.
 
+While Claude works in a repo, right-click → *Set priority* marks the row:
+its status line ends in "⚑ Priority" in the row's accent color. With the
+status line hidden, ⚑ leads the title instead. When Claude next stops or
+needs you, the row flashes 5 times in its accent color and the priority
+clears. Set it again for the next turn.
+*Clear priority* cancels it. Change the mark with `priority_glyph` in
+`~/.config/ccwork/badges.toml`.
+
 The current repo takes an accent color, picked by its position in the list:
 row 1 is red, row 2 orange, row 3 yellow, and so on through the rainbow. The
 row fills with a tint of that color, a bridge joins it to the terminal, and
-the terminal gets a frame and a title tab in the same color. Set the colors
-and the tint strength with `current_colors` and `current_tint` in
+the terminal gets a frame and a title tab in the same color. The title tab
+shows `repo · branch · title`. When the tab runs out of room, the title is
+cut short first. Set the colors and the tint strength with `current_colors` and `current_tint` in
 `~/.config/ccwork/badges.toml`.
 
 The title line of a repo you haven't opened this session is regular italic.
 It turns bold upright once a terminal exists.
 
-Turn line 3 off with *Show status text in sidebar rows* in Preferences. The
-row keeps its height.
+Turn the status line off with *Show status text in sidebar rows* in
+Preferences. The row keeps its height. The Rows tab in Preferences sets the
+order, size and type of each line.
 
 ## Status badges
 
@@ -222,6 +232,25 @@ Open with the gear button or `Ctrl+Shift+P`. Settings persist to
 Sidebar width isn't in the dialog. Drag the splitter, and the new width
 persists. The narrowest width is about 6 characters; the badge hides before
 the text gets narrower than about 4 characters.
+
+**Rows tab**
+
+Each edit shows in the sidebar at once. Cancel puts the rows back.
+
+- **Row height** and **Top and bottom inset**: the text shrinks to fit the
+  row when the lines need more height than it has.
+- **Line layout**: `Equal thirds`, `Sized to each line` (each line gets
+  height in proportion to its size), or `Packed with a gap` (the lines sit
+  together in the middle, with the gap between them).
+- **A hidden line gives its space to the others**: off keeps a hidden line's
+  space empty.
+- **Line order**: select a line and move it with ▲ / ▼. The selected line's
+  settings show below the list.
+- **Per line**: shown or hidden, size in px, font (`App font` follows the
+  app), bold, italic, underline, strikeout, all capitals, small capitals,
+  color (text, sub, muted, row accent, or custom), a highlight behind the
+  text, opacity and letter spacing. The title line can be bold when the row
+  has a terminal and italic when not.
 
 **Advanced tab**
 
