@@ -50,10 +50,12 @@ def _tones(bg: QColor, fg: QColor) -> dict[str, QColor]:
         "shadow": step(70, 135),
         "tooltip_bg": step(150, 115),
         # Tonal selection: a quiet shade of the surface, not a hue accent.
-        # Slightly lighter in dark mode, slightly darker in light mode.
+        # Slightly darker in light mode. In dark mode it moves a fixed share
+        # toward fg, because a multiplied step barely moves a near-black bg
+        # (#0d1117 lighter by 30% is #11161e, an invisible hover).
         # Vivid color is reserved for `accent` (links, focus rings) where
         # the user's eye actually needs to be pulled.
-        "highlight": step(130, 106),
+        "highlight": blend(bg, fg, 0.16) if is_dark else bg.darker(106),
         "accent": QColor(_DARK_ACCENT if is_dark else _LIGHT_ACCENT),
         "fg": QColor(fg),
     }
