@@ -13,3 +13,9 @@ that source so a claim can be checked.
 - [ghosttyextreme-borrowings.md](ghosttyextreme-borrowings.md) — ideas to adopt
   from GhosttyEXTREME (steventsvik/GhosttyEXTREME), a macOS Ghostty fork for
   watching coding agents.
+- [worktree-tool-practices.md](worktree-tool-practices.md) — how tools that run coding
+  agents in git worktrees copy gitignored files, run setup scripts, place the
+  worktree folder and mark a worktree session.
+- [worktree-glyphs-and-shared-files.md](worktree-glyphs-and-shared-files.md) — which
+  glyphs mark a git branch or worktree in text UIs, and how tools share large files
+  between checkouts through links and protect them from writes.
