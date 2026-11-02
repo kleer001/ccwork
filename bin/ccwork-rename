@@ -4,6 +4,7 @@
 #
 #   ccwork-rename "fix login bug"           set the title
 #   ccwork-rename --badge 🐛 "fix login"    set the title and the badge
+#   ccwork-rename "fix login" --badge 🐛    the same: the flag can go last
 #   ccwork-rename --badge 🐛                set only the badge
 #   ccwork-rename ""                        clear the title
 #   ccwork-rename --badge ""                clear the badge
@@ -25,17 +26,20 @@ fi
 
 . "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ccwork-lib.sh"
 
-_fields=""
-if [ "${1:-}" = "--badge" ]; then
-    [ $# -ge 2 ] || _usage
-    _fields=",\"emoji\":\"$(ccwork_json_escape "$2")\""
-    shift 2
-fi
-if [ $# -eq 1 ]; then
-    _fields="$_fields,\"title\":\"$(ccwork_json_escape "$1")\""
-elif [ $# -gt 1 ] || [ -z "$_fields" ]; then
-    _usage
-fi
+_emoji="" _title=""
+while [ $# -gt 0 ]; do
+    if [ "$1" = "--badge" ]; then
+        [ $# -ge 2 ] && [ -z "$_emoji" ] || _usage
+        _emoji=",\"emoji\":\"$(ccwork_json_escape "$2")\""
+        shift 2
+    else
+        [ -z "$_title" ] || _usage
+        _title=",\"title\":\"$(ccwork_json_escape "$1")\""
+        shift
+    fi
+done
+_fields="$_emoji$_title"
+[ -n "$_fields" ] || _usage
 
 if [ ! -S "$CCWORK_SOCK" ]; then
     printf 'ccwork-rename: ccwork socket not found at %s\n' "$CCWORK_SOCK" >&2

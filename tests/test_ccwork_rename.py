@@ -101,6 +101,8 @@ def test_exits_1_without_row_id(env: dict) -> None:
     ["--badge"],
     ["a", "b"],
     ["--badge", "🐛", "a", "b"],
+    ["a", "--badge"],
+    ["--badge", "🐛", "--badge", "🔧"],
 ])
 def test_usage_errors_exit_1(env: dict, args: list[str]) -> None:
     proc, sent = _run(env, *args, listen=False)
@@ -146,6 +148,13 @@ def test_badge_and_title_send_both(env: dict) -> None:
     assert proc.returncode == 0, proc.stderr
     msg = _only(sent)
     assert msg["payload"] == {"emoji": "🐛", "title": 'fix "login" bug'}
+
+
+def test_badge_after_the_title_sends_both(env: dict) -> None:
+    proc, sent = _run(env, "fix login bug", "--badge", "🐛")
+    assert proc.returncode == 0, proc.stderr
+    msg = _only(sent)
+    assert msg["payload"] == {"emoji": "🐛", "title": "fix login bug"}
 
 
 def test_empty_title_sends_an_empty_title_field(env: dict) -> None:
