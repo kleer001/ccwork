@@ -19,3 +19,6 @@ that source so a claim can be checked.
 - [worktree-glyphs-and-shared-files.md](worktree-glyphs-and-shared-files.md) — which
   glyphs mark a git branch or worktree in text UIs, and how tools share large files
   between checkouts through links and protect them from writes.
+- [claude-worktree-hook-probe/](claude-worktree-hook-probe/) — what `PWD`,
+  `CLAUDE_PROJECT_DIR` and the payload `cwd` are in each hook event of a Claude
+  worktree session.

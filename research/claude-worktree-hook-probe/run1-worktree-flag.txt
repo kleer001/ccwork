@@ -1,0 +1,4 @@
+SessionStart | payload.cwd= <scratch>/repo/.claude/worktrees/probe | source= startup | PWD=<scratch>/repo/.claude/worktrees/probe | CLAUDE_PROJECT_DIR=<scratch>/repo/.claude/worktrees/probe
+UserPromptSubmit | payload.cwd= <scratch>/repo/.claude/worktrees/probe | source=  | PWD=<scratch>/repo/.claude/worktrees/probe | CLAUDE_PROJECT_DIR=<scratch>/repo/.claude/worktrees/probe
+Stop | payload.cwd= <scratch>/repo/.claude/worktrees/probe | source=  | PWD=<scratch>/repo/.claude/worktrees/probe | CLAUDE_PROJECT_DIR=<scratch>/repo/.claude/worktrees/probe
+SessionEnd | payload.cwd= <scratch>/repo/.claude/worktrees/probe | source=  | PWD=<scratch>/repo/.claude/worktrees/probe | CLAUDE_PROJECT_DIR=<scratch>/repo/.claude/worktrees/probe
