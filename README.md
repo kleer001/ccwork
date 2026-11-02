@@ -122,3 +122,9 @@ ccwork                   # launch
 [docs/setup.md](docs/setup.md) has the details.
 
 </details>
+
+## Credits
+
+The music in the demo video plays its bass and vibraphone from the
+[FluidR3_GM](https://member.keymusician.com/Member/FluidR3_GM/) soundfont
+by Frank Wen, under the MIT license.
