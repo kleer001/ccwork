@@ -283,3 +283,12 @@ def test_a_branch_used_elsewhere_stays_with_a_note(main_repo: Path, wt: Path) ->
     note = remove_worktree(str(wt), "fix/a")
     assert not wt.exists()
     assert note.startswith("The folder is deleted. The branch fix/a stays: ")
+
+
+def test_a_locked_worktree_refusal_names_the_unlock_command(main_repo: Path, wt: Path) -> None:
+    _git("-C", str(main_repo), "worktree", "lock", "--reason", "claude session", str(wt))
+    with pytest.raises(GitError) as e:
+        remove_worktree(str(wt), "fix/a")
+    assert "locked" in str(e.value)
+    assert str(e.value).endswith(f"If no session uses it, run: git worktree unlock {wt}")
+    assert wt.exists()

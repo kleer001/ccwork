@@ -23,6 +23,8 @@ GIT_TIMEOUT_S = 30
 UNMERGED_NOTE = ("The folder is deleted. The branch {branch} stays, because it has "
                  "commits that are not merged.")
 BRANCH_KEPT_NOTE = "The folder is deleted. The branch {branch} stays: {reason}"
+# Claude locks its worktree while a session runs, and a crash leaves the lock.
+UNLOCK_HINT = "If no session uses it, run: git worktree unlock {folder}"
 
 
 class GitError(RuntimeError):
@@ -150,7 +152,12 @@ def remove_worktree(folder: str, branch: str) -> str:
     if common is None:
         raise GitError(f"{folder} is not in a git repository")
     main = str(main_checkout(common))
-    _git(main, "worktree", "remove", folder)
+    try:
+        _git(main, "worktree", "remove", folder)
+    except GitError as e:
+        if "locked working tree" not in str(e):
+            raise
+        raise GitError(f"{e}\n{UNLOCK_HINT.format(folder=folder)}") from None
     if not branch:
         return ""
     r = _run(main, "branch", "-d", branch)
