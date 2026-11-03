@@ -78,7 +78,7 @@ from src.ui.current_highlight import (
 from src.ui.empty_state import EmptyState
 from src.ui.preferences_dialog import PreferencesDialog
 from src.ui.qt_theme import apply_theme, blend
-from src.ui.repo_model import ROLE_BRANCH, ROLE_TITLE
+from src.ui.repo_model import ROLE_BRANCH, ROLE_TITLE, ROLE_WORKTREE_OF
 from src.ui.repo_sidebar import RepoSidebar
 from src.ui.shortcuts_dialog import ShortcutsDialog
 from src.ui.terminal_context_menu import build_terminal_menu
@@ -102,7 +102,7 @@ EXPIRY_CHECK_MS = 3600 * 1000
 FOLLOW_EVENTS = frozenset({EVENT_SESSION_START, EVENT_USER_PROMPT_SUBMIT, EVENT_STOP})
 
 # Model roles that the title tab's text reads.
-_TITLE_TAB_ROLES = {int(Qt.DisplayRole), ROLE_BRANCH, ROLE_TITLE}
+_TITLE_TAB_ROLES = {int(Qt.DisplayRole), ROLE_BRANCH, ROLE_TITLE, ROLE_WORKTREE_OF}
 
 
 class MainWindow(QMainWindow):
@@ -908,7 +908,11 @@ class MainWindow(QMainWindow):
         self._schedule_highlight()
 
     def _show_title(self, repo: Repo) -> None:
-        self._title.set_repo(repo.display_name, self._branch_for(repo.path), repo.title)
+        model = self._sidebar.model
+        row = model.index_of(repo.path)
+        main = model.data(model.index(row), ROLE_WORKTREE_OF) if row >= 0 else ""
+        name = repo.with_emoji(f"{main}{repo.instance_suffix}") if main else repo.display_name
+        self._title.set_repo(name, self._branch_for(repo.path), repo.title, worktree=bool(main))
         self._schedule_highlight()  # places the tab at its new width
 
     def _on_rows_changed(self, top, bottom, roles: list[int]) -> None:

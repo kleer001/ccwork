@@ -27,6 +27,8 @@ from src.ui.badge_theme import (
     SESSION_ACTIVE_GLYPH,
     STATUS_DONE,
     SUBAGENT_FRAMES,
+    WORKTREE_COLOR,
+    WORKTREE_GLYPH,
     current_accent,
     spinner_for_id,
 )
@@ -47,6 +49,7 @@ from src.ui.repo_model import (
     ROLE_SUBAGENTS,
     ROLE_TITLE,
     ROLE_WORKING,
+    ROLE_WORKTREE_OF,
 )
 
 
@@ -66,8 +69,10 @@ SUBAGENT_SLOWDOWN = 3
 GLYPH_FONT_SCALE = 1.4
 
 # Separator between the repo name, the branch and the title, on line 2 and
-# in the title tab.
+# in the title tab. A worktree row puts the worktree glyph in place of the
+# dot between its main checkout's name and the branch.
 REPO_LINE_SEP = "  ·  "
+WORKTREE_LINE_SEP = f"  {WORKTREE_GLYPH}  "
 
 
 # Natural line height per px of font size. The "sized" and "packed" layouts
@@ -105,13 +110,13 @@ def line_slots(rows: RowSettings, line_ids: list[str]) -> tuple[float, list[tupl
     return scale, slots
 
 
-def fit_line(fm, head: str, tail: str, width: int) -> str:
-    """Fit "head · tail" into `width` px. The tail elides first; once no
-    tail character fits, the head alone elides."""
-    full = f"{head}{REPO_LINE_SEP}{tail}" if tail else head
+def fit_line(fm, head: str, tail: str, width: int, sep: str = REPO_LINE_SEP) -> str:
+    """Fit "head · tail" (`sep` between) into `width` px. The tail elides
+    first; once no tail character fits, the head alone elides."""
+    full = f"{head}{sep}{tail}" if tail else head
     if fm.horizontalAdvance(full) <= width or not tail:
         return fm.elidedText(full, Qt.ElideRight, width)
-    lead = f"{head}{REPO_LINE_SEP}"
+    lead = f"{head}{sep}"
     room = width - fm.horizontalAdvance(lead)
     rest = fm.elidedText(tail, Qt.ElideRight, room) if room > 0 else ""
     if rest and rest != "…":
@@ -394,10 +399,12 @@ class RepoDelegate(QStyledItemDelegate):
             "title": " ".join(p for p in ((flag, repo.emoji, title_text) if repo else ()) if p),
             "status": status_text if self.show_status_text else "",
         }
+        worktree_of: str = index.data(ROLE_WORKTREE_OF) or ""
+        sep = WORKTREE_LINE_SEP if worktree_of else REPO_LINE_SEP
         if not repo:
             name, branch_text = "", ""
         else:
-            name = repo.instance_name
+            name = f"{worktree_of}{repo.instance_suffix}" if worktree_of else repo.instance_name
             if path_missing:
                 branch_text = "(path missing)"
             elif branch:
@@ -426,7 +433,7 @@ class RepoDelegate(QStyledItemDelegate):
                 pri = f" · {pri}"
             pri_w = fm.horizontalAdvance(pri)
             if line_id == "repo":
-                text = fit_line(fm, name, branch_text, text_w)
+                text = fit_line(fm, name, branch_text, text_w, sep)
             else:
                 text = fm.elidedText(texts[line_id], Qt.ElideRight, max(0, text_w - pri_w))
             slot = QRectF(rect.left(), rect.top() + top, text_w, height)
@@ -437,8 +444,22 @@ class RepoDelegate(QStyledItemDelegate):
                            fm.horizontalAdvance(text) + 4, mark_h),
                     self._highlight_color(line, base, index.row()),
                 )
-            painter.setPen(QPen(self._line_color(line, text_color, base, index.row())))
-            painter.drawText(slot, Qt.AlignLeft | Qt.AlignVCenter, text)
+            line_color = self._line_color(line, text_color, base, index.row())
+            painter.setPen(QPen(line_color))
+            if line_id == "repo" and worktree_of and WORKTREE_COLOR and text.startswith(name + sep):
+                # Three runs, so only the glyph takes the worktree color.
+                lead = name + sep[:sep.index(WORKTREE_GLYPH)]
+                rest = text[len(lead) + len(WORKTREE_GLYPH):]
+                painter.drawText(slot, Qt.AlignLeft | Qt.AlignVCenter, lead)
+                x = fm.horizontalAdvance(lead)
+                painter.setPen(QPen(WORKTREE_COLOR))
+                painter.drawText(slot.adjusted(x, 0, 0, 0), Qt.AlignLeft | Qt.AlignVCenter,
+                                 WORKTREE_GLYPH)
+                x += fm.horizontalAdvance(WORKTREE_GLYPH)
+                painter.setPen(QPen(line_color))
+                painter.drawText(slot.adjusted(x, 0, 0, 0), Qt.AlignLeft | Qt.AlignVCenter, rest)
+            else:
+                painter.drawText(slot, Qt.AlignLeft | Qt.AlignVCenter, text)
             if pri:
                 painter.setPen(QPen(current_accent(index.row())))
                 painter.drawText(slot.adjusted(fm.horizontalAdvance(text), 0, 0, 0),

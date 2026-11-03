@@ -28,6 +28,10 @@ Example `badges.toml`::
     compact_glyph   = "◐"
     # Marks a row with priority set (right-click → Set priority).
     priority_glyph  = "⚑"
+    # Takes the place of the dot on line 2 of a worktree row ("proj ↳ fix").
+    # worktree_color paints the glyph; "" (the default) keeps the line color.
+    worktree_glyph  = "↳"
+    worktree_color  = "#2aa198"
     subagent_frames = ["✲", "✵", "✷", "✱", "❂", "✹", "✺", "✸", "❉", "❊", "❋"]
     # The current row's accent, picked by its position in the stack (row 1
     # takes the first color; the list repeats). current_tint is the percent
@@ -169,6 +173,8 @@ _DEFAULTS: dict = {
     "compact_color": "#6c71c4",
     "compact_glyph": "◐",
     "priority_glyph": "⚑",
+    "worktree_glyph": "↳",
+    "worktree_color": "",
     "subagent_frames": ["✲", "✵", "✷", "✱", "❂", "✹", "✺", "✸", "❉", "❊", "❋", "❊", "❉", "✸", "✺", "✹", "❂", "✱", "✷", "✵"],
     "current_colors": ["#dc322f", "#cb4b16", "#b58900", "#859900", "#2aa198", "#268bd2", "#6c71c4"],
     "current_tint": 30,
@@ -204,6 +210,8 @@ class BadgeTheme:
     compact_color: QColor
     compact_glyph: str
     priority_glyph: str
+    worktree_glyph: str
+    worktree_color: QColor | None           # None: the line's own color
     subagent_frames: tuple[str, ...]
     spinner_variants: tuple[tuple[str, ...], ...]
     current_colors: tuple[QColor, ...]
@@ -384,6 +392,9 @@ def load_badge_theme(path: Path | None = None) -> BadgeTheme:
         compact_color=_parse_color(cfg["compact_color"], where="compact_color"),
         compact_glyph=_require_glyph(cfg["compact_glyph"], where="compact_glyph"),
         priority_glyph=_require_glyph(cfg["priority_glyph"], where="priority_glyph"),
+        worktree_glyph=_require_glyph(cfg["worktree_glyph"], where="worktree_glyph"),
+        worktree_color=(_parse_color(cfg["worktree_color"], where="worktree_color")
+                        if cfg["worktree_color"] else None),
         subagent_frames=_require_frames(cfg["subagent_frames"], where="subagent_frames"),
         spinner_variants=_require_variants(cfg["spinner_variants"], where="spinner_variants"),
         current_colors=_require_colors(cfg["current_colors"], where="current_colors"),
@@ -404,6 +415,8 @@ SESSION_ACTIVE_GLYPH = _THEME.session_glyph
 COMPACT_COLOR = _THEME.compact_color
 COMPACT_GLYPH = _THEME.compact_glyph
 PRIORITY_GLYPH = _THEME.priority_glyph
+WORKTREE_GLYPH = _THEME.worktree_glyph
+WORKTREE_COLOR = _THEME.worktree_color
 SUBAGENT_FRAMES = _THEME.subagent_frames
 SPINNER_VARIANTS = _THEME.spinner_variants
 CURRENT_COLORS = _THEME.current_colors

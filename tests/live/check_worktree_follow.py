@@ -89,6 +89,7 @@ def main() -> int:
             if path and (not seen or seen[-1] != path):
                 seen.append(path)
                 if path == worktree:
+                    time.sleep(1.0)  # repos.json is written before the repaint
                     harness.screenshot(shot)
             time.sleep(0.05)
         time.sleep(1.0)

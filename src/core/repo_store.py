@@ -81,15 +81,22 @@ class Repo:
         return os.path.basename(self.path.rstrip("/")) or self.path
 
     @property
+    def instance_suffix(self) -> str:
+        """The Roman-numeral suffix, " (II)", or "" for a lone row."""
+        return f" ({to_roman(self.instance)})" if self.instance > 0 else ""
+
+    @property
     def instance_name(self) -> str:
         """Basename plus the Roman-numeral suffix, without the emoji."""
-        suffix = f" ({to_roman(self.instance)})" if self.instance > 0 else ""
-        return f"{self.name}{suffix}"
+        return f"{self.name}{self.instance_suffix}"
 
     @property
     def display_name(self) -> str:
-        prefix = f"{self.emoji} " if self.emoji else ""
-        return f"{prefix}{self.instance_name}"
+        return self.with_emoji(self.instance_name)
+
+    def with_emoji(self, text: str) -> str:
+        """`text` with the row's emoji in front, as `display_name` shows it."""
+        return f"{self.emoji} {text}" if self.emoji else text
 
 
 @dataclass
@@ -369,23 +376,42 @@ def git_toplevel(path: str | os.PathLike[str]) -> str | None:
     return os.path.realpath(top) if top else None
 
 
-def git_common_dir(path: str | os.PathLike[str]) -> str | None:
-    """Real path of the git common dir of `path`, or None. The same for the
-    main checkout and each linked worktree of one repository. Git before
-    2.31 has no `--path-format` and prints no absolute path: None."""
+def _rev_parse_paths(path: str | os.PathLike[str], *args: str) -> list[str] | None:
+    """`git rev-parse --path-format=absolute <args>` in `path`: one absolute
+    path per arg, or None. Git before 2.31 has no `--path-format` and
+    prints no absolute path, so it gets None too."""
     try:
         r = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            ["git", "-C", str(path), "rev-parse", "--path-format=absolute", *args],
             capture_output=True,
             text=True,
             timeout=2,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
-    if r.returncode != 0:
+    lines = r.stdout.splitlines()
+    if r.returncode != 0 or len(lines) != len(args) or not all(map(os.path.isabs, lines)):
         return None
-    common = r.stdout.strip()
-    return os.path.realpath(common) if os.path.isabs(common) else None
+    return lines
+
+
+def git_common_dir(path: str | os.PathLike[str]) -> str | None:
+    """Real path of the git common dir of `path`, or None. The same for the
+    main checkout and each linked worktree of one repository."""
+    out = _rev_parse_paths(path, "--git-common-dir")
+    return os.path.realpath(out[0]) if out else None
+
+
+def worktree_main_name(path: str | os.PathLike[str]) -> str:
+    """Folder name of the main checkout when `path` is in a linked worktree,
+    else "" (also for git before 2.31). A linked worktree's git dir differs
+    from its common dir; both are absolute, or a subfolder of the main
+    checkout would differ too."""
+    out = _rev_parse_paths(path, "--git-dir", "--git-common-dir")
+    if not out or out[0] == out[1]:
+        return ""
+    common = Path(out[1])
+    return common.parent.name if common.name == ".git" else common.name.removesuffix(".git")
 
 
 CLAUDE_WORKTREES_EXCLUDE = "/.claude/worktrees/"

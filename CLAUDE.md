@@ -204,15 +204,19 @@ widget paints its own segment because an overlay next to the native
   `[statuses.attention]`, `[statuses.answer]`, `[statuses.error]` and
   `[statuses.usage_limit]` sub-tables of `{color, glyph, label}`. The
   compaction glyph is `compact_glyph` / `compact_color`; the priority mark
-  is `priority_glyph`; the current-row accents are `current_colors` (array)
-  and `current_tint` (percent). Omitted keys keep their default; a malformed
+  is `priority_glyph`; the worktree mark is `worktree_glyph` /
+  `worktree_color` (`""` keeps the line color); the current-row accents
+  are `current_colors` (array) and `current_tint` (percent). Omitted keys keep their default; a malformed
   value (bad color, empty glyph, unknown key) fails loudly at startup via
   `load_badge_theme`. The module docstring carries the full example schema.
 
   Each row paints three lines (`repo_delegate.py`): the emoji plus the
   editable **title** (`ROLE_TITLE`, blank when unset);
   `instance_name · branch` (`fit_line` elides the branch first, then the
-  name; the title tab uses it to fit the title after the branch); and the
+  name; the title tab uses it to fit the title after the branch) — on a
+  linked worktree, `<main name> ↳ branch` (`ROLE_WORKTREE_OF`, from
+  `repo_store.worktree_main_name` in `refresh_branches`; the title tab
+  shows the same mark); and the
   **status text** (`ROLE_STATUS_TEXT`): the badge word, else
   `Working · 2m`, `Compacting` or `Claude open`, else empty, then
   `· ⚑ Priority` in the row's accent while priority is set (with no
@@ -629,7 +633,7 @@ events never touch it; user navigation never touches `_status`.
   keyed by repo id — `apply_hook_event(event, repo_id)` changes exactly
   one row. The quit-confirm derives its working-id list on demand from
   `model.is_working(repo_id)` rather than maintaining a parallel set.
-  Path-keyed state is limited to the branch / path-missing caches, the
+  Path-keyed state is limited to the branch / path-missing / worktree caches, the
   last-focused bookmark, and crash recovery.
 - Tests use `QT_QPA_PLATFORM=offscreen`. The shared `qapp` fixture and
   `StubHookServer` stand-in live in `tests/conftest.py` — depend on those

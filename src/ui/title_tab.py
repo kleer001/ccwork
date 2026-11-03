@@ -1,5 +1,6 @@
-"""Top-strip tab above the terminal, showing the active `repo · branch · title`.
-The title elides first and drops out when no character of it fits.
+"""Top-strip tab above the terminal, showing the active `repo · branch · title`
+(`main ↳ branch · title` for a worktree row). The title elides first and
+drops out when no character of it fits.
 
 MainWindow places it over the terminal's sidebar-side corner. While a row is
 current, it paints as a rounded tab in that row's accent, open at the bottom
@@ -15,7 +16,7 @@ from PySide6.QtGui import QFont, QFontMetricsF, QPainter, QPainterPath
 from PySide6.QtWidgets import QWidget
 
 from src.ui.current_highlight import EDGE_W, Highlight
-from src.ui.repo_delegate import REPO_LINE_SEP, fit_line
+from src.ui.repo_delegate import REPO_LINE_SEP, WORKTREE_LINE_SEP, fit_line
 
 PAD_X = 14
 RADIUS = 8
@@ -31,11 +32,13 @@ class TitleTab(QWidget):
         self._highlight: Highlight | None = None
         self.set_repo(None, None)
 
-    def set_repo(self, name: str | None, branch: str | None = None, title: str = "") -> None:
+    def set_repo(self, name: str | None, branch: str | None = None, title: str = "",
+                 worktree: bool = False) -> None:
         if not name:
             self._head, self._title = "ccwork", ""
         else:
-            self._head = f"{name}{REPO_LINE_SEP}{branch}" if branch else name
+            sep = WORKTREE_LINE_SEP if worktree else REPO_LINE_SEP
+            self._head = f"{name}{sep}{branch}" if branch else name
             self._title = title
         self.update()
 

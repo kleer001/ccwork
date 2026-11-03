@@ -124,6 +124,7 @@ ROLE_STATUS_WORD  = Qt.UserRole + 12  # str — the badge's word ("Rate limited"
 ROLE_TITLE        = Qt.UserRole + 13  # str — the row's editable title, "" when unset
 ROLE_STATUS_TEXT  = Qt.UserRole + 14  # str — line-3 status text ("Working · 2m", …)
 ROLE_PRIORITY     = Qt.UserRole + 15  # bool — the row flashes when its next badge shows
+ROLE_WORKTREE_OF  = Qt.UserRole + 16  # str — main checkout's name for a linked worktree, else ""
 
 
 def _norm(path: str) -> str:
@@ -198,6 +199,9 @@ class RepoListModel(QAbstractListModel):
         # makes current_branch() return None, so we can't tell them apart
         # from the branch cache alone. Populated by refresh_branches().
         self._path_missing: dict[str, bool] = {}
+        # Parallel to _branches: the main checkout's folder name when
+        # repo.path is a linked worktree, else "" (docs/specs/worktree.md §4).
+        self._worktree_of: dict[str, str] = {}
         # Claude state below is keyed by repo id: each hook event carries the
         # row id of the terminal that sent it, so duplicate rows on one path
         # keep independent state.
@@ -288,6 +292,8 @@ class RepoListModel(QAbstractListModel):
             return self._branches.get(repo.path)
         if role == ROLE_PATH_MISSING:
             return self._path_missing.get(repo.path, False)
+        if role == ROLE_WORKTREE_OF:
+            return self._worktree_of.get(repo.path, "")
         if role == ROLE_STATUS:
             return self._status.get(repo.id, "")
         if role == ROLE_WORKING:
@@ -385,8 +391,12 @@ class RepoListModel(QAbstractListModel):
         changed_roles: list[int] = []
         for r in self._store.repos:
             missing = not os.path.isdir(r.path)
+            # A folder only stops or starts being a linked worktree when it
+            # is deleted or made, so the worktree check reruns only then.
+            recheck_worktree = r.path not in self._worktree_of
             if self._path_missing.get(r.path, False) != missing:
                 self._path_missing[r.path] = missing
+                recheck_worktree = True
                 if ROLE_PATH_MISSING not in changed_roles:
                     changed_roles.append(ROLE_PATH_MISSING)
             new = repo_store.current_branch(r.path)
@@ -394,6 +404,11 @@ class RepoListModel(QAbstractListModel):
                 self._branches[r.path] = new
                 if ROLE_BRANCH not in changed_roles:
                     changed_roles.append(ROLE_BRANCH)
+            main = repo_store.worktree_main_name(r.path) if recheck_worktree else self._worktree_of[r.path]
+            if self._worktree_of.get(r.path) != main:
+                self._worktree_of[r.path] = main
+                if ROLE_WORKTREE_OF not in changed_roles:
+                    changed_roles.append(ROLE_WORKTREE_OF)
         if changed_roles and self._store.repos:
             top = self.index(0)
             bot = self.index(len(self._store.repos) - 1)
@@ -873,9 +888,11 @@ class RepoListModel(QAbstractListModel):
         if not self._store.repos_for_path(old_path):
             self._branches.pop(old_path, None)
             self._path_missing.pop(old_path, None)
+            self._worktree_of.pop(old_path, None)
         self._branches[repo.path] = repo_store.current_branch(repo.path)
         self._path_missing[repo.path] = not os.path.isdir(repo.path)
-        roles = [Qt.DisplayRole, Qt.ToolTipRole, ROLE_BRANCH, ROLE_PATH_MISSING]
+        self._worktree_of[repo.path] = repo_store.worktree_main_name(repo.path)
+        roles = [Qt.DisplayRole, Qt.ToolTipRole, ROLE_BRANCH, ROLE_PATH_MISSING, ROLE_WORKTREE_OF]
         for i, r in enumerate(self._store.repos):
             if r.id == repo_id or before.get(r.id) != r.instance:
                 idx = self.index(i)
@@ -1036,8 +1053,9 @@ class RepoListModel(QAbstractListModel):
         # Populate branch for the newly added row so the subtitle isn't
         # blank until the next focus-triggered refresh. Cheap: one git call.
         self._branches[repo.path] = repo_store.current_branch(repo.path)
+        self._worktree_of[repo.path] = repo_store.worktree_main_name(repo.path)
         idx = self.index(row)
-        self.dataChanged.emit(idx, idx, [ROLE_BRANCH])
+        self.dataChanged.emit(idx, idx, [ROLE_BRANCH, ROLE_WORKTREE_OF])
         for r in promoted_rows:
             pidx = self.index(r)
             self.dataChanged.emit(pidx, pidx, [Qt.DisplayRole])
