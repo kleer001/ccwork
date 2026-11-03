@@ -142,6 +142,22 @@ def test_dialog_box_is_disabled_with_the_reason(qapp: QApplication, wt: Path) ->
     assert "Another row uses this folder." in _texts(dlg)
 
 
+def test_dialog_box_is_disabled_for_a_worktree_with_submodules(
+    qapp: QApplication, main_repo: Path, tmp_path: Path
+) -> None:
+    lib = Path(os.path.realpath(tmp_path)) / "lib"
+    _git("init", "-q", "-b", "main", str(lib))
+    (lib / "x").write_text("x\n")
+    _commit(lib, "lib")
+    _git("-C", str(main_repo), "-c", "protocol.file.allow=always", "submodule", "add", "-q",
+         str(lib), "lib")
+    _commit(main_repo, "add lib")
+    folder = make_worktree(worktree_plan(worktree_source(str(main_repo)), "sub"))
+    dlg = WorktreeRemoveDialog(folder)
+    assert not _box(dlg).isEnabled() and not _box(dlg).isChecked()
+    assert "The worktree has submodules. Git does not delete it." in _texts(dlg)
+
+
 # ── sidebar flow ──
 
 def _sidebar(tmp_path: Path, paths: list[str]) -> RepoSidebar:
