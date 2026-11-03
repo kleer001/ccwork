@@ -215,6 +215,8 @@ def test_malformed_timestamp_is_skipped_not_raised(monkeypatch) -> None:
         return ""
 
     monkeypatch.setattr(rs, "_run_git", fake_run_git)
+    monkeypatch.setattr(rs, "git_common_dir", lambda path: "/x/.git")
+    monkeypatch.setattr(rs, "worktree_main_name", lambda path: "")
     stats = rs.gather_stats([("/x", "x")], now=NOW)      # must not raise
     assert stats.repo_count == 1
     assert stats.active[0].commits == 2                  # counted, stamps dropped

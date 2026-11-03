@@ -51,6 +51,9 @@ session needs you.
   Each row shows only its own terminal's state.
 - **Rows follow `cd`.** Start `claude` in a different repo from a row's
   terminal, and that row renames itself to the new repo.
+- **Worktrees.** *Make worktree…* adds a row on a new branch in its own
+  folder, with the small ignored files copied and the venv and
+  `node_modules` installed again. Rows follow `claude -w` in and out.
 - **Weekly review.** A dashboard built from local git: an 8-week commit
   trend and a per-repo chart of churn and rework. No network calls.
 - **Shortcuts.** `Ctrl+Shift+O` adds a repo, `Ctrl+Tab` cycles, `F1` lists

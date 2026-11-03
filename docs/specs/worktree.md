@@ -216,7 +216,8 @@ first prompt. Ctrl+C stops it. ccwork passes the commands in
 | a venv and `uv.lock` | `uv venv --python <version> <venv>`, then `uv sync --active` with `VIRTUAL_ENV=<venv>` |
 | a venv and no `uv.lock` | `uv venv --python <version> <venv>`, then `uv pip install --python <venv>/bin/python -r <freeze file>` |
 
-- `<version>` is the `version` line of the source `pyvenv.cfg`.
+- `<version>` is the `version` line of the source `pyvenv.cfg`, or its
+  `version_info` line, which `uv venv` writes instead.
 - The freeze file is the output of `uv pip freeze` on the source venv (F15).
   It goes in the worktree's private git dir (`git rev-parse --git-dir`), so
   `git worktree remove` deletes it. An editable entry whose path is in the

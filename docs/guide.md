@@ -111,6 +111,44 @@ per row.
 When you `cd` into another repo and start `claude`, the row follows the
 session and renames itself to that repo.
 
+## Worktrees
+
+A git worktree is a second folder on a new branch, in the same repository.
+Right-click a row → *Make worktree…* and type a branch name. ccwork shows
+the folder (`<parent of the main checkout>/<repo>-<name>`), the start
+commit, and a warning when uncommitted changes stay behind. OK makes the
+folder and the branch from the row's HEAD, and adds a row for it with the
+same row icon.
+
+Before its first prompt, the new row's terminal:
+
+- lists the ignored files that ccwork copied (each one of 1 MiB or less,
+  for example `.env`) and the ones it did not copy;
+- makes the venv again with `uv` (the same Python version and the same
+  packages, or `uv sync` with a `uv.lock`);
+- runs `npm ci`, `pnpm install` or `yarn install` when the repo has
+  `node_modules/`.
+
+Ctrl+C stops the install.
+
+Line 1 of a worktree row reads `<repo> ↳ <branch>`, and so does the title
+tab. Change the mark with `worktree_glyph` and `worktree_color` in
+`~/.config/ccwork/badges.toml`.
+
+When Claude moves into a worktree (`claude -w`, or `EnterWorktree` in a
+session), the row follows it, and it goes back to its own folder when
+Claude exits.
+
+*Remove from sidebar* on a worktree row has a box, off by default: *Also
+delete the worktree folder and its branch*. The dialog lists the ignored
+files that go with the folder. Git refuses to delete a folder with changes
+or a branch with commits that are not merged, and ccwork shows why. The box
+is off while another row uses the folder, while Claude runs in the row, and
+when the worktree has submodules.
+
+The dashboard shows one card per repository: the main checkout and its
+worktrees count together, and a shared commit counts one time.
+
 ## Recent and idle repos
 
 A faded half-width *Recent* slot sits under the last row. Click it for a
@@ -134,7 +172,8 @@ rolling 7-day window with merges excluded. The page has:
 - an 8-week commit trend
 - a week-in-numbers row
 - a release callout when a tag shipped
-- a card per repo with a six-spoke radar chart, churn and file stats
+- a card per repository (worktrees included) with a six-spoke radar
+  chart, churn and file stats
 - a strip for repos with no commits this week
 
 The Dashboard slot overlays the view without touching your terminals. Press

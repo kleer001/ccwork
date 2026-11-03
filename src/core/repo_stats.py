@@ -8,7 +8,9 @@ gathered. Nothing here ever raises on a bad repo — the splash must not
 break.
 
 Every repo becomes a `RepoWeek` snapshot (commits, churn, new files,
-breadth, file types, release tag, lifetime size). Repos with commits in
+breadth, file types, release tag, lifetime size). Rows of one repo (a main
+checkout and its linked worktrees) make one card, and a commit that two of
+its folders share counts one time. Repos with commits in
 the window are `active`, the rest `quiet`. `weekly_totals` is an
 8-trailing-week commit histogram across all repos for the trend hero.
 `fingerprints` turns the active set into 0..1 radar spokes, each axis
@@ -28,6 +30,8 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Iterable
+
+from src.core.repo_store import git_common_dir, worktree_main_name
 
 log = logging.getLogger(__name__)
 
@@ -173,11 +177,11 @@ def _int_or_none(token: str) -> int | None:
 
 
 def gather_stats(repos: Iterable[tuple[str, str]], now: datetime | None = None) -> RepoStats:
-    """Aggregate git stats over `repos`, an iterable of (path, display_name).
-
-    Dedups by real path so duplicate sidebar rows sharing one path don't
-    double-count. `now` defaults to the local current time and anchors
-    every rolling window."""
+    """Aggregate git stats over `repos`, an iterable of (path, display_name),
+    one `RepoWeek` per repo (`_group_by_repository`). Each count runs
+    over the HEADs of all the repo's folders at once, so a shared
+    commit counts one time. `now` defaults to the local current time and
+    anchors every rolling window."""
     now = now or datetime.now()
     now_ts = int(now.timestamp())
     since_7d = (now - timedelta(days=ROLL_DAYS)).isoformat(sep=" ", timespec="seconds")
@@ -186,27 +190,22 @@ def gather_stats(repos: Iterable[tuple[str, str]], now: datetime | None = None) 
     window_start_ts = now_ts - _WEEK_SECS
 
     stats = RepoStats(gathered_ts=now_ts)
-    seen: set[str] = set()
-    for path, name in repos:
-        try:
-            key = os.path.realpath(path)
-        except OSError:
-            continue
-        if key in seen:
-            continue
-
+    for name, folders in _group_by_repository(repos):
         # `status --porcelain` doubles as the "is this a readable git tree?"
-        # probe — None means not-a-repo / gone, so skip the row entirely.
-        status = _run_git(path, ["status", "--porcelain"])
-        if status is None:
+        # probe — None means not-a-repo / gone, so skip the folder.
+        statuses = {p: _run_git(p, ["status", "--porcelain"]) for p in folders}
+        folders = [p for p in folders if statuses[p] is not None]
+        if not folders:
             continue
-        seen.add(key)
-        rw = RepoWeek(name=name, path=str(path), dirty=bool(status.strip()))
+        path = folders[0]
+        rw = RepoWeek(name=name, path=path, dirty=any(statuses[p].strip() for p in folders))
+        heads = sorted({h.strip() for h in (_run_git(p, ["rev-parse", "HEAD"]) for p in folders)
+                        if h and h.strip()}) or ["HEAD"]
 
         # Window commits + churn + breadth in one pass: each commit is a
         # \x01-marked stamp line followed by its numstat rows.
         out = _run_git(path, ["log", "--no-merges", f"--since={since_7d}",
-                              "--numstat", "--format=%x01%ct"])
+                              "--numstat", "--format=%x01%ct", *heads])
         touched: set[str] = set()
         for line in (out or "").splitlines():
             if line.startswith("\x01"):
@@ -229,13 +228,13 @@ def gather_stats(repos: Iterable[tuple[str, str]], now: datetime | None = None) 
         rw.file_types = len({_ext(p) for p in touched})
 
         out = _run_git(path, ["log", "--no-merges", f"--since={since_7d}",
-                              "--diff-filter=A", "--name-only", "--format="])
+                              "--diff-filter=A", "--name-only", "--format=", *heads])
         rw.new_files = len({l for l in (out or "").splitlines() if l.strip()})
 
         # One trend sweep yields the prior-window count AND the 8-week
         # histogram, bucketed by exact 7-day spans back from `now`.
         out = _run_git(path, ["log", "--no-merges", f"--since={since_trend}",
-                              "--format=%ct"])
+                              "--format=%ct", *heads])
         for token in (out or "").split():
             ts = _int_or_none(token)
             if ts is None:
@@ -246,11 +245,11 @@ def gather_stats(repos: Iterable[tuple[str, str]], now: datetime | None = None) 
             if bucket == 1:
                 rw.prior_commits += 1
 
-        out = _run_git(path, ["rev-list", "--count", "--no-merges", "HEAD"])
+        out = _run_git(path, ["rev-list", "--count", "--no-merges", *heads])
         if out and out.strip().isdigit():
             rw.lifetime_commits = int(out.strip())
 
-        out = _run_git(path, ["log", "--max-parents=0", "--format=%ct"])
+        out = _run_git(path, ["log", "--max-parents=0", "--format=%ct", *heads])
         roots = [t for t in (out or "").split() if _int_or_none(t) is not None]
         if roots:
             rw.first_commit_ts = min(int(t) for t in roots)
@@ -270,6 +269,29 @@ def gather_stats(repos: Iterable[tuple[str, str]], now: datetime | None = None) 
     stats.active.sort(key=lambda r: r.last_commit_ts or 0, reverse=True)
     stats.quiet.sort(key=lambda r: r.lifetime_commits, reverse=True)
     return stats
+
+
+def _group_by_repository(repos: Iterable[tuple[str, str]]) -> list[tuple[str, list[str]]]:
+    """(card name, folders) per repo. Rows whose folders share a git common
+    dir make one group. Its name is the main name when a linked worktree is
+    in it, else the first row's name. Duplicate paths count once. A folder
+    with no common dir (outside git, or git before 2.31) is a group of its
+    own; `gather_stats` skips it when it is not a readable git tree."""
+    groups: dict[str, tuple[str, list[str]]] = {}
+    seen: set[str] = set()
+    for path, name in repos:
+        try:
+            key = os.path.realpath(path)
+        except OSError:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        common = git_common_dir(path) or key
+        main = worktree_main_name(path)
+        card_name, folders = groups.get(common, (name, []))
+        groups[common] = (main or card_name, folders + [str(path)])
+    return list(groups.values())
 
 
 def churn_tag(r: RepoWeek) -> str:

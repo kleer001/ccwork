@@ -85,7 +85,10 @@ New / Breadth / Rework / Types, each axis normalized to the busiest
 active repo this window, rework is deletions' share of churn — plus a
 stat ladder, churn bar, and a tempo badge: ◆ tag / ▲ NEW / ▼ −N / ▲ +N /
 · steady), and a quiet strip of repos with no commits in 7 days sized by
-lifetime commits. Every number is a **rolling 7-day window, merges
+lifetime commits. Rows whose folders share a git common dir (a main
+checkout and its worktrees) make one card with the main name; each count
+runs over all their HEADs at once, so a shared commit counts one time
+(`_group_by_repository`). Every number is a **rolling 7-day window, merges
 excluded**; a dip paints muted grey, never red, and green is reserved for
 the release moment. Stats come from `src/core/repo_stats.py`
 (`gather_stats`, pure, shells out to git like `repo_store` and skips
