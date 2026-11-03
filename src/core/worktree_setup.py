@@ -82,13 +82,14 @@ def _venv_step(src: str, dst: str, name: str, version: str) -> str:
 
 
 def rewrite_freeze(text: str, src: str, dst: str) -> str:
-    """`uv pip freeze` output with each editable entry inside `src` moved to
-    the same place in `dst`. Other lines do not change."""
+    """`uv pip freeze` output with each local entry inside `src` (an editable
+    `-e file://…` or a `name @ file://…`) moved to the same place in `dst`.
+    Other lines do not change."""
     src_url, dst_url = Path(src).as_uri(), Path(dst).as_uri()
     lines = []
     for line in text.splitlines():
-        url = line[3:] if line.startswith("-e ") else ""
-        if url == src_url or url.startswith(src_url + "/"):
-            line = "-e " + dst_url + url[len(src_url):]
+        lead, sep, url = line.partition("-e ") if line.startswith("-e ") else line.partition(" @ ")
+        if sep and (url == src_url or url.startswith(src_url + "/")):
+            line = lead + sep + dst_url + url[len(src_url):]
         lines.append(line)
     return "".join(f"{line}\n" for line in lines)

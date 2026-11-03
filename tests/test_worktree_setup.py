@@ -156,3 +156,11 @@ def test_a_failed_freeze_shows_in_the_terminal(main_repo: Path, uv: str, monkeyp
     monkeypatch.setattr(worktree_setup.subprocess, "run", hang)
     cmd = setup_commands(str(main_repo), str(wt))
     assert cmd.startswith("echo 'Could not make the venv: ")
+
+
+def test_local_installs_in_the_source_folder_move_to_the_worktree() -> None:
+    text = ("pkg-a @ file:///home/u/proj/libs/a\npkg-b @ file:///home/u/other/b\n"
+            "pkg-c @ https://example.com/c.whl\n")
+    assert rewrite_freeze(text, "/home/u/proj", "/home/u/proj-x") == (
+        "pkg-a @ file:///home/u/proj-x/libs/a\npkg-b @ file:///home/u/other/b\n"
+        "pkg-c @ https://example.com/c.whl\n")
