@@ -7,11 +7,20 @@ real X11 display** — they will not work under `QT_QPA_PLATFORM=offscreen`
 and are excluded from the pytest sweep on purpose.
 
 Scripts here are dev/QA aids, not part of the test suite proper. Run
-individually from a working X session:
+individually from the repo root:
 
 ```bash
 .venv/bin/python tests/live/check_focus_scoping.py
 ```
+
+`harness.py` holds the shared parts. `harness.run_on_xvfb()` runs the
+script again on its own Xvfb display with openbox, a temporary
+`XDG_RUNTIME_DIR` (so the launched ccwork owns its own hook socket) and
+the D-Bus session address `disabled:` (so no notification reaches the
+desktop). No key or focus change reaches your desktop, and your running
+ccwork is not touched. `harness.screenshot(path)` saves the display as a
+PNG; `harness.open_other_window(title)` starts a plain xterm to focus
+away from ccwork.
 
 Each script:
 
@@ -20,7 +29,7 @@ Each script:
   untouched.
 - Forces focus to ccwork (or away from it, depending on the check) via
   `wmctrl -ia <window-id>` — matched by `WM_CLASS=main.py.ccwork`
-  rather than title substring (Konsole's prompt often contains
+  rather than title substring (a shell prompt in a title often contains
   "ccwork" as the cwd, which would mis-match a title search).
 - Cleans up the spawned ccwork process on exit. Stray xterm children
   from inside ccwork stop with it.
@@ -51,12 +60,13 @@ skips them entirely.
 
 Follow the existing pattern:
 
-1. Open an `XDG_CONFIG_HOME=<tmp>` subprocess running `python -m src.main`.
-2. Wait for the `global keys:` startup line in the log.
-3. `_focus_ccwork()` (see `check_focus_scoping.py`) before injecting if
+1. Call `harness.run_on_xvfb()` first in the `__main__` block.
+2. Open an `XDG_CONFIG_HOME=<tmp>` subprocess running `python -m src.main`.
+3. Wait for the `global keys:` startup line in the log.
+4. `wmctrl_focus_ccwork()` (see `check_focus_scoping.py`) before injecting if
    you need the grab to activate.
-4. Inject via `XTestFakeKeyEvent` (see existing scripts for the
+5. Inject via `XTestFakeKeyEvent` (see existing scripts for the
    ctypes wiring).
-5. Read the log and/or `wmctrl -l` to verify the side effect.
-6. Kill the subprocess in a `finally` block.
-7. Print `result: PASS` / `result: FAIL` and exit 0/non-zero.
+6. Read the log and/or `wmctrl -l` to verify the side effect.
+7. Kill the subprocess in a `finally` block.
+8. Print `result: PASS` / `result: FAIL` and exit 0/non-zero.

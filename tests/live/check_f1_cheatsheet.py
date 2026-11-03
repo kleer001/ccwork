@@ -19,6 +19,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import harness
+
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -118,4 +120,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    harness.run_on_xvfb()
     sys.exit(main())

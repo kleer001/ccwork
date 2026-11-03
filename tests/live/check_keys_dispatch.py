@@ -23,6 +23,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import harness
+
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -126,7 +128,7 @@ def wmctrl_windows() -> list[str]:
 
 def focus_ccwork() -> bool:
     """Focus ccwork by WM_CLASS (`main.py.ccwork`) — substring matching on
-    titles is unreliable here because Konsole's prompt often contains
+    titles is unreliable here because a shell prompt in a title often contains
     'ccwork' as the cwd. Required since MainWindow-scoped grabs only
     activate when ccwork is in the focus chain.
     """
@@ -254,4 +256,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    harness.run_on_xvfb()
     sys.exit(main())

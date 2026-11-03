@@ -6,9 +6,11 @@ ccwork to intercept its shortcut combos *globally* — pressing
 the 2026-05-13 fix, the grab is on MainWindow's own X window, so it
 only activates when ccwork is in the focus chain.
 
+Runs on its own Xvfb display (`harness.run_on_xvfb`).
+
 Procedure:
   1. Launch ccwork.
-  2. Focus another window (Konsole).
+  2. Focus another window (a plain xterm).
   3. Inject Ctrl+Shift+P via XTest.
   4. Assert: zero dispatch entries in the log (negative case).
   5. Focus ccwork.
@@ -29,8 +31,10 @@ import tempfile
 import time
 from pathlib import Path
 
+import harness
 
 REPO = Path(__file__).resolve().parents[2]
+OTHER_TITLE = "live-other-window"
 
 _x11 = ctypes.CDLL("libX11.so.6")
 _xtst = ctypes.CDLL("libXtst.so.6")
@@ -65,8 +69,8 @@ def wmctrl_focus(window_title_substring: str) -> None:
 
     Used only for "focus *something else* that isn't ccwork." For
     focusing ccwork itself prefer wmctrl_focus_ccwork() — substring
-    matching on titles is unreliable because Konsole's prompt often
-    contains 'ccwork' as the cwd.
+    matching on titles is unreliable because a shell prompt in the
+    title often contains 'ccwork' as the cwd.
     """
     subprocess.run(["wmctrl", "-a", window_title_substring], check=False)
 
@@ -107,6 +111,7 @@ def main() -> int:
         stderr=subprocess.STDOUT,
     )
     print(f"pid={proc.pid} sandbox={sandbox}")
+    other = harness.open_other_window(OTHER_TITLE)
 
     try:
         # Wait for startup.
@@ -122,8 +127,8 @@ def main() -> int:
 
         dpy = _x11.XOpenDisplay(None)
 
-        # ── NEGATIVE: focus Konsole, inject Ctrl+Shift+P, expect 0 dispatch ──
-        wmctrl_focus("Konsole")
+        # ── NEGATIVE: focus the other xterm, inject Ctrl+Shift+P, expect 0 dispatch ──
+        wmctrl_focus(OTHER_TITLE)
         time.sleep(0.6)
         before_neg = count_dispatches(log_path)
         send_ctrl_shift(dpy, XK_p)
@@ -155,6 +160,7 @@ def main() -> int:
         return 0 if result else 2
 
     finally:
+        other.kill()
         if proc.poll() is None:
             proc.terminate()
             try:
@@ -164,4 +170,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    harness.run_on_xvfb()
     sys.exit(main())

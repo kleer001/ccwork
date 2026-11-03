@@ -23,7 +23,7 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_settings.py::tes
 # Increase log verbosity for the running app
 CCWORK_LOG=DEBUG ./bin/ccwork
 
-# Live integration scripts (X11 required — these aren't pytest tests)
+# Live integration scripts (Xvfb + openbox; these aren't pytest tests)
 .venv/bin/python tests/live/check_focus_scoping.py   # load-bearing
 .venv/bin/python tests/live/check_keys_dispatch.py
 .venv/bin/python tests/live/check_f1_cheatsheet.py
@@ -33,7 +33,10 @@ CCWORK_LOG=DEBUG ./bin/ccwork
 ```
 
 `tests/live/` holds end-to-end verification scripts that launch a real
-ccwork in a sandboxed `XDG_CONFIG_HOME`, focus it via `wmctrl -ia
+ccwork in a sandboxed `XDG_CONFIG_HOME`. `harness.run_on_xvfb()` runs
+each ccwork check on its own Xvfb display with openbox and a temporary
+`XDG_RUNTIME_DIR`, so no key reaches the desktop and the desktop
+ccwork keeps its hook socket. The checks focus ccwork via `wmctrl -ia
 <wid>` (matched by `WM_CLASS=main.py.ccwork`), inject keystrokes via
 `libXtst`, and assert on log output and `wmctrl -l`. They are NOT
 pytest tests — names are deliberately off the `*_test.py` glob so
