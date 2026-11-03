@@ -30,6 +30,7 @@ CCWORK_LOG=DEBUG ./bin/ccwork
 .venv/bin/python tests/live/check_window_geometry.py
 .venv/bin/python tests/live/check_terminal_input.py   # own Xvfb; typing, paste, Ctrl+Z
 .venv/bin/python tests/live/check_worktree_follow.py  # one real claude -w prompt
+.venv/bin/python tests/live/check_make_worktree.py    # row menu → Make worktree…
 .venv/bin/python tests/live/probe_xgrabkey.py        # diagnostic only
 ```
 
@@ -371,6 +372,16 @@ but no widgets):
   only when the *last* row for a path leaves (a surviving duplicate means
   the path is still on the shelf); `add` restores the badge from a
   matching `recent` entry and drops it (re-adding forgets it as "recent").
+- `worktree.py` — right-click → *Make worktree…* (dialog in
+  `src/ui/worktree_dialog.py`). `worktree_source` reads the source row's
+  branch, short HEAD and uncommitted state once; `worktree_plan` checks a
+  branch name (`check-ref-format refs/heads/<name>`, branch exists,
+  folder exists) for the folder `<parent of main checkout>/<main
+  name>-<name with / as ->`; `make_worktree` runs `git worktree add -b`
+  and records the source branch as `branch.<name>.ccworkBase`. Each git
+  failure raises `GitError` with git's stderr, and the sidebar shows it
+  and adds no row. On success the new row is added at once, selected,
+  and takes the source row's badge. Design: `docs/specs/worktree.md`.
 - `terminal_session.py` — builds the argv passed to `TerminalHost`. Sets
   `CCWORK_GUI=1` (the gate the hook sink checks) and `CCWORK_ROW_ID=<repo.id>`
   (the routing key every hook event carries) in the child env. Launches

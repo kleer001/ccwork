@@ -410,7 +410,12 @@ def worktree_main_name(path: str | os.PathLike[str]) -> str:
     out = _rev_parse_paths(path, "--git-dir", "--git-common-dir")
     if not out or out[0] == out[1]:
         return ""
-    common = Path(out[1])
+    return main_name(Path(out[1]))
+
+
+def main_name(common: Path) -> str:
+    """The repository's name from its common dir: the main checkout's folder
+    name for `<main>/.git`, the folder name less `.git` for a bare repo."""
     return common.parent.name if common.name == ".git" else common.name.removesuffix(".git")
 
 

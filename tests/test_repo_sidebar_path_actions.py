@@ -108,7 +108,7 @@ def test_open_in_file_manager_enabled_when_xdg_open_present(
 def test_context_menu_path_actions_appear_between_clone_and_badge(
     qapp: QApplication, tmp_path: Path
 ) -> None:
-    """Order matters per spec: Reload → Clone → Open in FM → Copy path →
+    """Order matters per spec: Reload → Clone → Make worktree → Open in FM → Copy path →
     Rebind to… → sep → Set title → Set badge → Clear badge → sep → Remove.
     (Clear title shows only when a title is set.) Lock the
     ordering so a future menu addition doesn't disrupt the path-group
@@ -121,6 +121,7 @@ def test_context_menu_path_actions_appear_between_clone_and_badge(
     assert non_sep == [
         "Reload terminal",
         "Clone this repo",
+        "Make worktree…",
         "Open in file manager",
         "Copy path",
         "Rebind to…",

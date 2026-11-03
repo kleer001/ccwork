@@ -52,12 +52,14 @@ from PySide6.QtWidgets import (
 
 from src.core import repo_store
 from src.core.repo_store import Repo, RepoStore
+from src.core.worktree import GitError, make_worktree
 # Re-exported as this module's public surface: external code and tests import
 # the model, delegate, roles, status values, and `_format_elapsed` from
 # `src.ui.repo_sidebar`.
 from src.ui.badge_theme import STATUS_ATTENTION, STATUS_DONE
 from src.ui.current_highlight import Highlight, RepoListView
 from src.ui.repo_delegate import RepoDelegate
+from src.ui.worktree_dialog import WorktreeDialog
 from src.ui.repo_model import (
     ROLE_ACTIVE_GROUP,
     ROLE_BRANCH,
@@ -992,6 +994,15 @@ class RepoSidebar(QWidget):
         clone_act.triggered.connect(lambda _=False, r=repo: self._add_path(r.path))
         menu.addAction(clone_act)
 
+        worktree_act = QAction("Make worktree…", menu)
+        worktree_act.setToolTip(
+            "Make a second folder of this repository on a new branch, next to "
+            "the main checkout, and add a row for it."
+        )
+        worktree_act.setEnabled(repo_store.git_toplevel(repo.path) is not None)
+        worktree_act.triggered.connect(lambda _=False, r=repo: self._make_worktree(r))
+        menu.addAction(worktree_act)
+
         # Path-action group: no separator before, to read as one "things you
         # can do with this path" cluster alongside Clone. The existing
         # separator below fences off the cosmetic badge items.
@@ -1092,6 +1103,29 @@ class RepoSidebar(QWidget):
             return
         self.rebind(repo.id, picked)
 
+    def _make_worktree(self, source: Repo) -> None:
+        """Run the Make worktree dialog. On OK, `git worktree add`; then add
+        a selected row with the source row's badge and a blank title. On a
+        git error, show git's message and add no row."""
+        try:
+            dlg = WorktreeDialog(source.path, self)
+        except GitError as e:
+            QMessageBox.warning(self, "Make worktree", str(e))
+            return
+        if not dlg.exec():
+            return
+        plan = dlg.plan()
+        try:
+            make_worktree(plan)
+        except GitError as e:
+            QMessageBox.warning(self, "Make worktree", str(e))
+            # A failure after `git worktree add` leaves the worktree: it still
+            # gets its row, so the user can see and remove it.
+            if not os.path.isdir(plan.folder):
+                return
+        added = self._add_path(plan.folder)
+        self._model.set_emoji(added.id, source.emoji)
+
     def rebind(self, repo_id: str, new_path: str, follow: bool = False) -> bool:
         """Repoint a row at `new_path` and queue the re-sort the new name
         may need. Shared by the *Rebind to…* menu action and the automatic
@@ -1190,3 +1224,4 @@ class RepoSidebar(QWidget):
         if ans == QMessageBox.Yes:
             self._model.remove_repo_at(row)
             self.repo_removed.emit(repo)
+
