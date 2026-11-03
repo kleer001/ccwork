@@ -30,6 +30,7 @@ CCWORK_LOG=DEBUG ./bin/ccwork
 .venv/bin/python tests/live/check_window_geometry.py
 .venv/bin/python tests/live/check_terminal_input.py   # own Xvfb; typing, paste, Ctrl+Z
 .venv/bin/python tests/live/check_worktree_follow.py  # one real claude -w prompt
+.venv/bin/python tests/live/check_enter_worktree.py   # one real EnterWorktree prompt
 .venv/bin/python tests/live/check_make_worktree.py    # row menu → Make worktree…
 .venv/bin/python tests/live/check_remove_worktree.py  # delete box on a clean and a dirty worktree
 .venv/bin/python tests/live/probe_xgrabkey.py        # diagnostic only
