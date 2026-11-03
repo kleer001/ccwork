@@ -774,6 +774,11 @@ class MainWindow(QMainWindow):
         host.failed.connect(lambda msg, r=repo: self._on_terminal_failed(r, msg))
         host.finished.connect(lambda code, r=repo: self._on_terminal_finished(r, code))
         host.zoom_requested.connect(self._on_zoom_requested)
+        # On a first spawn the xterm is not embedded yet when the row is
+        # selected, so that focus_child() does nothing: focus it on arrival.
+        host.embedded.connect(
+            lambda h=host: h.focus_child() if self._stack.currentWidget() is h else None
+        )
         host.context_menu_requested.connect(
             lambda pos, r=repo: self._on_terminal_context_menu(r, pos)
         )

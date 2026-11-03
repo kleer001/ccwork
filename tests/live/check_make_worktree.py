@@ -7,7 +7,8 @@ picks "Make worktree…" with the keyboard, types `fix/a` and presses Enter.
 Passes when `repos.json` has a second row on `<parent>/proj-fix-a` with the
 first row's badge, the folder is on branch `fix/a` with
 `branch.fix/a.ccworkBase = main`, the new row's terminal prints that
-folder for `pwd` and `fix/a` for `git branch --show-current`, and only
+folder for `pwd` and `fix/a` for `git branch --show-current` (typed with no
+click, so the new terminal has the keyboard focus), and only
 `.env` of the ignored entries is in the worktree, and the terminal made a
 `.venv` there with the same Python version. Saves a screenshot of the
 result, which shows the copy report and the setup commands. Docs:
@@ -103,10 +104,6 @@ def main() -> int:
                 break
             time.sleep(0.2)
         time.sleep(3.0)  # the new row is selected and its terminal starts
-        # The dialog leaves keyboard focus off the xterm: click into it.
-        subprocess.run(["xdotool", "mousemove", "--window", str(int(wid, 16)), "700", "400",
-                        "click", "1"], check=True)
-        time.sleep(1.0)
         subprocess.run(["xdotool", "type", "--delay", "20",
                         f"pwd > {out}; git branch --show-current >> {out}"], check=True)
         key("Return")
