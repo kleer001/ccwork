@@ -220,9 +220,9 @@ first prompt. Ctrl+C stops it. ccwork passes the commands in
   `version_info` line, which `uv venv` writes instead.
 - The freeze file is the output of `uv pip freeze` on the source venv (F15).
   It goes in the worktree's private git dir (`git rev-parse --git-dir`), so
-  `git worktree remove` deletes it. An editable entry whose path is in the
-  source folder gets the worktree folder instead. Other editable entries do
-  not change.
+  `git worktree remove` deletes it. A local entry whose path is in the
+  source folder (an editable `-e file://…` or a `name @ file://…`) gets the
+  worktree folder instead. Other entries do not change.
 - When `uv` is not on `PATH`, the terminal prints "uv not found: no venv
   made" and makes no venv.
 
@@ -281,7 +281,10 @@ Claude's worktrees stay in Claude's place, `<repo>/.claude/worktrees/<name>`.
   row goes into `recent`.
 - With the box on:
   1. `git -C <main checkout> worktree remove <folder>`. When git refuses (F3),
-     ccwork shows git's message and keeps the row. Nothing changes.
+     ccwork shows git's message and keeps the row. Nothing changes. Claude
+     locks its worktree while a session runs, and a crash leaves the lock;
+     for a locked worktree the message adds "If no session uses it, run:
+     git worktree unlock `<folder>`". ccwork does not unlock it.
   2. `git -C <main checkout> branch -d <branch>`. When git refuses (F4),
      ccwork says: "The folder is deleted. The branch `<branch>` stays, because
      it has commits that are not merged." For any other refusal (for example,
