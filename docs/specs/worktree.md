@@ -197,7 +197,10 @@ Not copied (over 1 MiB or a link):
 ```
 
 When a copy fails, the terminal prints the file name and the error, and
-ccwork copies the other files.
+ccwork copies the other files. Each list shows up to 10 names, then the
+count of the rest, because the report goes to the terminal in an
+environment variable (`CCWORK_NOTICE`). A control character in a name prints
+as `?`.
 
 ### 5.5 Dependencies
 

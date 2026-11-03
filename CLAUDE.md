@@ -381,8 +381,13 @@ but no widgets):
   name>-<name with / as ->`; `make_worktree` runs `git worktree add -b`
   and records the source branch as `branch.<name>.ccworkBase`. Each git
   failure raises `GitError` with git's stderr, and the sidebar shows it
-  and adds no row. On success the new row is added at once, selected,
-  and takes the source row's badge. *Remove from sidebar* on a worktree
+  and adds no row (unless the worktree folder was made). On success the new row is added at once, selected,
+  and takes the source row's badge. `worktree_files.copy_ignored` copies
+  the source folder's ignored files of 1 MiB or less (no wholly ignored
+  folder, no link, no `.claude/settings.local.json`) into the worktree;
+  its report reaches the new row's first terminal as `CCWORK_NOTICE`
+  (`RepoSidebar.take_spawn_env`), which `bin/ccwork-bashrc` prints before
+  the first prompt. *Remove from sidebar* on a worktree
   row opens `WorktreeRemoveDialog`: an opt-in box (off by default)
   deletes the folder and its branch with `git worktree remove` and `git
   branch -d` (`remove_worktree`; both refuse to lose work), after the

@@ -795,7 +795,7 @@ class MainWindow(QMainWindow):
         self._show_title(repo)
         # _ensure_terminal handles setCurrentWidget on first spawn; for a
         # pre-existing host we still need to swap to it.
-        host = self._ensure_terminal(repo)
+        host = self._ensure_terminal(repo, extra_env=self._sidebar.take_spawn_env(repo.id))
         self._stack.setCurrentWidget(host)
         host.focus_child()
         # Persist so the violet dot can be restored next launch. Best-effort:

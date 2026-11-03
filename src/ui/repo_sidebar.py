@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
 from src.core import repo_store
 from src.core.repo_store import Repo, RepoStore, current_branch
 from src.core.worktree import GitError, make_worktree, remove_worktree
+from src.core.worktree_files import copy_ignored
 # Re-exported as this module's public surface: external code and tests import
 # the model, delegate, roles, status values, and `_format_elapsed` from
 # `src.ui.repo_sidebar`.
@@ -154,6 +155,8 @@ class RepoSidebar(QWidget):
             else AnimationSettings()
         )
         self._model = RepoListModel(store, self)
+        # Row id → extra env for that row's first terminal (`take_spawn_env`).
+        self._spawn_env: dict[str, dict[str, str]] = {}
 
         self._view = RepoListView(self)
         self._view.setModel(self._model)
@@ -748,9 +751,12 @@ class RepoSidebar(QWidget):
             return
         self._add_path(path)
 
-    def _add_path(self, path: str) -> Repo:
-        """Append a row for `path`, select it, emit repo_added. Returns the new Repo."""
+    def _add_path(self, path: str, spawn_env: dict[str, str] | None = None) -> Repo:
+        """Append a row for `path`, select it, emit repo_added. Returns the new
+        Repo. `spawn_env` goes to the row's first terminal (`take_spawn_env`)."""
         added = self._model.add_repo(path)
+        if spawn_env:
+            self._spawn_env[added.id] = spawn_env
         # Select the just-added row by id (path may be ambiguous now that
         # duplicates are allowed).
         row = self._model.index_of_id(added.id)
@@ -1116,6 +1122,7 @@ class RepoSidebar(QWidget):
         if not dlg.exec():
             return
         plan = dlg.plan()
+        notice = ""
         try:
             make_worktree(plan)
         except GitError as e:
@@ -1124,8 +1131,17 @@ class RepoSidebar(QWidget):
             # gets its row, so the user can see and remove it.
             if not os.path.isdir(plan.folder):
                 return
-        added = self._add_path(plan.folder)
+        else:
+            try:
+                notice = copy_ignored(source.path, plan.folder).text()
+            except GitError as e:
+                notice = f"Could not copy the ignored files: {e}"
+        added = self._add_path(plan.folder, {"CCWORK_NOTICE": notice} if notice else None)
         self._model.set_emoji(added.id, source.emoji)
+
+    def take_spawn_env(self, repo_id: str) -> dict[str, str] | None:
+        """The extra env for this row's first terminal, once; else None."""
+        return self._spawn_env.pop(repo_id, None)
 
     def rebind(self, repo_id: str, new_path: str, follow: bool = False) -> bool:
         """Repoint a row at `new_path` and queue the re-sort the new name

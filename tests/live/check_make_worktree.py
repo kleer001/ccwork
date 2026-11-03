@@ -1,13 +1,15 @@
 """Live check: "Make worktree…" from the row menu makes a worktree row.
 
 Runs on its own Xvfb display (`harness.run_on_xvfb`). Makes a git repo in a
-temporary folder, launches ccwork with one row on it, right-clicks the row,
+temporary folder, with an ignored `.env`, an ignored 2 MiB `model.bin` and an
+ignored `tmp/` folder. Launches ccwork with one row on it, right-clicks the row,
 picks "Make worktree…" with the keyboard, types `fix/a` and presses Enter.
 Passes when `repos.json` has a second row on `<parent>/proj-fix-a` with the
 first row's badge, the folder is on branch `fix/a` with
-`branch.fix/a.ccworkBase = main`, and the new row's terminal prints that
-folder for `pwd` and `fix/a` for `git branch --show-current`. Saves a
-screenshot of the result. Docs: `docs/specs/worktree.md` 5.1 to 5.3.
+`branch.fix/a.ccworkBase = main`, the new row's terminal prints that
+folder for `pwd` and `fix/a` for `git branch --show-current`, and only
+`.env` of the ignored entries is in the worktree. Saves a screenshot of the
+result, which shows the copy report. Docs: `docs/specs/worktree.md` 5.1 to 5.4.
 
     .venv/bin/python tests/live/check_make_worktree.py
 """
@@ -41,8 +43,13 @@ def main() -> int:
     proj.mkdir()
     git("init", "-q", "-b", "main", str(proj))
     (proj / "README").write_text("seed\n")
-    git("-C", str(proj), "add", "README")
+    (proj / ".gitignore").write_text(".env\nmodel.bin\ntmp/\n")
+    git("-C", str(proj), "add", "README", ".gitignore")
     git("-C", str(proj), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed")
+    (proj / ".env").write_text("KEY=1\n")
+    (proj / "model.bin").write_bytes(b"\0" * (2 * 1024 * 1024))
+    (proj / "tmp").mkdir()
+    (proj / "tmp" / "result.csv").write_text("1\n")
     folder = sandbox / "proj-fix-a"
     out = sandbox / "terminal.txt"
 
@@ -110,6 +117,9 @@ def main() -> int:
             "ccworkBase main": base == "main",
             "terminal pwd": lines[:1] == [str(folder)],
             "terminal branch": lines[1:2] == ["fix/a"],
+            ".env copied": (folder / ".env").read_text() == "KEY=1\n",
+            "model.bin and tmp/ not copied": not (folder / "model.bin").exists()
+                                             and not (folder / "tmp").exists(),
         }
         for k, v in checks.items():
             print(f"  {k}: {'OK' if v else 'FAIL'}")
