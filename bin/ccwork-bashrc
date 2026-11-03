@@ -25,6 +25,17 @@ if [ -n "${CCWORK_NOTICE:-}" ]; then
     unset CCWORK_NOTICE
 fi
 
+# ccwork "Make worktree": CCWORK_SETUP_CMD rebuilds the source folder's venv
+# and node_modules in the new worktree. Run it once, in view, before the
+# first prompt; Ctrl+C stops it.
+if [ -n "${CCWORK_SETUP_CMD:-}" ]; then
+    _ccwork_setup=$CCWORK_SETUP_CMD
+    unset CCWORK_SETUP_CMD
+    printf '%s\n' "$_ccwork_setup" | sed 's/^/+ /'
+    eval "$_ccwork_setup"
+    unset _ccwork_setup
+fi
+
 # ccwork "Launch" (crash-recovery resume): the GUI sets CCWORK_RESUME_CMD
 # when the user clicks Launch on the splash banner. Present it HERE — at the
 # tail of init, after /etc/bash.bashrc and the user's ~/.bashrc have already

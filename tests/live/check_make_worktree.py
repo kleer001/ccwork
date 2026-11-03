@@ -1,15 +1,17 @@
 """Live check: "Make worktree…" from the row menu makes a worktree row.
 
 Runs on its own Xvfb display (`harness.run_on_xvfb`). Makes a git repo in a
-temporary folder, with an ignored `.env`, an ignored 2 MiB `model.bin` and an
-ignored `tmp/` folder. Launches ccwork with one row on it, right-clicks the row,
+temporary folder, with an ignored `.env`, an ignored 2 MiB `model.bin`, an
+ignored `tmp/` folder and a `.venv` made by `uv venv`. Launches ccwork with one row on it, right-clicks the row,
 picks "Make worktree…" with the keyboard, types `fix/a` and presses Enter.
 Passes when `repos.json` has a second row on `<parent>/proj-fix-a` with the
 first row's badge, the folder is on branch `fix/a` with
 `branch.fix/a.ccworkBase = main`, the new row's terminal prints that
 folder for `pwd` and `fix/a` for `git branch --show-current`, and only
-`.env` of the ignored entries is in the worktree. Saves a screenshot of the
-result, which shows the copy report. Docs: `docs/specs/worktree.md` 5.1 to 5.4.
+`.env` of the ignored entries is in the worktree, and the terminal made a
+`.venv` there with the same Python version. Saves a screenshot of the
+result, which shows the copy report and the setup commands. Docs:
+`docs/specs/worktree.md` 5.1 to 5.5.
 
     .venv/bin/python tests/live/check_make_worktree.py
 """
@@ -33,6 +35,12 @@ def git(*args: str) -> str:
     return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
+def venv_version(folder: Path) -> str:
+    cfg = folder / ".venv" / "pyvenv.cfg"
+    return next((l for l in cfg.read_text().splitlines() if l.startswith("version_info")), "") \
+        if cfg.exists() else ""
+
+
 def key(*keys: str) -> None:
     subprocess.run(["xdotool", "key", "--delay", "60", *keys], check=True)
 
@@ -43,13 +51,14 @@ def main() -> int:
     proj.mkdir()
     git("init", "-q", "-b", "main", str(proj))
     (proj / "README").write_text("seed\n")
-    (proj / ".gitignore").write_text(".env\nmodel.bin\ntmp/\n")
+    (proj / ".gitignore").write_text(".env\nmodel.bin\ntmp/\n.venv/\n")
     git("-C", str(proj), "add", "README", ".gitignore")
     git("-C", str(proj), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed")
     (proj / ".env").write_text("KEY=1\n")
     (proj / "model.bin").write_bytes(b"\0" * (2 * 1024 * 1024))
     (proj / "tmp").mkdir()
     (proj / "tmp" / "result.csv").write_text("1\n")
+    subprocess.run(["uv", "venv", "-q", "--python", "3.12", str(proj / ".venv")], check=True)
     folder = sandbox / "proj-fix-a"
     out = sandbox / "terminal.txt"
 
@@ -120,6 +129,7 @@ def main() -> int:
             ".env copied": (folder / ".env").read_text() == "KEY=1\n",
             "model.bin and tmp/ not copied": not (folder / "model.bin").exists()
                                              and not (folder / "tmp").exists(),
+            "venv made, same version": venv_version(folder) == venv_version(proj) != "",
         }
         for k, v in checks.items():
             print(f"  {k}: {'OK' if v else 'FAIL'}")

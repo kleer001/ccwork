@@ -119,6 +119,12 @@ def make_worktree(plan: WorktreePlan) -> str:
     return plan.folder
 
 
+def git_dir(folder: str) -> str:
+    """The private git dir of `folder`: `<common dir>/worktrees/<name>` for
+    a linked worktree."""
+    return _git(folder, "rev-parse", "--absolute-git-dir")
+
+
 def ignored_entries(folder: str) -> list[str]:
     """Ignored files of `folder`, and each wholly ignored folder as one entry
     that ends in `/`: what `git worktree remove` deletes with no question."""

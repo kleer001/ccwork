@@ -387,7 +387,13 @@ but no widgets):
   folder, no link, no `.claude/settings.local.json`) into the worktree;
   its report reaches the new row's first terminal as `CCWORK_NOTICE`
   (`RepoSidebar.take_spawn_env`), which `bin/ccwork-bashrc` prints before
-  the first prompt. *Remove from sidebar* on a worktree
+  the first prompt. `worktree_setup.setup_commands` builds
+  `CCWORK_SETUP_CMD` the same way: a `uv venv` with the source venv's
+  Python version, then `uv sync --active` (with `uv.lock`) or `uv pip
+  install` of the source venv's freeze (kept in the worktree's git dir,
+  editable paths moved to the worktree), and the `npm` / `pnpm` / `yarn`
+  install of the node lock file; the bashrc runs it once, in view.
+  *Remove from sidebar* on a worktree
   row opens `WorktreeRemoveDialog`: an opt-in box (off by default)
   deletes the folder and its branch with `git worktree remove` and `git
   branch -d` (`remove_worktree`; both refuse to lose work), after the

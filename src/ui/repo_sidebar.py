@@ -54,6 +54,7 @@ from src.core import repo_store
 from src.core.repo_store import Repo, RepoStore, current_branch
 from src.core.worktree import GitError, make_worktree, remove_worktree
 from src.core.worktree_files import copy_ignored
+from src.core.worktree_setup import setup_commands
 # Re-exported as this module's public surface: external code and tests import
 # the model, delegate, roles, status values, and `_format_elapsed` from
 # `src.ui.repo_sidebar`.
@@ -1122,7 +1123,7 @@ class RepoSidebar(QWidget):
         if not dlg.exec():
             return
         plan = dlg.plan()
-        notice = ""
+        notice = setup = ""
         try:
             make_worktree(plan)
         except GitError as e:
@@ -1136,7 +1137,9 @@ class RepoSidebar(QWidget):
                 notice = copy_ignored(source.path, plan.folder).text()
             except GitError as e:
                 notice = f"Could not copy the ignored files: {e}"
-        added = self._add_path(plan.folder, {"CCWORK_NOTICE": notice} if notice else None)
+            setup = setup_commands(source.path, plan.folder)
+        env = {k: v for k, v in (("CCWORK_NOTICE", notice), ("CCWORK_SETUP_CMD", setup)) if v}
+        added = self._add_path(plan.folder, env)
         self._model.set_emoji(added.id, source.emoji)
 
     def take_spawn_env(self, repo_id: str) -> dict[str, str] | None:
