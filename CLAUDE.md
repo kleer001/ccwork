@@ -29,6 +29,7 @@ CCWORK_LOG=DEBUG ./bin/ccwork
 .venv/bin/python tests/live/check_f1_cheatsheet.py
 .venv/bin/python tests/live/check_window_geometry.py
 .venv/bin/python tests/live/check_terminal_input.py   # own Xvfb; typing, paste, Ctrl+Z
+.venv/bin/python tests/live/check_worktree_follow.py  # one real claude -w prompt
 .venv/bin/python tests/live/probe_xgrabkey.py        # diagnostic only
 ```
 
@@ -346,9 +347,19 @@ but no widgets):
   path's last survivor to bare, and moves `recent` entries the same way
   a remove + add would. The same rebind runs automatically when a row's
   terminal starts a Claude session whose git root (`git_toplevel` of the
-  hook `cwd`) is a different repo: the row follows the session, with no
+  payload `cwd`) is a different repo: the row follows the session, with no
   prompt. A subdirectory of the same repo, or a non-git `cwd`, leaves
-  the row alone.
+  the row alone. On `SessionStart`, `UserPromptSubmit` and `Stop`, a
+  payload `cwd` in **another worktree of the same repository** (same
+  `git_common_dir`; for example `claude -w` or `EnterWorktree`) moves
+  the row there with `rebind(follow=True)`: the old folder does not
+  enter `recent`, and the first follow stores it as `Repo.home` in
+  `repos.json`. `ClaudeExited` moves the row back to `home`, and so does
+  startup when the row's folder is gone; arriving at `home` clears it,
+  and a plain rebind clears it too. A follow into `.claude/worktrees/`
+  adds `/.claude/worktrees/` to `<common dir>/info/exclude`
+  (`exclude_claude_worktrees`). Subagent events never move a row.
+  Design: `docs/specs/worktree.md` section 6.
   The store also keeps a `recent` list (in the same `repos.json`, so no
   new file) — the recently-removed history that feeds the sidebar's
   *Recent* recall slot. Each entry is `{path, emoji}`, most-recent first,
@@ -394,7 +405,7 @@ but no widgets):
 
 - `bin/ccwork-hook-sink` — wired into every Claude Code hook ccwork uses
   by `install.sh`. Reads the hook payload from stdin, wraps it as
-  `{"event": $CCWORK_EVENT, "row": $CCWORK_ROW_ID, "cwd": $PWD, "ts": …,
+  `{"event": $CCWORK_EVENT, "row": $CCWORK_ROW_ID, "cwd": ${CLAUDE_PROJECT_DIR:-$PWD}, "ts": …,
   "payload": …}`, writes
   one line to the ccwork socket. It also sends a desktop toast (gated by
   `desktop_notifications`) for `Stop`, `StopFailure`, and the Notification
@@ -431,8 +442,9 @@ Claude Code hook ─▶ ccwork-hook-sink ─▶ unix socket ─▶ HookServer
 `MainWindow._on_hook_event` is a thin dispatcher: it routes each event
 by its `row` field to exactly one row. An
 event whose row id is missing or unknown is dropped with a logged
-warning — there is no fallback to path routing. On `SessionStart` it
-runs the automatic rebind (see `repo_store.py`). Then it calls
+warning — there is no fallback to path routing. It runs the automatic
+rebinds that follow the session (`_follow_session`, see `repo_store.py`).
+Then it calls
 `RepoSidebar.apply_hook_event(event, repo_id, payload)` →
 `RepoListModel.apply_hook_event`, which owns the entire event → state
 mutation table. All Claude state in the model is keyed by repo id, so

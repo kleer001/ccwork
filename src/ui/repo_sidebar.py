@@ -1092,11 +1092,12 @@ class RepoSidebar(QWidget):
             return
         self.rebind(repo.id, picked)
 
-    def rebind(self, repo_id: str, new_path: str) -> bool:
+    def rebind(self, repo_id: str, new_path: str, follow: bool = False) -> bool:
         """Repoint a row at `new_path` and queue the re-sort the new name
         may need. Shared by the *Rebind to…* menu action and the automatic
-        rebind when a row's terminal starts Claude in another repo."""
-        changed = self._model.rebind_repo(repo_id, new_path)
+        rebinds that follow the row's Claude session (`follow`: see
+        `RepoStore.rebind`)."""
+        changed = self._model.rebind_repo(repo_id, new_path, follow)
         if changed:
             self._maybe_walk()
         return changed

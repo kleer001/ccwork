@@ -31,7 +31,13 @@ def run_on_xvfb() -> None:
     with os.fdopen(read_fd) as f:
         display = ":" + f.readline().strip()
     runtime = tempfile.mkdtemp(prefix="ccwork-live-run-")
-    env = dict(os.environ, DISPLAY=display, QT_QPA_PLATFORM="xcb", XDG_RUNTIME_DIR=runtime,
+    # A check run from inside a ccwork terminal or a Claude session would
+    # pass on CCWORK_CLAUDE_DEPTH (bin/claude then sends no ClaudeExited)
+    # and the session's CLAUDE_CODE_* ids. The launched ccwork starts clean,
+    # with the same Claude config folder.
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("CCWORK_", "CLAUDE")) or k == "CLAUDE_CONFIG_DIR"}
+    env.update(DISPLAY=display, QT_QPA_PLATFORM="xcb", XDG_RUNTIME_DIR=runtime,
                DBUS_SESSION_BUS_ADDRESS="disabled:", **{CHILD_FLAG: "1"})
     env.pop("WAYLAND_DISPLAY", None)
     wm = subprocess.Popen(["openbox"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

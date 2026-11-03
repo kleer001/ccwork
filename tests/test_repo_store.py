@@ -499,6 +499,60 @@ def test_rebind_drops_new_path_from_recent(store_path: Path, tmp_path: Path) -> 
     assert [os.path.realpath(e["path"]) for e in s.recent] == [os.path.realpath(a)]
 
 
+def test_follow_keeps_old_path_out_of_recent_and_stores_home(
+    store_path: Path, tmp_path: Path
+) -> None:
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    s = RepoStore(config_path=store_path)
+    r = s.add(str(a))
+
+    assert s.rebind(r.id, str(b), follow=True) is True
+    assert s.recent == []
+    assert r.home == os.path.realpath(a)
+
+    s.save()
+    loaded = RepoStore(config_path=store_path)
+    loaded.load()
+    assert loaded.repos[0].home == os.path.realpath(a)
+
+
+def test_follow_back_to_home_clears_it(store_path: Path, tmp_path: Path) -> None:
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    s = RepoStore(config_path=store_path)
+    r = s.add(str(a))
+    s.rebind(r.id, str(b), follow=True)
+
+    assert s.rebind(r.id, r.home, follow=True) is True
+    assert r.path == os.path.realpath(a)
+    assert r.home == ""
+    assert s.recent == []
+
+
+def test_plain_rebind_clears_home(store_path: Path, tmp_path: Path) -> None:
+    a, b, c = (tmp_path / n for n in "abc")
+    for d in (a, b, c):
+        d.mkdir()
+    s = RepoStore(config_path=store_path)
+    r = s.add(str(a))
+    s.rebind(r.id, str(b), follow=True)
+
+    assert s.rebind(r.id, str(c)) is True
+    assert r.home == ""
+
+
+def test_load_without_home_gives_empty_home(store_path: Path) -> None:
+    store_path.write_text(json.dumps({"version": 1, "repos": [{"path": "/x", "id": "a"}]}))
+    s = RepoStore(config_path=store_path)
+    s.load()
+    assert s.repos[0].home == ""
+
+
 def test_rebind_returns_false_for_unknown_id(store_path: Path, tmp_path: Path) -> None:
     s = RepoStore(config_path=store_path)
     s.add(str(tmp_path))

@@ -242,11 +242,12 @@ Claude's worktrees stay in Claude's place, `<repo>/.claude/worktrees/<name>`.
   `<common dir>/info/exclude`, if the line is not there. This keeps
   `git status` and the dashboard clean (F12).
 - **C2. Follow in.** On SessionStart, UserPromptSubmit and Stop, ccwork reads
-  the payload `cwd`. It compares real paths first, at a `/` boundary. Only
-  when `cwd` is outside the row's folder does ccwork run git: it gets
-  `git_toplevel(cwd)` and its common dir. When the common dir is the row's
-  common dir and the top level is a different folder, the row rebinds to that
-  folder. When the row has no home folder yet, ccwork stores the old folder
+  the payload `cwd`. When its real path is the row's folder, ccwork runs no
+  git. Otherwise ccwork gets `git_toplevel(cwd)`; a subfolder of the row's
+  folder has the row's folder as its top level and changes nothing. A path
+  prefix check is not enough, because Claude's worktrees are inside the main
+  checkout's folder. When the top level is a different folder and its common
+  dir is the row's common dir, the row rebinds to that folder. When the row has no home folder yet, ccwork stores the old folder
   as `home` on the row in `repos.json`. Subagent events never move a row. A
   `cwd` in a different repository uses the SessionStart rebind as now.
 - **C3. Follow out.** On `ClaudeExited`, a row with a `home` rebinds to its

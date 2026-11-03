@@ -855,7 +855,7 @@ class RepoListModel(QAbstractListModel):
             idx = self.index(row)
             self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
 
-    def rebind_repo(self, repo_id: str, new_path: str) -> bool:
+    def rebind_repo(self, repo_id: str, new_path: str, follow: bool = False) -> bool:
         """Repoint one row at `new_path` via `RepoStore.rebind`. The display
         name updates implicitly because `Repo.display_name` is derived from
         `path` basename + emoji + instance. Repaints every row whose name or
@@ -867,7 +867,7 @@ class RepoListModel(QAbstractListModel):
             return False
         old_path = repo.path
         before = {r.id: r.instance for r in self._store.repos}
-        if not self._store.rebind(repo_id, new_path):
+        if not self._store.rebind(repo_id, new_path, follow):
             return False
         self._store.save()
         if not self._store.repos_for_path(old_path):

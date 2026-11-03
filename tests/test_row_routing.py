@@ -37,11 +37,11 @@ def _git_init(path: Path) -> Path:
 
 
 def _event(event: str, row: str | None, cwd: str, session_id: str | None = None) -> dict:
-    obj: dict = {"event": event, "cwd": cwd, "payload": {}}
+    obj: dict = {"event": event, "cwd": cwd, "payload": {"cwd": cwd}}
     if row is not None:
         obj["row"] = row
     if session_id is not None:
-        obj["payload"] = {"session_id": session_id}
+        obj["payload"]["session_id"] = session_id
     return obj
 
 

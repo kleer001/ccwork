@@ -72,6 +72,9 @@ class Repo:
     # Epoch seconds of the last Claude event or click on this row. Feeds the
     # optional idle-row expiry. A row loaded without one counts from now.
     last_used: float = field(default_factory=time.time)
+    # The row's folder before it followed Claude into another worktree of
+    # the same repository; empty when the row is on its own folder.
+    home: str = ""
 
     @property
     def name(self) -> str:
@@ -153,7 +156,11 @@ class RepoStore:
             title = r.get("title", "")
             if not isinstance(title, str):
                 title = ""
-            repo = Repo(path=str(r["path"]), id=rid, instance=inst, emoji=emoji, title=title)
+            home = r.get("home", "")
+            if not isinstance(home, str):
+                home = ""
+            repo = Repo(path=str(r["path"]), id=rid, instance=inst, emoji=emoji, title=title,
+                        home=home)
             last_used = r.get("last_used")
             if isinstance(last_used, (int, float)) and not isinstance(last_used, bool):
                 repo.last_used = float(last_used)
@@ -294,7 +301,7 @@ class RepoStore:
             repo.last_used = now
             self.save()
 
-    def rebind(self, repo_id: str, new_path: str) -> bool:
+    def rebind(self, repo_id: str, new_path: str, follow: bool = False) -> bool:
         """Repoint one row at `new_path`, keeping its id, emoji and position.
 
         Instance numbers follow the same rules as a remove from the old path
@@ -302,18 +309,25 @@ class RepoStore:
         too: the old path enters it when its last row leaves, and the new
         path leaves it. Returns False when the id is unknown or the row
         already has that path.
+
+        `follow=True` moves the row between worktrees of one repository
+        with Claude: the old path does not enter `recent`, the first follow
+        stores the old path as `home`, and arriving at `home` clears it. A
+        plain rebind clears `home`.
         """
         repo = self.find_by_id(repo_id)
         resolved = os.path.realpath(new_path)
         if repo is None or os.path.realpath(repo.path) == resolved:
             return False
         old = os.path.realpath(repo.path)
+        home = (repo.home or old) if follow else ""
         repo.instance = self._next_instance(resolved)
         repo.path = resolved
+        repo.home = "" if home == resolved else home
         survivors = self.repos_for_path(old)
         if len(survivors) == 1:
             survivors[0].instance = 0
-        elif not survivors:
+        elif not survivors and not follow:
             self._push_recent(old, repo.emoji)
         self.recent = [
             e for e in self.recent
@@ -353,6 +367,41 @@ def git_toplevel(path: str | os.PathLike[str]) -> str | None:
         return None
     top = r.stdout.strip()
     return os.path.realpath(top) if top else None
+
+
+def git_common_dir(path: str | os.PathLike[str]) -> str | None:
+    """Real path of the git common dir of `path`, or None. The same for the
+    main checkout and each linked worktree of one repository. Git before
+    2.31 has no `--path-format` and prints no absolute path: None."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    common = r.stdout.strip()
+    return os.path.realpath(common) if os.path.isabs(common) else None
+
+
+CLAUDE_WORKTREES_EXCLUDE = "/.claude/worktrees/"
+
+
+def exclude_claude_worktrees(common_dir: str) -> None:
+    """Add `/.claude/worktrees/` to `<common dir>/info/exclude` once, so
+    Claude's worktrees do not show as untracked in the main checkout. The
+    file is local to the clone and is never committed."""
+    exclude = Path(common_dir) / "info" / "exclude"
+    text = exclude.read_text() if exclude.exists() else ""
+    if CLAUDE_WORKTREES_EXCLUDE in text.splitlines():
+        return
+    exclude.parent.mkdir(exist_ok=True)
+    sep = "" if not text or text.endswith("\n") else "\n"
+    exclude.write_text(f"{text}{sep}{CLAUDE_WORKTREES_EXCLUDE}\n")
 
 
 def is_git_root(path: str | os.PathLike[str]) -> bool:

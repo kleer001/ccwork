@@ -28,6 +28,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import os
 import time
 
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QSignalBlocker, Qt, QTimer, QVariantAnimation
@@ -53,6 +54,7 @@ from src.core.hook_server import (
     EVENT_SESSION_END,
     EVENT_SESSION_START,
     EVENT_STOP,
+    EVENT_USER_PROMPT_SUBMIT,
     HookServer,
 )
 from src.core.key_grab import (
@@ -60,7 +62,9 @@ from src.core.key_grab import (
     MainWindowSlots,
     build_main_window_bindings,
 )
-from src.core.repo_store import Repo, RepoStore, git_toplevel, is_git_root
+from src.core.repo_store import (
+    Repo, RepoStore, exclude_claude_worktrees, git_common_dir, git_toplevel, is_git_root,
+)
 from src.core.settings import Settings, load_settings, save_settings
 from src.core.terminal_session import build_session
 from src.core import x11
@@ -92,6 +96,10 @@ log = logging.getLogger(__name__)
 
 # How often the idle-row expiry re-checks (ms).
 EXPIRY_CHECK_MS = 3600 * 1000
+
+# Events whose payload `cwd` a row follows into another worktree of its
+# repository (docs/specs/worktree.md, C2). Subagent events never move a row.
+FOLLOW_EVENTS = frozenset({EVENT_SESSION_START, EVENT_USER_PROMPT_SUBMIT, EVENT_STOP})
 
 # Model roles that the title tab's text reads.
 _TITLE_TAB_ROLES = {int(Qt.DisplayRole), ROLE_BRANCH, ROLE_TITLE}
@@ -218,6 +226,11 @@ class MainWindow(QMainWindow):
         self._sidebar_save_timer.timeout.connect(self._persist_settings_now)
         self._apply_sidebar_layout()
         self._sidebar.set_badge_style(self._settings.ui.status_badge_style)
+
+        # A row left in a worktree that is gone goes back to its home folder.
+        for repo in list(self._store.repos):
+            if repo.home and not os.path.isdir(repo.path):
+                self._sidebar.rebind(repo.id, repo.home, follow=True)
 
         # Idle-row expiry: once at startup, then hourly (the setting counts
         # days, so a finer check buys nothing).
@@ -1038,10 +1051,10 @@ class MainWindow(QMainWindow):
         Per-row state ownership lives entirely in RepoListModel — see the
         docstring on RepoListModel.apply_hook_event for the event →
         mutation table. This method only handles cross-cutting concerns:
-        routing by row id, the SessionStart rebind and crash recovery. The
-        quit-confirm prompt derives its working list on demand from the
-        model (closeEvent), so there's no id-keyed shadow state to
-        maintain here.
+        routing by row id, the rebinds that follow the session and crash
+        recovery. The quit-confirm prompt derives its working list on
+        demand from the model (closeEvent), so there's no id-keyed shadow
+        state to maintain here.
         """
         event = str(obj.get("event", ""))
         payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else {}
@@ -1058,12 +1071,10 @@ class MainWindow(QMainWindow):
         log.info("hook event=%s cwd=%r row=%s", event, cwd, repo.id)
         self._store.mark_used(repo.id)
 
-        if event == EVENT_SESSION_START and cwd:
-            # The terminal may have `cd`-ed into another repo before running
-            # `claude`: the row follows the session to that repo's git root.
-            top = git_toplevel(str(cwd))
-            if top:
-                self._sidebar.rebind(repo.id, top)
+        if event in FOLLOW_EVENTS:
+            self._follow_session(repo, event, payload.get("cwd"))
+        elif event == EVENT_CLAUDE_EXITED and repo.home:
+            self._sidebar.rebind(repo.id, repo.home, follow=True)
 
         self._sidebar.apply_hook_event(event, repo.id, payload)
 
@@ -1077,6 +1088,34 @@ class MainWindow(QMainWindow):
                 session_recovery.clear_open(str(cwd))
             elif sid:
                 session_recovery.record_open(str(cwd), str(sid), repo.display_name)
+
+    def _follow_session(self, repo: Repo, event: str, cwd: object) -> None:
+        """Move the row to the git root of the session's own `cwd`.
+
+        The payload `cwd` is the folder Claude works in; the sink `cwd`
+        stays the main checkout after `EnterWorktree`. Another worktree of
+        the row's repository is a follow (the row keeps a `home`); another
+        repository rebinds the row at SessionStart only, because the
+        terminal may have `cd`-ed there before running `claude`.
+        """
+        if not isinstance(cwd, str) or not cwd:
+            return
+        here = os.path.realpath(repo.path)
+        if os.path.realpath(cwd) == here:
+            return
+        top = git_toplevel(cwd)
+        if top is None or top == here:
+            return
+        common = git_common_dir(top)
+        if common is not None and common == git_common_dir(here):
+            if Path(top).is_relative_to(Path(common).parent / ".claude" / "worktrees"):
+                try:
+                    exclude_claude_worktrees(common)
+                except OSError as e:
+                    log.warning("could not add the worktree exclude line in %s: %s", common, e)
+            self._sidebar.rebind(repo.id, top, follow=True)
+        elif event == EVENT_SESSION_START:
+            self._sidebar.rebind(repo.id, top)
 
     def _current_repo_id(self) -> str | None:
         w = self._stack.currentWidget()
