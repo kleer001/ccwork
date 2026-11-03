@@ -31,6 +31,7 @@ CCWORK_LOG=DEBUG ./bin/ccwork
 .venv/bin/python tests/live/check_terminal_input.py   # own Xvfb; typing, paste, Ctrl+Z
 .venv/bin/python tests/live/check_worktree_follow.py  # one real claude -w prompt
 .venv/bin/python tests/live/check_make_worktree.py    # row menu → Make worktree…
+.venv/bin/python tests/live/check_remove_worktree.py  # delete box on a clean and a dirty worktree
 .venv/bin/python tests/live/probe_xgrabkey.py        # diagnostic only
 ```
 
@@ -381,7 +382,14 @@ but no widgets):
   and records the source branch as `branch.<name>.ccworkBase`. Each git
   failure raises `GitError` with git's stderr, and the sidebar shows it
   and adds no row. On success the new row is added at once, selected,
-  and takes the source row's badge. Design: `docs/specs/worktree.md`.
+  and takes the source row's badge. *Remove from sidebar* on a worktree
+  row opens `WorktreeRemoveDialog`: an opt-in box (off by default)
+  deletes the folder and its branch with `git worktree remove` and `git
+  branch -d` (`remove_worktree`; both refuse to lose work), after the
+  dialog lists the ignored entries that go too (`ignored_entries`). The
+  box is disabled when another row uses the folder, a Claude session runs
+  in the row, or the worktree has submodules (`has_submodules`). A deleted worktree's row skips `recent`
+  (`remove_repo_at(to_recent=False)`). Design: `docs/specs/worktree.md`.
 - `terminal_session.py` — builds the argv passed to `TerminalHost`. Sets
   `CCWORK_GUI=1` (the gate the hook sink checks) and `CCWORK_ROW_ID=<repo.id>`
   (the routing key every hook event carries) in the child env. Launches

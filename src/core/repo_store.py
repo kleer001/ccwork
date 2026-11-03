@@ -274,8 +274,9 @@ class RepoStore:
         ]
         self.recent.insert(0, {"path": resolved, "emoji": emoji})
 
-    def remove_by_id(self, repo_id: str) -> bool:
+    def remove_by_id(self, repo_id: str, to_recent: bool = True) -> bool:
         """Remove the repo with this id. Returns True if removed.
+        `to_recent=False` keeps the path out of `recent` (its folder is gone).
 
         After removal, if exactly one entry remains for that path, its
         `instance` is reset to 0 so the bare basename is shown again.
@@ -290,7 +291,7 @@ class RepoStore:
                     survivors[0].instance = 0
                 # Only the *last* row for a path leaving the sidebar counts as
                 # "removed" — while a duplicate remains, the path is still here.
-                elif not survivors:
+                elif not survivors and to_recent:
                     self._push_recent(resolved, emoji)
                 return True
         return False

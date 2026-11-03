@@ -1061,10 +1061,10 @@ class RepoListModel(QAbstractListModel):
             self.dataChanged.emit(pidx, pidx, [Qt.DisplayRole])
         return repo
 
-    def remove_repo_at(self, row: int) -> bool:
+    def remove_repo_at(self, row: int, to_recent: bool = True) -> bool:
         if not (0 <= row < len(self._store.repos)):
             return False
-        self._remove_row(row)
+        self._remove_row(row, to_recent)
         self._store.save()
         return True
 
@@ -1079,13 +1079,13 @@ class RepoListModel(QAbstractListModel):
             self._store.save()
         return gone
 
-    def _remove_row(self, row: int) -> None:
+    def _remove_row(self, row: int, to_recent: bool = True) -> None:
         """Remove one row and its per-row state. The caller saves."""
         repo = self._store.repos[row]
         path = repo.path
         before_instances = {r.id: r.instance for r in self._store.repos}
         self.beginRemoveRows(QModelIndex(), row, row)
-        self._store.remove_by_id(repo.id)
+        self._store.remove_by_id(repo.id, to_recent)
         self.endRemoveRows()
 
         # If any survivor's instance changed (count dropped to 1 → instance

@@ -271,18 +271,23 @@ Claude's worktrees stay in Claude's place, `<repo>/.claude/worktrees/<name>`.
   not show.
 - The check box is off and disabled, with the reason, when:
   - another row uses the same folder;
+  - a Claude session runs in the row's terminal;
   - the worktree has submodules (F3).
 - With the box off: the row goes, the folder and the branch stay, and the
   row goes into `recent`.
 - With the box on:
   1. `git -C <main checkout> worktree remove <folder>`. When git refuses (F3),
-     ccwork shows git's message and keeps the row. Nothing changes. When git
-     says the folder "is not a working tree" (a delete that a crash stopped),
-     ccwork goes on to step 2.
+     ccwork shows git's message and keeps the row. Nothing changes.
   2. `git -C <main checkout> branch -d <branch>`. When git refuses (F4),
      ccwork says: "The folder is deleted. The branch `<branch>` stays, because
-     it has commits that are not merged."
+     it has commits that are not merged." For any other refusal (for example,
+     another worktree has the branch), ccwork says that the folder is deleted
+     and the branch stays, with git's message. The branch is the one that git
+     names for the folder at that time, not the row's cached branch.
   3. The row goes, and it does not go into `recent`.
+- A row whose worktree folder is gone (a delete that a crash stopped) is not
+  a worktree row, because git cannot name its repository. It gets the
+  plain dialog and goes into `recent`; its branch stays.
 - Idle expiry moves a worktree row into `recent`. It never deletes a folder.
 - Crash recovery does not change. It records the session folder, and
   `claude --resume` runs there.

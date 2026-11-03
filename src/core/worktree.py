@@ -1,8 +1,11 @@
-"""Make a linked git worktree for a sidebar row (docs/specs/worktree.md 5).
+"""Make and remove linked git worktrees for sidebar rows
+(docs/specs/worktree.md 5 and 7).
 
 `worktree_source` reads the source row's repository once; `worktree_plan`
 checks a branch name against it; `make_worktree` runs the git commands.
-Each git failure raises `GitError` with git's own message.
+`ignored_entries` and `has_submodules` feed the remove dialog, and
+`remove_worktree` deletes the folder and its branch. Each git failure
+raises `GitError` with git's own message.
 """
 
 from __future__ import annotations
@@ -16,6 +19,10 @@ from src.core.repo_store import current_branch, git_common_dir, main_name
 
 # Upper bound for one git command (a worktree checkout is the slowest).
 GIT_TIMEOUT_S = 30
+
+UNMERGED_NOTE = ("The folder is deleted. The branch {branch} stays, because it has "
+                 "commits that are not merged.")
+BRANCH_KEPT_NOTE = "The folder is deleted. The branch {branch} stays: {reason}"
 
 
 class GitError(RuntimeError):
@@ -64,16 +71,21 @@ class WorktreePlan:
     problem: str         # why OK stays off; "" when the plan can run
 
 
+def main_checkout(common: str) -> Path:
+    """The main checkout folder from the common dir: `<main>` for
+    `<main>/.git`, the common dir itself for a bare repository."""
+    return Path(common).parent if Path(common).name == ".git" else Path(common)
+
+
 def worktree_source(path: str) -> WorktreeSource:
     """Read the source row's repository state. Raises GitError outside git."""
     common = git_common_dir(path)
     if common is None:
         raise GitError(f"{path} is not in a git repository")
-    root = Path(common).parent if Path(common).name == ".git" else Path(common)
     return WorktreeSource(
         path=path,
         main_name=main_name(Path(common)),
-        parent=str(root.parent),
+        parent=str(main_checkout(common).parent),
         base=current_branch(path),
         commit=_git(path, "rev-parse", "--short", "HEAD"),
         dirty=bool(_git(path, "status", "--porcelain")),
@@ -106,3 +118,38 @@ def make_worktree(plan: WorktreePlan) -> str:
         _git(plan.folder, "config", f"branch.{plan.name}.ccworkBase", plan.source.base)
     return plan.folder
 
+
+def ignored_entries(folder: str) -> list[str]:
+    """Ignored files of `folder`, and each wholly ignored folder as one entry
+    that ends in `/`: what `git worktree remove` deletes with no question."""
+    out = _git(folder, "ls-files", "-z", "--others", "--ignored", "--exclude-standard",
+               "--directory")
+    return [e for e in out.split("\0") if e]
+
+
+def has_submodules(folder: str) -> bool:
+    """True when the index of `folder` has a submodule entry (mode 160000).
+    `git worktree remove` refuses such a worktree."""
+    return any(line.startswith("160000 ")
+               for line in _git(folder, "ls-files", "--stage").splitlines())
+
+
+def remove_worktree(folder: str, branch: str) -> str:
+    """`git worktree remove <folder>` (refuses changed or untracked files),
+    then `git branch -d <branch>` (refuses unmerged commits) from the main
+    checkout. Raises GitError when git refuses the folder. Once the folder
+    is gone, a branch refusal does not raise: it returns a note for the user,
+    else "" (docs/specs/worktree.md 7)."""
+    common = git_common_dir(folder)
+    if common is None:
+        raise GitError(f"{folder} is not in a git repository")
+    main = str(main_checkout(common))
+    _git(main, "worktree", "remove", folder)
+    if not branch:
+        return ""
+    r = _run(main, "branch", "-d", branch)
+    if r.returncode == 0:
+        return ""
+    if "not fully merged" in r.stderr:
+        return UNMERGED_NOTE.format(branch=branch)
+    return BRANCH_KEPT_NOTE.format(branch=branch, reason=r.stderr.strip())

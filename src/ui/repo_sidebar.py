@@ -51,15 +51,15 @@ from PySide6.QtWidgets import (
 )
 
 from src.core import repo_store
-from src.core.repo_store import Repo, RepoStore
-from src.core.worktree import GitError, make_worktree
+from src.core.repo_store import Repo, RepoStore, current_branch
+from src.core.worktree import GitError, make_worktree, remove_worktree
 # Re-exported as this module's public surface: external code and tests import
 # the model, delegate, roles, status values, and `_format_elapsed` from
 # `src.ui.repo_sidebar`.
 from src.ui.badge_theme import STATUS_ATTENTION, STATUS_DONE
 from src.ui.current_highlight import Highlight, RepoListView
 from src.ui.repo_delegate import RepoDelegate
-from src.ui.worktree_dialog import WorktreeDialog
+from src.ui.worktree_dialog import WorktreeDialog, WorktreeRemoveDialog
 from src.ui.repo_model import (
     ROLE_ACTIVE_GROUP,
     ROLE_BRANCH,
@@ -73,6 +73,7 @@ from src.ui.repo_model import (
     ROLE_STATUS_WORD,
     ROLE_SUBAGENTS,
     ROLE_WORKING,
+    ROLE_WORKTREE_OF,
     REORDER_EVENTS,
     RepoListModel,
     WALK_EVENTS,
@@ -1212,6 +1213,9 @@ class RepoSidebar(QWidget):
             self.reload_requested.emit(repo)
 
     def _confirm_remove(self, repo: Repo, row: int) -> None:
+        if self._model.index(row).data(ROLE_WORKTREE_OF):
+            self._confirm_remove_worktree(repo, row)
+            return
         ans = QMessageBox.question(
             self,
             "Remove from sidebar",
@@ -1225,3 +1229,29 @@ class RepoSidebar(QWidget):
             self._model.remove_repo_at(row)
             self.repo_removed.emit(repo)
 
+    def _confirm_remove_worktree(self, repo: Repo, row: int) -> None:
+        """With the delete box on: `git worktree remove`, then `git branch
+        -d`. A git refusal keeps the row. A deleted worktree's row does not
+        go into Recent (docs/specs/worktree.md 7)."""
+        index = self._model.index(row)
+        blocked = ("Another row uses this folder." if len(self._model.indices_of(repo.path)) > 1
+                   else "Claude runs in this row." if index.data(ROLE_SESSION_ACTIVE) else "")
+        try:
+            branch = current_branch(repo.path) or ""
+            dlg = WorktreeRemoveDialog(repo.path, blocked, self)
+        except GitError as e:
+            QMessageBox.warning(self, "Remove from sidebar", str(e))
+            return
+        if not dlg.exec():
+            return
+        delete = dlg.delete_checked()
+        if delete:
+            try:
+                note = remove_worktree(repo.path, branch)
+            except GitError as e:
+                QMessageBox.warning(self, "Remove from sidebar", str(e))
+                return
+            if note:
+                QMessageBox.information(self, "Remove from sidebar", note)
+        self._model.remove_repo_at(row, to_recent=not delete)
+        self.repo_removed.emit(repo)
