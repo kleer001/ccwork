@@ -28,25 +28,16 @@ REPO = Path(__file__).resolve().parents[2]
 NAME = "live-follow"
 
 
-def git(*args: str) -> None:
-    subprocess.run(["git", *args], check=True, capture_output=True)
-
-
 def main() -> int:
     sandbox = Path(tempfile.mkdtemp(prefix="ccwork-wtfollow-"))
-    proj = Path(os.path.realpath(sandbox / "proj"))
-    proj.mkdir()
-    git("init", "-q", "-b", "main", str(proj))
-    (proj / "README").write_text("seed\n")
-    git("-C", str(proj), "add", "README")
-    git("-C", str(proj), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed")
+    proj = harness.seed_repo(sandbox / "proj")
     worktree = str(proj / ".claude" / "worktrees" / NAME)
 
     cfg = sandbox / "config"
     repos_json = cfg / "ccwork" / "repos.json"
     repos_json.parent.mkdir(parents=True)
     repos_json.write_text(json.dumps({"version": 1, "repos": [{"path": str(proj), "id": "row1"}]}))
-    log_path = sandbox / "ccwork.log"
+    log_path = harness.evidence_dir() / "ccwork.log"
     env = dict(os.environ, XDG_CONFIG_HOME=str(cfg), CCWORK_LOG="INFO")
     proc = subprocess.Popen([str(REPO / ".venv/bin/python"), "-m", "src.main"], cwd=str(REPO),
                             env=env, stdout=open(log_path, "wb"), stderr=subprocess.STDOUT)
@@ -68,8 +59,7 @@ def main() -> int:
                 print("FAIL: startup")
                 return 1
             time.sleep(0.1)
-        wid = next(l.split()[0] for l in subprocess.run(["wmctrl", "-lx"], capture_output=True,
-                   text=True).stdout.splitlines() if "main.py.ccwork" in l)
+        wid = harness.ccwork_window()
         subprocess.run(["wmctrl", "-ia", wid], check=True)
         time.sleep(0.8)
         subprocess.run(["xdotool", "key", "ctrl+shift+1"], check=True)
@@ -79,7 +69,7 @@ def main() -> int:
         subprocess.run(["xdotool", "key", "Return"], check=True)
 
         seen: list[str] = []
-        shot = sandbox / "in-worktree.png"
+        shot = harness.evidence_dir() / "in-worktree.png"
         deadline = time.time() + 120
         while "event=ClaudeExited" not in log_text():
             if time.time() > deadline:

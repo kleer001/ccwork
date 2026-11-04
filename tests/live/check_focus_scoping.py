@@ -68,22 +68,11 @@ def wmctrl_focus(window_title_substring: str) -> None:
     """Focus the first window whose title contains the substring.
 
     Used only for "focus *something else* that isn't ccwork." For
-    focusing ccwork itself prefer wmctrl_focus_ccwork() — substring
+    focusing ccwork itself prefer harness.focus_ccwork() — substring
     matching on titles is unreliable because a shell prompt in the
     title often contains 'ccwork' as the cwd.
     """
     subprocess.run(["wmctrl", "-a", window_title_substring], check=False)
-
-
-def wmctrl_focus_ccwork() -> bool:
-    """Find ccwork by WM_CLASS (`main.py.ccwork`) and focus it by ID."""
-    out = subprocess.run(["wmctrl", "-lx"], capture_output=True, text=True)
-    for line in out.stdout.splitlines():
-        if "main.py.ccwork" in line:
-            wid = line.split()[0]
-            subprocess.run(["wmctrl", "-ia", wid], check=False)
-            return True
-    return False
 
 
 def count_dispatches(log_path: Path) -> int:
@@ -97,12 +86,14 @@ def main() -> int:
     sandbox = Path(tempfile.mkdtemp(prefix="ccwork-focus-"))
     cfg = sandbox / "config"
     cfg.mkdir()
-    log_path = sandbox / "ccwork.log"
+    log_path = harness.evidence_dir() / "ccwork.log"
 
     env = os.environ.copy()
     env["XDG_CONFIG_HOME"] = str(cfg)
     env["CCWORK_LOG"] = "INFO"
 
+    # Before ccwork: a failure here leaves no ccwork running.
+    other = harness.open_other_window(OTHER_TITLE)
     proc = subprocess.Popen(
         [str(REPO / ".venv/bin/python"), "-m", "src.main"],
         cwd=str(REPO),
@@ -111,7 +102,6 @@ def main() -> int:
         stderr=subprocess.STDOUT,
     )
     print(f"pid={proc.pid} sandbox={sandbox}")
-    other = harness.open_other_window(OTHER_TITLE)
 
     try:
         # Wait for startup.
@@ -139,9 +129,7 @@ def main() -> int:
               f"{before_neg} → {after_neg}  {'OK' if neg_pass else 'FAIL'}")
 
         # ── POSITIVE: focus ccwork, inject Ctrl+Shift+P, expect dispatch ──
-        if not wmctrl_focus_ccwork():
-            print("FAIL: could not find ccwork window via WM_CLASS")
-            return 3
+        harness.focus_ccwork()
         time.sleep(0.8)
         before_pos = count_dispatches(log_path)
         send_ctrl_shift(dpy, XK_p)

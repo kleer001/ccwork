@@ -31,10 +31,6 @@ import harness
 REPO = Path(__file__).resolve().parents[2]
 
 
-def git(*args: str) -> str:
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
-
-
 def venv_version(folder: Path) -> str:
     cfg = folder / ".venv" / "pyvenv.cfg"
     return next((l for l in cfg.read_text().splitlines() if l.startswith("version_info")), "") \
@@ -49,11 +45,11 @@ def main() -> int:
     sandbox = Path(os.path.realpath(tempfile.mkdtemp(prefix="ccwork-mkwt-")))
     proj = sandbox / "proj"
     proj.mkdir()
-    git("init", "-q", "-b", "main", str(proj))
+    harness.git("init", "-q", "-b", "main", str(proj))
     (proj / "README").write_text("seed\n")
     (proj / ".gitignore").write_text(".env\nmodel.bin\ntmp/\n.venv/\n")
-    git("-C", str(proj), "add", "README", ".gitignore")
-    git("-C", str(proj), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed")
+    harness.git("-C", str(proj), "add", "README", ".gitignore")
+    harness.git("-C", str(proj), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed")
     (proj / ".env").write_text("KEY=1\n")
     (proj / "model.bin").write_bytes(b"\0" * (2 * 1024 * 1024))
     (proj / "tmp").mkdir()
@@ -67,7 +63,7 @@ def main() -> int:
     repos_json.parent.mkdir(parents=True)
     repos_json.write_text(json.dumps(
         {"version": 1, "repos": [{"path": str(proj), "id": "row1", "emoji": "🌱"}]}))
-    log_path = sandbox / "ccwork.log"
+    log_path = harness.evidence_dir() / "ccwork.log"
     env = dict(os.environ, XDG_CONFIG_HOME=str(cfg), CCWORK_LOG="INFO")
     proc = subprocess.Popen([str(REPO / ".venv/bin/python"), "-m", "src.main"], cwd=str(REPO),
                             env=env, stdout=open(log_path, "wb"), stderr=subprocess.STDOUT)
@@ -80,8 +76,7 @@ def main() -> int:
                 print("FAIL: startup")
                 return 1
             time.sleep(0.1)
-        wid = next(l.split()[0] for l in subprocess.run(["wmctrl", "-lx"], capture_output=True,
-                   text=True).stdout.splitlines() if "main.py.ccwork" in l)
+        wid = harness.ccwork_window()
         subprocess.run(["wmctrl", "-ia", wid], check=True)
         time.sleep(0.8)
         # Row 1 sits at the top of the sidebar. Menu: Reload, Clone, Make worktree…
@@ -92,7 +87,7 @@ def main() -> int:
         time.sleep(1.0)
         subprocess.run(["xdotool", "type", "--delay", "40", "fix/a"], check=True)
         time.sleep(0.5)
-        harness.screenshot(sandbox / "dialog.png")
+        harness.screenshot(harness.evidence_dir() / "dialog.png")
         key("Return")
 
         deadline = time.time() + 10
@@ -111,7 +106,7 @@ def main() -> int:
                         f"pwd > {out}; git branch --show-current >> {out}"], check=True)
         key("Return")
         time.sleep(1.5)
-        harness.screenshot(sandbox / "result.png")
+        harness.screenshot(harness.evidence_dir() / "result.png")
 
         lines = out.read_text().split() if out.exists() else []
         rows = json.loads(repos_json.read_text()).get("repos", [])
@@ -122,7 +117,7 @@ def main() -> int:
             "second row on the folder": new.get("path") == str(folder),
             "badge copied": new.get("emoji") == "🌱",
             "title blank": new.get("title") == "",
-            "branch fix/a": folder.is_dir() and git("-C", str(folder), "branch", "--show-current") == "fix/a",
+            "branch fix/a": folder.is_dir() and harness.git("-C", str(folder), "branch", "--show-current") == "fix/a",
             "ccworkBase main": base == "main",
             "terminal pwd": lines[:1] == [str(folder)],
             "terminal branch": lines[1:2] == ["fix/a"],
@@ -133,7 +128,7 @@ def main() -> int:
         }
         for k, v in checks.items():
             print(f"  {k}: {'OK' if v else 'FAIL'}")
-        print(f"screenshots: {sandbox / 'dialog.png'} {sandbox / 'result.png'}")
+        print(f"screenshots: {harness.evidence_dir()}/*.png")
         result = all(checks.values())
         print(f"\nresult: {'PASS' if result else 'FAIL'}")
         return 0 if result else 2

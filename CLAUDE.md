@@ -33,6 +33,7 @@ CCWORK_LOG=DEBUG ./bin/ccwork
 .venv/bin/python tests/live/check_enter_worktree.py   # one real EnterWorktree prompt
 .venv/bin/python tests/live/check_subagent_worktree.py  # one real isolation: worktree subagent
 .venv/bin/python tests/live/check_worktree_crash.py   # kill ccwork in an EnterWorktree session
+.venv/bin/python tests/live/check_worktree_interactive.py  # interactive claude -w exit, Enter/ExitWorktree
 .venv/bin/python tests/live/check_make_worktree.py    # row menu → Make worktree…
 .venv/bin/python tests/live/check_remove_worktree.py  # delete box on a clean and a dirty worktree
 .venv/bin/python tests/live/probe_xgrabkey.py        # diagnostic only
@@ -42,7 +43,8 @@ CCWORK_LOG=DEBUG ./bin/ccwork
 ccwork in a sandboxed `XDG_CONFIG_HOME`. `harness.run_on_xvfb()` runs
 each ccwork check on its own Xvfb display with openbox and a temporary
 `XDG_RUNTIME_DIR`, so no key reaches the desktop and the desktop
-ccwork keeps its hook socket. The checks focus ccwork via `wmctrl -ia
+ccwork keeps its hook socket. Each run keeps its output, ccwork log and
+screenshots in `tmp/live-runs/<check>-<time>/`. The checks focus ccwork via `wmctrl -ia
 <wid>` (matched by `WM_CLASS=main.py.ccwork`), inject keystrokes via
 `libXtst`, and assert on log output and `wmctrl -l`. They are NOT
 pytest tests — names are deliberately off the `*_test.py` glob so

@@ -18,9 +18,17 @@ script again on its own Xvfb display with openbox, a temporary
 `XDG_RUNTIME_DIR` (so the launched ccwork owns its own hook socket) and
 the D-Bus session address `disabled:` (so no notification reaches the
 desktop). No key or focus change reaches your desktop, and your running
-ccwork is not touched. `harness.screenshot(path)` saves the display as a
-PNG; `harness.open_other_window(title)` starts a plain xterm to focus
-away from ccwork.
+ccwork is not touched. Each run keeps its evidence in the repo, in
+`tmp/live-runs/<check>-<time>/` (`harness.evidence_dir()`): the check's
+output, the ccwork log and the screenshots. `harness.screenshot(path)`
+saves the display as a PNG (ImageMagick `import`);
+`harness.open_other_window(title)` starts a plain xterm to focus away from
+ccwork; `harness.ccwork_window()` waits for the ccwork window and gives its id, and
+`harness.focus_ccwork()` focuses it;
+`harness.git(*args)` runs git and returns its output; `harness.seed_repo(path)`
+makes a repo with one commit.
+`check_terminal_input.py` keeps its own Xvfb code: it launches no ccwork
+and needs no window manager.
 
 Each script:
 
@@ -55,6 +63,7 @@ skips them entirely.
 | `check_worktree_follow.py` | Runs one real `claude -w <name> -p` prompt in a ccwork terminal on the harness display. Passes when the row follows Claude into `.claude/worktrees/<name>` and returns to the repo on `ClaudeExited`, with no `home` and an empty `recent`. Needs `install.sh` hooks and a Claude login. |
 | `check_enter_worktree.py` | Runs one real `claude -p` prompt that calls the EnterWorktree tool (allowed with `--allowedTools`). Passes when the row moves to `.claude/worktrees/<name>` during the turn and returns to the repo on `ClaudeExited`, with no `home` and an empty `recent`. Needs `install.sh` hooks and a Claude login. |
 | `check_subagent_worktree.py` | Runs one real `claude -p` prompt that starts a subagent with `isolation: worktree`. Samples `git worktree list` during the run. Passes when SubagentStart and SubagentStop arrive, a second worktree exists during the run, and the row never leaves the repo. Needs `install.sh` hooks and a Claude login. |
+| `check_worktree_interactive.py` | Types into interactive Claude Code sessions. It accepts the folder trust prompt once, runs `claude -w` and exits with "Remove worktree" (the script writes a file first, so that Claude asks), then sends two Haiku prompts in one session: EnterWorktree, then ExitWorktree with action remove. Passes when the row is on each worktree while Claude is in it, back on the repo after each exit (after ExitWorktree, on the same turn's Stop), with both folders and branches gone, no `home` and an empty `recent`. Claude Code records the trust of the temporary folder in `~/.claude.json`. Needs `install.sh` hooks and a Claude login. |
 | `check_worktree_crash.py` | Runs one real `claude -p` prompt that calls EnterWorktree and then sleeps, and kills ccwork while the row is on the worktree. Passes when `open_sessions.json` records the folder where the session started (the first `cwd` of its transcript), where `claude --resume <id>` finds it. Needs `install.sh` hooks and a Claude login. |
 | `check_make_worktree.py` | Right-clicks a row, picks *Make worktree…* with the keyboard and types `fix/a`. Passes when the second row is on `<parent>/proj-fix-a` with the source badge and a blank title, the folder is on `fix/a` with `ccworkBase = main`, the new terminal prints that folder and branch, and of the ignored `.env`, 2 MiB `model.bin` and `tmp/` only `.env` is copied. The source `.venv` (made by `uv venv`) is rebuilt in the worktree with the same Python version. The result screenshot shows the copy report and the setup commands. |
 | `check_remove_worktree.py` | Removes two worktree rows with the delete box on. Passes when git refuses the dirty one (a message window, folder and row stay) and the clean one's folder, branch and row go, with `recent` empty. |
@@ -67,10 +76,11 @@ skips them entirely.
 Follow the existing pattern:
 
 1. Call `harness.run_on_xvfb()` first in the `__main__` block.
-2. Open an `XDG_CONFIG_HOME=<tmp>` subprocess running `python -m src.main`.
+2. Open an `XDG_CONFIG_HOME=<tmp>` subprocess running `python -m src.main`,
+   with its log at `harness.evidence_dir() / "ccwork.log"`.
 3. Wait for the `global keys:` startup line in the log.
-4. `wmctrl_focus_ccwork()` (see `check_focus_scoping.py`) before injecting if
-   you need the grab to activate.
+4. `harness.focus_ccwork()` before injecting if you need the grab to
+   activate.
 5. Inject via `XTestFakeKeyEvent` (see existing scripts for the
    ctypes wiring).
 6. Read the log and/or `wmctrl -l` to verify the side effect.

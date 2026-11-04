@@ -45,21 +45,11 @@ def send_bare(dpy, keysym):
     _x11.XSync(dpy, 0)
 
 
-def focus_ccwork() -> bool:
-    out = subprocess.run(["wmctrl", "-lx"], capture_output=True, text=True)
-    for line in out.stdout.splitlines():
-        if "main.py.ccwork" in line:
-            wid = line.split()[0]
-            subprocess.run(["wmctrl", "-ia", wid], check=False)
-            return True
-    return False
-
-
 def main() -> int:
     sandbox = Path(tempfile.mkdtemp(prefix="ccwork-f1-"))
     cfg = sandbox / "config"
     cfg.mkdir()
-    log_path = sandbox / "ccwork.log"
+    log_path = harness.evidence_dir() / "ccwork.log"
 
     env = os.environ.copy()
     env["XDG_CONFIG_HOME"] = str(cfg)
@@ -84,7 +74,7 @@ def main() -> int:
             print("FAIL: startup")
             return 1
         time.sleep(0.5)
-        focus_ccwork()
+        harness.focus_ccwork()
         time.sleep(0.6)
 
         dpy = _x11.XOpenDisplay(None)

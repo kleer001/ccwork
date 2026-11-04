@@ -55,21 +55,11 @@ def send_ctrl_shift_q(dpy) -> None:
     _x11.XSync(dpy, 0)
 
 
-def focus_ccwork() -> bool:
-    out = subprocess.run(["wmctrl", "-lx"], capture_output=True, text=True)
-    for line in out.stdout.splitlines():
-        if "main.py.ccwork" in line:
-            wid = line.split()[0]
-            subprocess.run(["wmctrl", "-ia", wid], check=False)
-            return True
-    return False
-
-
 def main() -> int:
     sandbox = Path(tempfile.mkdtemp(prefix="ccwork-geom-"))
     cfg = sandbox / "config"
     cfg.mkdir()
-    log_path = sandbox / "ccwork.log"
+    log_path = harness.evidence_dir() / "ccwork.log"
     settings_path = cfg / "ccwork" / "settings.toml"
 
     env = os.environ.copy()
@@ -96,7 +86,7 @@ def main() -> int:
             print("FAIL: ccwork did not finish startup")
             return 1
         time.sleep(0.5)
-        focus_ccwork()
+        harness.focus_ccwork()
         time.sleep(0.6)
 
         # Send Ctrl+Shift+Q.
