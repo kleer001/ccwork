@@ -1111,7 +1111,11 @@ class MainWindow(QMainWindow):
         if top is None or top == here:
             return
         common = git_common_dir(top)
-        if common is not None and common == git_common_dir(here):
+        # The row's folder or its `home` names the row's repository. Either
+        # can be gone: ExitWorktree with action remove deletes the row's
+        # folder before the turn's Stop.
+        mine = {git_common_dir(p) for p in (here, repo.home) if p} - {None}
+        if common is not None and common in mine:
             if Path(top).is_relative_to(Path(common).parent / ".claude" / "worktrees"):
                 try:
                     exclude_claude_worktrees(common)

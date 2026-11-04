@@ -128,6 +128,21 @@ def test_enter_worktree_follows_on_the_payload_cwd(
     assert window._store.recent == []
 
 
+def test_exit_worktree_with_remove_follows_back_on_the_same_stop(
+    window: MainWindow, main_repo: Path, claude_wt: Path
+) -> None:
+    row = window._store.repos[0]
+    _emit(window, _event(EVENT_STOP, row.id, main_repo, claude_wt))
+    assert row.path == str(claude_wt)
+
+    # ExitWorktree with action remove deletes the folder before the turn's Stop.
+    _git("-C", str(main_repo), "worktree", "remove", str(claude_wt))
+    _emit(window, _event(EVENT_STOP, row.id, main_repo, main_repo))
+    assert row.path == str(main_repo)
+    assert row.home == ""
+    assert window._store.recent == []
+
+
 def test_follow_into_a_sibling_worktree(
     window: MainWindow, main_repo: Path
 ) -> None:
@@ -139,6 +154,21 @@ def test_follow_into_a_sibling_worktree(
 
     assert row.path == str(sibling)
     assert row.home == str(main_repo)
+
+
+def test_a_row_whose_home_is_gone_still_follows_in_its_repository(
+    window: MainWindow, main_repo: Path, claude_wt: Path
+) -> None:
+    sibling = main_repo.parent / "proj-fix"
+    _git("-C", str(main_repo), "worktree", "add", "-q", "-b", "fix", str(sibling), "HEAD")
+    row = window._store.repos[0]
+    window._sidebar.rebind(row.id, str(sibling))
+    _emit(window, _event(EVENT_STOP, row.id, sibling, claude_wt))
+    assert row.home == str(sibling)
+
+    _git("-C", str(main_repo), "worktree", "remove", str(sibling))
+    _emit(window, _event(EVENT_STOP, row.id, sibling, main_repo))
+    assert row.path == str(main_repo)
 
 
 def test_home_stays_the_first_folder_across_two_worktrees(

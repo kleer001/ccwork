@@ -363,8 +363,9 @@ but no widgets):
   prompt. A subdirectory of the same repo, or a non-git `cwd`, leaves
   the row alone. On `SessionStart`, `UserPromptSubmit` and `Stop`, a
   payload `cwd` in **another worktree of the same repository** (same
-  `git_common_dir`; for example `claude -w` or `EnterWorktree`) moves
-  the row there with `rebind(follow=True)`: the old folder does not
+  `git_common_dir` of the row's folder or its `home`; for
+  example `claude -w` or `EnterWorktree`) moves the row there with
+  `rebind(follow=True)`: the old folder does not
   enter `recent`, and the first follow stores it as `Repo.home` in
   `repos.json`. `ClaudeExited` moves the row back to `home`, and so does
   startup when the row's folder is gone; arriving at `home` clears it,

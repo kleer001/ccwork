@@ -253,7 +253,10 @@ Claude's worktrees stay in Claude's place, `<repo>/.claude/worktrees/<name>`.
   folder has the row's folder as its top level and changes nothing. A path
   prefix check is not enough, because Claude's worktrees are inside the main
   checkout's folder. When the top level is a different folder and its common
-  dir is the row's common dir, the row rebinds to that folder. When the row has no home folder yet, ccwork stores the old folder
+  dir is the row's common dir, the row rebinds to that folder. The row's
+  common dir comes from its folder or its `home`, because either can be
+  gone: `ExitWorktree` with action remove deletes the row's folder before
+  the turn's Stop. When the row has no home folder yet, ccwork stores the old folder
   as `home` on the row in `repos.json`. Subagent events never move a row. A
   `cwd` in a different repository uses the SessionStart rebind as now.
 - **C3. Follow out.** On `ClaudeExited`, a row with a `home` rebinds to its
