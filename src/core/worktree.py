@@ -11,6 +11,7 @@ raises `GitError` with git's own message.
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -157,7 +158,7 @@ def remove_worktree(folder: str, branch: str) -> str:
     except GitError as e:
         if "locked working tree" not in str(e):
             raise
-        raise GitError(f"{e}\n{UNLOCK_HINT.format(folder=folder)}") from None
+        raise GitError(f"{e}\n{UNLOCK_HINT.format(folder=shlex.quote(folder))}") from None
     if not branch:
         return ""
     r = _run(main, "branch", "-d", branch)

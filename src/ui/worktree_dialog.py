@@ -72,8 +72,8 @@ class WorktreeDialog(QDialog):
 
 class WorktreeRemoveDialog(QDialog):
     """Remove a worktree row, with an opt-in delete of the folder and its
-    branch. The box is off by default. It is off and disabled with the
-    reason when `blocked` names one, or when the worktree has submodules."""
+    branch. The box is off by default. It is off and disabled, with each
+    reason, when `blocked` names one or the worktree has submodules."""
 
     def __init__(self, folder: str, blocked: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -82,8 +82,10 @@ class WorktreeRemoveDialog(QDialog):
         layout.addWidget(QLabel(f"Remove the row for {folder}?", self))
         self._box = QCheckBox("Also delete the worktree folder and its branch", self)
         layout.addWidget(self._box)
-        reason = blocked or ("The worktree has submodules. Git does not delete it."
-                             if has_submodules(folder) else "")
+        reasons = [blocked] if blocked else []
+        if has_submodules(folder):
+            reasons.append("The worktree has submodules. Git does not delete it.")
+        reason = " ".join(reasons)
         if reason:
             self._box.setEnabled(False)
             note = QLabel(reason, self)

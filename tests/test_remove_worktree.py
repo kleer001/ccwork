@@ -142,9 +142,7 @@ def test_dialog_box_is_disabled_with_the_reason(qapp: QApplication, wt: Path) ->
     assert "Another row uses this folder." in _texts(dlg)
 
 
-def test_dialog_box_is_disabled_for_a_worktree_with_submodules(
-    qapp: QApplication, main_repo: Path, tmp_path: Path
-) -> None:
+def _worktree_with_submodule(main_repo: Path, tmp_path: Path) -> str:
     lib = Path(os.path.realpath(tmp_path)) / "lib"
     _git("init", "-q", "-b", "main", str(lib))
     (lib / "x").write_text("x\n")
@@ -152,10 +150,25 @@ def test_dialog_box_is_disabled_for_a_worktree_with_submodules(
     _git("-C", str(main_repo), "-c", "protocol.file.allow=always", "submodule", "add", "-q",
          str(lib), "lib")
     _commit(main_repo, "add lib")
-    folder = make_worktree(worktree_plan(worktree_source(str(main_repo)), "sub"))
-    dlg = WorktreeRemoveDialog(folder)
+    return make_worktree(worktree_plan(worktree_source(str(main_repo)), "sub"))
+
+
+def test_dialog_box_is_disabled_for_a_worktree_with_submodules(
+    qapp: QApplication, main_repo: Path, tmp_path: Path
+) -> None:
+    dlg = WorktreeRemoveDialog(_worktree_with_submodule(main_repo, tmp_path))
     assert not _box(dlg).isEnabled() and not _box(dlg).isChecked()
     assert "The worktree has submodules. Git does not delete it." in _texts(dlg)
+
+
+def test_dialog_shows_each_reason_that_disables_the_box(
+    qapp: QApplication, main_repo: Path, tmp_path: Path
+) -> None:
+    dlg = WorktreeRemoveDialog(_worktree_with_submodule(main_repo, tmp_path),
+                               blocked="Another row uses this folder.")
+    assert not _box(dlg).isEnabled()
+    assert ("Another row uses this folder. The worktree has submodules. Git does not delete it."
+            in _texts(dlg))
 
 
 # ── sidebar flow ──
@@ -283,6 +296,18 @@ def test_a_branch_used_elsewhere_stays_with_a_note(main_repo: Path, wt: Path) ->
     note = remove_worktree(str(wt), "fix/a")
     assert not wt.exists()
     assert note.startswith("The folder is deleted. The branch fix/a stays: ")
+
+
+def test_the_unlock_command_quotes_a_folder_with_a_space(tmp_path: Path) -> None:
+    repo = Path(os.path.realpath(tmp_path)) / "my proj"
+    _git("init", "-q", "-b", "main", str(repo))
+    (repo / "README").write_text("seed\n")
+    _commit(repo, "seed")
+    folder = make_worktree(worktree_plan(worktree_source(str(repo)), "x"))
+    _git("-C", str(repo), "worktree", "lock", folder)
+    with pytest.raises(GitError) as e:
+        remove_worktree(folder, "x")
+    assert str(e.value).endswith(f"run: git worktree unlock '{folder}'")
 
 
 def test_a_locked_worktree_refusal_names_the_unlock_command(main_repo: Path, wt: Path) -> None:
