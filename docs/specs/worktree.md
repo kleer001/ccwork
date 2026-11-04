@@ -220,9 +220,11 @@ first prompt. Ctrl+C stops it. ccwork passes the commands in
   `version_info` line, which `uv venv` writes instead.
 - The freeze file is the output of `uv pip freeze` on the source venv (F15).
   It goes in the worktree's private git dir (`git rev-parse --git-dir`), so
-  `git worktree remove` deletes it. A local entry whose path is in the
-  source folder (an editable `-e file://…` or a `name @ file://…`) gets the
-  worktree folder instead. Other entries do not change.
+  `git worktree remove` deletes it. An editable entry (`-e file://…`) whose
+  path is in the source folder gets the worktree folder instead. A `name @
+  file://…` entry does too, when its path is in the worktree; a build output
+  that the worktree does not have, such as a wheel in an ignored `dist/`,
+  keeps the source path. Other entries do not change.
 - When `uv` is not on `PATH`, the terminal prints "uv not found: no venv
   made" and makes no venv.
 

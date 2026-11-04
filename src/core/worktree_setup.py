@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import unquote
 
 from src.core.worktree import GitError, git_dir
 
@@ -82,14 +83,22 @@ def _venv_step(src: str, dst: str, name: str, version: str) -> str:
 
 
 def rewrite_freeze(text: str, src: str, dst: str) -> str:
-    """`uv pip freeze` output with each local entry inside `src` (an editable
-    `-e file://…` or a `name @ file://…`) moved to the same place in `dst`.
+    """`uv pip freeze` output with each local entry inside `src` moved to the
+    same place in `dst`: an editable `-e file://…` always, and a `name @
+    file://…` when that path is in `dst`. A build output such as a wheel in an
+    ignored `dist/` is not copied to the worktree, so it keeps the `src` path.
     Other lines do not change."""
     src_url, dst_url = Path(src).as_uri(), Path(dst).as_uri()
     lines = []
     for line in text.splitlines():
-        lead, sep, url = line.partition("-e ") if line.startswith("-e ") else line.partition(" @ ")
-        if sep and (url == src_url or url.startswith(src_url + "/")):
-            line = lead + sep + dst_url + url[len(src_url):]
+        if line.startswith("-e "):
+            head, url, needs_path = "-e ", line[3:], False
+        else:
+            name, sep, url = line.partition(" @ ")
+            head, needs_path = name + sep, True
+        rest = url[len(src_url):]
+        inside = url == src_url or url.startswith(src_url + "/")
+        if inside and (not needs_path or os.path.exists(dst + unquote(rest))):
+            line = head + dst_url + rest
         lines.append(line)
     return "".join(f"{line}\n" for line in lines)

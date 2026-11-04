@@ -158,9 +158,13 @@ def test_a_failed_freeze_shows_in_the_terminal(main_repo: Path, uv: str, monkeyp
     assert cmd.startswith("echo 'Could not make the venv: ")
 
 
-def test_local_installs_in_the_source_folder_move_to_the_worktree() -> None:
-    text = ("pkg-a @ file:///home/u/proj/libs/a\npkg-b @ file:///home/u/other/b\n"
-            "pkg-c @ https://example.com/c.whl\n")
-    assert rewrite_freeze(text, "/home/u/proj", "/home/u/proj-x") == (
-        "pkg-a @ file:///home/u/proj-x/libs/a\npkg-b @ file:///home/u/other/b\n"
-        "pkg-c @ https://example.com/c.whl\n")
+def test_local_installs_in_the_worktree_move_to_it(tmp_path: Path) -> None:
+    src, dst = tmp_path / "my proj", tmp_path / "my proj-x"
+    (dst / "libs" / "a").mkdir(parents=True)
+    text = (f"pkg-a @ {(src / 'libs' / 'a').as_uri()}\n"
+            f"pkg-d @ {(src / 'dist' / 'd-1.0-py3-none-any.whl').as_uri()}\n"
+            "pkg-b @ file:///home/u/other/b\npkg-c @ https://example.com/c.whl\n")
+    assert rewrite_freeze(text, str(src), str(dst)) == (
+        f"pkg-a @ {(dst / 'libs' / 'a').as_uri()}\n"
+        f"pkg-d @ {(src / 'dist' / 'd-1.0-py3-none-any.whl').as_uri()}\n"
+        "pkg-b @ file:///home/u/other/b\npkg-c @ https://example.com/c.whl\n")
