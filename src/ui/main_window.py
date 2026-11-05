@@ -340,11 +340,7 @@ class MainWindow(QMainWindow):
         # We must grab on Qt's *own* X connection — XGrabKey delivers events
         # to the grabber's connection, so a grab installed on a separately
         # XOpenDisplay'd handle is invisible to Qt's QAbstractNativeEventFilter.
-        # PySide6 ≥ 6.6 (our pinned minimum) exposes the underlying Display*
-        # via QX11Application; on xcb that's guaranteed non-null, so we let
-        # any breakage here crash loudly rather than silently disable keys.
-        iface = app.nativeInterface()
-        self._key_xdisplay = XDisplay.attach(int(iface.display()))
+        self._key_xdisplay = XDisplay.qt()
         self._key_filter = KeyGrabFilter(self._key_xdisplay)
         app.installNativeEventFilter(self._key_filter)
         # Force creation of MainWindow's X window now (winId() is lazy on

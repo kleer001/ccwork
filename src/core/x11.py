@@ -37,8 +37,10 @@ RevertToParent = 2
 CurrentTime = 0
 
 # An xcb event's type is the lower 7 bits of `response_type`; bit 7 marks a
-# synthetic (SendEvent) event.
+# synthetic (SendEvent) event, which counts as the same type.
 XCB_RESPONSE_TYPE_MASK = 0x7F
+XCB_EVENT_TYPE = b"xcb_generic_event_t"  # Qt's native event type on xcb
+XCB_KEY_PRESS = 2
 XCB_MAP_NOTIFY = 19
 
 # Mouse buttons — wheel-up / wheel-down on X11.
@@ -79,6 +81,16 @@ class XWindowAttributes(ctypes.Structure):
         ("your_event_mask", ctypes.c_long), ("do_not_propagate_mask", ctypes.c_long),
         ("override_redirect", c_int), ("screen", c_void_p),
     ]
+
+
+def xcb_event(event_type, message, layout: type[ctypes.Structure], code: int):
+    """The xcb event of type `code` that Qt passes to a native event filter
+    (`event_type`, `message`), read as the ctypes `layout`; None for an event
+    of another type."""
+    if bytes(event_type) != XCB_EVENT_TYPE:
+        return None
+    ev = layout.from_address(int(message))
+    return ev if ev.response_type & XCB_RESPONSE_TYPE_MASK == code else None
 
 
 _x11: Optional[ctypes.CDLL] = None
@@ -185,6 +197,14 @@ class XDisplay:
         self._owned = True
         if not self._dpy:
             raise RuntimeError("XOpenDisplay returned NULL — is $DISPLAY set?")
+
+    @classmethod
+    def qt(cls) -> "XDisplay":
+        """Qt's own X connection. A grab or an event selection on it sends
+        its events to Qt's native event filters. On xcb, PySide6 >= 6.6 gives
+        a non-null Display*, so a failure here is loud."""
+        from PySide6.QtGui import QGuiApplication
+        return cls.attach(int(QGuiApplication.instance().nativeInterface().display()))
 
     @classmethod
     def attach(cls, handle: int) -> "XDisplay":

@@ -63,10 +63,10 @@ class _MapNotifyFilter(QAbstractNativeEventFilter):
         self._on_map: Callable[[], None] | None = on_map
 
     def nativeEventFilter(self, eventType, message):  # type: ignore[override]
-        if self._on_map is None or bytes(eventType) != b"xcb_generic_event_t":
+        if self._on_map is None:
             return False, 0
-        ev = _XcbMapNotifyEvent.from_address(int(message))
-        if ev.response_type & x11.XCB_RESPONSE_TYPE_MASK == x11.XCB_MAP_NOTIFY and ev.window == self._win:
+        ev = x11.xcb_event(eventType, message, _XcbMapNotifyEvent, x11.XCB_MAP_NOTIFY)
+        if ev is not None and ev.window == self._win:
             on_map, self._on_map = self._on_map, None
             on_map()
         return False, 0
@@ -258,14 +258,13 @@ class TerminalHost(QWidget):
         of ours before it maps. The StructureNotify events go to Qt's X
         connection, where a native filter sees the MapNotify. The map state
         is read after the select, so a map that came first is not missed."""
-        app = QApplication.instance()
-        qt_display = XDisplay.attach(int(app.nativeInterface().display()))
+        qt_display = XDisplay.qt()
         qt_display.select_input(self._xterm_win, x11.StructureNotifyMask)
         if qt_display.map_state(self._xterm_win) != x11.IsUnmapped:
             self._on_xterm_mapped()
             return
         self._map_filter = _MapNotifyFilter(self._xterm_win, self._on_xterm_mapped)
-        app.installNativeEventFilter(self._map_filter)
+        QApplication.instance().installNativeEventFilter(self._map_filter)
 
     def _on_xterm_mapped(self) -> None:
         # Not inside the filter's own call: Qt is still dispatching to it.

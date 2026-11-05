@@ -16,23 +16,15 @@ from PySide6.QtWidgets import QApplication
 from src.core import x11
 from src.core.repo_store import RepoStore
 from src.core.settings import Settings
-from src.ui.terminal_host import TerminalHost, _MapNotifyFilter
+from src.ui.terminal_host import TerminalHost, _MapNotifyFilter, _XcbMapNotifyEvent
 
 from tests.conftest import StubHookServer
 
-XCB_GENERIC = b"xcb_generic_event_t"
 XCB_UNMAP_NOTIFY = 18
 
 
-class _MapEvent(ctypes.Structure):
-    _fields_ = [("response_type", ctypes.c_uint8), ("pad0", ctypes.c_uint8),
-                ("sequence", ctypes.c_uint16), ("event", ctypes.c_uint32),
-                ("window", ctypes.c_uint32), ("override_redirect", ctypes.c_uint8),
-                ("pad1", ctypes.c_uint8 * 3)]
-
-
-def _send(filt: _MapNotifyFilter, kind: int, window: int, event_type: bytes = XCB_GENERIC) -> tuple:
-    ev = _MapEvent(response_type=kind, window=window)
+def _send(filt: _MapNotifyFilter, kind: int, window: int, event_type: bytes = x11.XCB_EVENT_TYPE) -> tuple:
+    ev = _XcbMapNotifyEvent(response_type=kind, window=window)
     return filt.nativeEventFilter(event_type, ctypes.addressof(ev))
 
 
