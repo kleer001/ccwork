@@ -165,7 +165,13 @@ widget paints its own segment because an overlay next to the native
 
 - `terminal_host.py` spawns `xterm -into <winId>` via `QProcess`, polls for
   the reparented child window through `src/core/x11.py`, then resizes the X
-  window in lockstep with the Qt widget so the PTY gets `SIGWINCH`.
+  window in lockstep with the Qt widget so the PTY gets `SIGWINCH`. The
+  child can appear before it maps, so the host selects StructureNotify on
+  it through Qt's X connection and emits `mapped` at its MapNotify (a
+  short-lived native event filter), or at once when it is already mapped.
+  `MainWindow._focus_if_current` then focuses that xterm only while it is
+  the current terminal and ccwork is the active window, so an open dialog
+  or another app keeps the focus.
 - `qt_theme.py` derives a `QPalette` from `XtermSettings.bg`/`.fg` so the
   GUI chrome matches the embedded terminal. It forces `setStyle("Fusion")` —
   native styles (Breeze, Adwaita) ignore palette overrides on Window/Base.

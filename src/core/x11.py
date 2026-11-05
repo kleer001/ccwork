@@ -24,6 +24,8 @@ KeySym = c_ulong
 # X11 event masks / modifiers we need. Values are fixed by the X protocol.
 KeyPressMask = 1 << 0
 ButtonPressMask = 1 << 2
+StructureNotifyMask = 1 << 17
+IsUnmapped = 0          # XWindowAttributes.map_state
 ShiftMask = 1 << 0
 LockMask = 1 << 1       # CapsLock
 ControlMask = 1 << 2
@@ -33,6 +35,11 @@ Mod4Mask = 1 << 6       # Super / Meta on most layouts
 GrabModeAsync = 1
 RevertToParent = 2
 CurrentTime = 0
+
+# An xcb event's type is the lower 7 bits of `response_type`; bit 7 marks a
+# synthetic (SendEvent) event.
+XCB_RESPONSE_TYPE_MASK = 0x7F
+XCB_MAP_NOTIFY = 19
 
 # Mouse buttons — wheel-up / wheel-down on X11.
 Button4 = 4
@@ -56,6 +63,22 @@ XK_F1 = 0xffbe          # F1   (primary keyboard-shortcuts trigger)
 XK_v = 0x0076
 XK_Shift_L = 0xffe1
 XK_Control_L = 0xffe3
+
+
+class XWindowAttributes(ctypes.Structure):
+    """Layout of `XWindowAttributes` from Xlib.h."""
+
+    _fields_ = [
+        ("x", c_int), ("y", c_int), ("width", c_int), ("height", c_int),
+        ("border_width", c_int), ("depth", c_int), ("visual", c_void_p),
+        ("root", Window), ("class_", c_int), ("bit_gravity", c_int),
+        ("win_gravity", c_int), ("backing_store", c_int),
+        ("backing_planes", c_ulong), ("backing_pixel", c_ulong),
+        ("save_under", c_int), ("colormap", c_ulong), ("map_installed", c_int),
+        ("map_state", c_int), ("all_event_masks", ctypes.c_long),
+        ("your_event_mask", ctypes.c_long), ("do_not_propagate_mask", ctypes.c_long),
+        ("override_redirect", c_int), ("screen", c_void_p),
+    ]
 
 
 _x11: Optional[ctypes.CDLL] = None
@@ -104,6 +127,10 @@ def _lib() -> ctypes.CDLL:
     lib.XUngrabButton.restype = c_int
     lib.XSetInputFocus.argtypes = [Display, Window, c_int, c_ulong]
     lib.XSetInputFocus.restype = c_int
+    lib.XSelectInput.argtypes = [Display, Window, ctypes.c_long]
+    lib.XSelectInput.restype = c_int
+    lib.XGetWindowAttributes.argtypes = [Display, Window, POINTER(XWindowAttributes)]
+    lib.XGetWindowAttributes.restype = Status
     lib.XDefaultRootWindow.argtypes = [Display]
     lib.XDefaultRootWindow.restype = Window
     lib.XkbKeycodeToKeysym.argtypes = [Display, KeyCode, c_uint, c_uint]
@@ -213,6 +240,19 @@ class XDisplay:
         finally:
             if children_ptr:
                 self._lib.XFree(children_ptr)
+
+    def select_input(self, win: int, mask: int) -> None:
+        """XSelectInput: this connection's event mask on `win`."""
+        self._lib.XSelectInput(self._dpy, Window(win), mask)
+        self._lib.XFlush(self._dpy)
+
+    def map_state(self, win: int) -> int:
+        """`map_state` of `win` (IsUnmapped, IsUnviewable, IsViewable);
+        IsUnmapped when the window is gone."""
+        attrs = XWindowAttributes()
+        if self._lib.XGetWindowAttributes(self._dpy, Window(win), byref(attrs)) == 0:
+            return IsUnmapped
+        return attrs.map_state
 
     def resize_window(self, win: int, width: int, height: int) -> None:
         # X rejects 0 or negative dimensions; clamp silently.

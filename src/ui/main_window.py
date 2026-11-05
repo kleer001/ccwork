@@ -776,6 +776,9 @@ class MainWindow(QMainWindow):
         host.failed.connect(lambda msg, r=repo: self._on_terminal_failed(r, msg))
         host.finished.connect(lambda code, r=repo: self._on_terminal_finished(r, code))
         host.zoom_requested.connect(self._on_zoom_requested)
+        # A first spawn is selected before its xterm maps, so the select's
+        # focus call finds no window: focus it when it maps.
+        host.mapped.connect(lambda h=host: self._focus_if_current(h))
         host.context_menu_requested.connect(
             lambda pos, r=repo: self._on_terminal_context_menu(r, pos)
         )
@@ -787,6 +790,12 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentWidget(host)
         host.start()
         return host
+
+    def _focus_if_current(self, host: TerminalHost) -> None:
+        """Focus `host`'s xterm while it is the current terminal and ccwork
+        is the active window. An open dialog or another app keeps the focus."""
+        if self._stack.currentWidget() is host and self.isActiveWindow():
+            host.focus_child()
 
     # ── slots ──
 

@@ -36,10 +36,8 @@ from src.core.x11 import XDisplay
 log = logging.getLogger(__name__)
 
 
-# XCB key-press event op-code (lower 7 bits of response_type; bit 7 is the
-# "send-event" flag for synthetic events, which we mask off).
+# XCB key-press event op-code.
 _XCB_KEY_PRESS = 2
-_RESPONSE_TYPE_MASK = 0x7f
 
 # Modifier bits we care about for matching. LockMask (CapsLock) and
 # Mod2Mask (NumLock) leak into `state` regardless of intent — strip them
@@ -131,7 +129,7 @@ class KeyGrabFilter(QAbstractNativeEventFilter):
         # it off before comparing so synthetic presses still dispatch.
         # XTestFakeKeyEvent presses arrive with the bit clear, so this is
         # belt-and-braces for any other source that synthesizes.
-        rtype = ev.response_type & _RESPONSE_TYPE_MASK
+        rtype = ev.response_type & x11.XCB_RESPONSE_TYPE_MASK
         if rtype != _XCB_KEY_PRESS:
             return False, 0
         masked_mods = ev.state & _STATE_MASK

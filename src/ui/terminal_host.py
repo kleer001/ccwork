@@ -13,15 +13,16 @@ MVP limitations:
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import shutil
 import signal
-from typing import Sequence
+from typing import Callable, Sequence
 
-from PySide6.QtCore import QProcess, QTimer, Signal, Qt
+from PySide6.QtCore import QAbstractNativeEventFilter, QProcess, QTimer, Signal, Qt
 from PySide6.QtGui import QMouseEvent, QWheelEvent
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QApplication, QWidget
 
 from src.core.settings import XtermSettings
 from src.core import x11
@@ -38,18 +39,53 @@ _POLL_INTERVAL_MS = 30
 _POLL_TIMEOUT_MS = 3000
 
 
+class _XcbMapNotifyEvent(ctypes.Structure):
+    """Layout of `xcb_map_notify_event_t` from xproto.h."""
+
+    _fields_ = [
+        ("response_type", ctypes.c_uint8),
+        ("pad0", ctypes.c_uint8),
+        ("sequence", ctypes.c_uint16),
+        ("event", ctypes.c_uint32),
+        ("window", ctypes.c_uint32),
+        ("override_redirect", ctypes.c_uint8),
+        ("pad1", ctypes.c_uint8 * 3),
+    ]
+
+
+class _MapNotifyFilter(QAbstractNativeEventFilter):
+    """Calls `on_map` one time, at the MapNotify of window `win` on Qt's X
+    connection."""
+
+    def __init__(self, win: int, on_map: Callable[[], None]) -> None:
+        super().__init__()
+        self._win = win
+        self._on_map: Callable[[], None] | None = on_map
+
+    def nativeEventFilter(self, eventType, message):  # type: ignore[override]
+        if self._on_map is None or bytes(eventType) != b"xcb_generic_event_t":
+            return False, 0
+        ev = _XcbMapNotifyEvent.from_address(int(message))
+        if ev.response_type & x11.XCB_RESPONSE_TYPE_MASK == x11.XCB_MAP_NOTIFY and ev.window == self._win:
+            on_map, self._on_map = self._on_map, None
+            on_map()
+        return False, 0
+
+
 class TerminalHost(QWidget):
     """Embeds a single `xterm` process inside this widget.
 
     Emits:
         started: xterm process spawned (the X window may still be reparenting).
         embedded: xterm's X window is now a child of ours — ready to resize.
+        mapped: xterm's X window is mapped, so it can take the keyboard focus.
         finished(int): xterm process exited with the given code.
         failed(str):  spawn failed or xterm is missing.
     """
 
     started = Signal()
     embedded = Signal()
+    mapped = Signal()
     finished = Signal(int)
     failed = Signal(str)
     # +1 = zoom in, -1 = zoom out. Emitted by the Ctrl+wheel handler — the
@@ -75,6 +111,7 @@ class TerminalHost(QWidget):
         self._xterm_win: int | None = None
         self._xdisplay: XDisplay | None = None
         self._poll_elapsed = 0
+        self._map_filter: _MapNotifyFilter | None = None
 
         # Qt must create a real X window for this widget — xterm needs a
         # stable WId to reparent into. Without WA_NativeWindow, the widget
@@ -136,7 +173,10 @@ class TerminalHost(QWidget):
         QTimer.singleShot(_POLL_INTERVAL_MS, self._poll_for_child)
 
     def focus_child(self) -> None:
-        """Move X input focus to the embedded xterm, if attached yet."""
+        """Move X input focus to the embedded xterm, if attached yet. When
+        the window unmaps before the call reaches the X server, the BadMatch
+        does no harm: Qt's xcb plugin sets a process-wide Xlib error handler
+        that drops it."""
         if self._xterm_win and self._xdisplay is not None:
             self._xdisplay.set_input_focus(self._xterm_win)
 
@@ -159,6 +199,7 @@ class TerminalHost(QWidget):
             if not self._process.waitForFinished(2000):
                 self._process.kill()
                 self._process.waitForFinished(1000)
+        self._unwatch_map()
         self._process = None
         self._xterm_win = None
         if self._xdisplay is not None:
@@ -202,6 +243,7 @@ class TerminalHost(QWidget):
             self._xterm_win = children[0]
             self._fit_child_to_self()
             self._install_button_grabs()
+            self._watch_map()
             self.embedded.emit()
             return
 
@@ -210,6 +252,30 @@ class TerminalHost(QWidget):
             self.failed.emit("timed out waiting for xterm to embed (is $DISPLAY set?)")
             return
         QTimer.singleShot(_POLL_INTERVAL_MS, self._poll_for_child)
+
+    def _watch_map(self) -> None:
+        """Emit `mapped` when the xterm window maps. The xterm can be a child
+        of ours before it maps. The StructureNotify events go to Qt's X
+        connection, where a native filter sees the MapNotify. The map state
+        is read after the select, so a map that came first is not missed."""
+        app = QApplication.instance()
+        qt_display = XDisplay.attach(int(app.nativeInterface().display()))
+        qt_display.select_input(self._xterm_win, x11.StructureNotifyMask)
+        if qt_display.map_state(self._xterm_win) != x11.IsUnmapped:
+            self._on_xterm_mapped()
+            return
+        self._map_filter = _MapNotifyFilter(self._xterm_win, self._on_xterm_mapped)
+        app.installNativeEventFilter(self._map_filter)
+
+    def _on_xterm_mapped(self) -> None:
+        # Not inside the filter's own call: Qt is still dispatching to it.
+        QTimer.singleShot(0, self._unwatch_map)
+        self.mapped.emit()
+
+    def _unwatch_map(self) -> None:
+        if self._map_filter is not None:
+            QApplication.instance().removeNativeEventFilter(self._map_filter)
+            self._map_filter = None
 
     def _fit_child_to_self(self) -> None:
         """Resize the embedded xterm X window to our current pixel size."""

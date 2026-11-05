@@ -58,8 +58,7 @@ def main() -> int:
         while len(app.store().get("repos", [])) != 2 and time.time() < deadline:
             time.sleep(0.2)
         time.sleep(3.0)  # the new row is selected and its terminal starts
-        # The dialog leaves keyboard focus off the xterm: click into it.
-        app.click(700, 400)
+        # No click: the new terminal takes the keyboard focus when it maps.
         harness.type_line(f"pwd > {out}; git branch --show-current >> {out}")
         time.sleep(1.0)
         harness.screenshot("result.png")
