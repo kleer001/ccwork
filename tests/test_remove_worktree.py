@@ -61,6 +61,17 @@ def test_ignored_entries_lists_files_and_whole_folders(wt: Path) -> None:
     assert sorted(ignored_entries(str(wt))) == [".env", "tmp/"]
 
 
+def test_a_folder_that_ignores_itself_is_one_entry(wt: Path) -> None:
+    # `uv venv` writes a `.gitignore` of `*` into the venv. Git lists such a
+    # folder and also its entries.
+    own = wt / "own"
+    (own / "logs").mkdir(parents=True)
+    (own / ".gitignore").write_text("*\n")
+    (own / "data.db").write_text("x\n")
+    (own / "logs" / "a.log").write_text("y\n")
+    assert ignored_entries(str(wt)) == ["own/"]
+
+
 def test_remove_deletes_a_clean_worktree_and_its_branch(main_repo: Path, wt: Path) -> None:
     (wt / ".env").write_text("KEY=1\n")
     assert remove_worktree(str(wt), "fix/a") == ""

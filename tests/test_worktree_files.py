@@ -77,6 +77,17 @@ def test_folders_big_files_links_and_claude_settings_stay_behind(main_repo: Path
     assert sorted(report.skipped) == [("link", None), ("model.bin", COPY_MAX_BYTES + 1)]
 
 
+def test_a_folder_that_ignores_itself_stays_behind(main_repo: Path) -> None:
+    venv = main_repo / ".venv"
+    venv.mkdir()
+    (venv / ".gitignore").write_text("*\n")
+    (venv / "pyvenv.cfg").write_text("version_info = 3.12.3\n")
+    wt = _new_worktree(main_repo)
+    report = copy_ignored(str(main_repo), str(wt))
+    assert not (wt / ".venv").exists()
+    assert report.copied == 0
+
+
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads a file with mode 0")
 def test_a_failed_copy_is_reported_and_the_others_go_on(main_repo: Path) -> None:
     (main_repo / ".env").write_text("KEY=1\n")

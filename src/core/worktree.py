@@ -134,10 +134,15 @@ def git_dir(folder: str) -> str:
 
 def ignored_entries(folder: str) -> list[str]:
     """Ignored files of `folder`, and each wholly ignored folder as one entry
-    that ends in `/`: what `git worktree remove` deletes with no question."""
+    that ends in `/`: what `git worktree remove` deletes with no question.
+    Git also lists the entries in a folder that ignores itself (a `.gitignore`
+    of `*` in it, as `uv venv` writes); they are dropped."""
     out = _git(folder, "ls-files", "-z", "--others", "--ignored", "--exclude-standard",
                "--directory")
-    return [e for e in out.split("\0") if e]
+    entries = [e for e in out.split("\0") if e]
+    folders = {e for e in entries if e.endswith("/")}
+    return [e for e in entries
+            if not any(e[:i + 1] in folders for i, c in enumerate(e[:-1]) if c == "/")]
 
 
 def has_submodules(folder: str) -> bool:

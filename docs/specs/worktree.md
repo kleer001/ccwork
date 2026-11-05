@@ -74,7 +74,10 @@ Claude Code 2.1.314 in a temporary repository.
   `branch.<name>.*` config. Tested.
 - **F5.** `git ls-files -z --others --ignored --exclude-standard --directory`
   lists each ignored file by name, and each wholly ignored folder as one
-  entry that ends in `/`. Tested.
+  entry that ends in `/`. A folder that ignores itself (a `.gitignore` of
+  `*` in it, as `uv venv` writes) is listed as the folder and also its
+  entries; `ignored_entries` drops the entries in a listed folder. Tested
+  with git 2.43.
 - **F6.** `git check-ref-format "refs/heads/<name>"` accepts `feature/x` and
   refuses `bad..name` and `@{-1}`. The `--branch` form expands `@{-1}` to the
   previous branch and accepts it. Tested.
