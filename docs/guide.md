@@ -149,7 +149,9 @@ is off while another row uses the folder, while Claude runs in the row, and
 when the worktree has submodules.
 
 The dashboard shows one card per repository: the main checkout and its
-worktrees count together, and a shared commit counts one time.
+worktrees count together, and a shared commit counts one time. The card
+keeps the main checkout's row icon, and a `↳ N worktrees` chip counts the
+worktrees.
 
 ## Recent and idle repos
 

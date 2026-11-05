@@ -48,8 +48,9 @@ from src.core.repo_stats import (
     RADAR_AXES, RepoStats, RepoWeek, churn_tag, fingerprints, gather_stats,
     relative_time, summarize,
 )
+from src.core.repo_store import Repo
 from src.ui.badge_theme import (
-    AMBIENT_COLOR, SPINNER_COLOR, STATUS_COLORS, STATUS_DONE, SUBAGENT_COLOR,
+    AMBIENT_COLOR, SPINNER_COLOR, STATUS_COLORS, STATUS_DONE, SUBAGENT_COLOR, WORKTREE_GLYPH,
 )
 from src.ui.qt_theme import blend
 
@@ -265,7 +266,7 @@ class EmptyState(QWidget):
 
     def __init__(self, version: str, logo_path: Path | None = None,
                  parent: QWidget | None = None,
-                 repos_provider: Callable[[], list[tuple[str, str]]] | None = None) -> None:
+                 repos_provider: Callable[[], list[Repo]] | None = None) -> None:
         super().__init__(parent)
         self._repos_provider = repos_provider
         self._worker: _StatsWorker | None = None
@@ -614,6 +615,9 @@ class EmptyState(QWidget):
         chips = QHBoxLayout(); chips.setSpacing(8)
         if rw.dirty:
             chips.addWidget(self._chip("uncommitted"))
+        if rw.worktrees:
+            plural = "s" if rw.worktrees > 1 else ""
+            chips.addWidget(self._chip(f"{WORKTREE_GLYPH} {rw.worktrees} worktree{plural}"))
         if rw.release:
             chips.addWidget(self._chip(f"shipped {rw.release}", color=_ACCENT_GREEN,
                                        bg="rgba(133,153,0,0.10)", bold=True))
@@ -875,7 +879,7 @@ class _StatsWorker(QThread):
 
     done = Signal(object)  # RepoStats
 
-    def __init__(self, repos: list[tuple[str, str]], parent: QWidget | None = None) -> None:
+    def __init__(self, repos: list[Repo], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._repos = repos
 

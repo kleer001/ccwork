@@ -93,9 +93,11 @@ active repo this window, rework is deletions' share of churn — plus a
 stat ladder, churn bar, and a tempo badge: ◆ tag / ▲ NEW / ▼ −N / ▲ +N /
 · steady), and a quiet strip of repos with no commits in 7 days sized by
 lifetime commits. Rows whose folders share a git common dir (a main
-checkout and its worktrees) make one card with the main name; each count
-runs over all their HEADs at once, so a shared commit counts one time
-(`_group_by_repository`). Every number is a **rolling 7-day window, merges
+checkout and its worktrees) make one card: the main name with the badge of
+the main checkout's row (else of the first row) and no numeral, plus a
+`↳ N worktrees` chip. Each count runs over all their HEADs at once, so a
+shared commit counts one time (`_group_by_repository`). The rows reach the
+stats thread as copies of the `Repo` objects. Every number is a **rolling 7-day window, merges
 excluded**; a dip paints muted grey, never red, and green is reserved for
 the release moment. Stats come from `src/core/repo_stats.py`
 (`gather_stats`, pure, shells out to git like `repo_store` and skips

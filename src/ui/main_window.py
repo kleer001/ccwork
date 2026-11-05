@@ -30,6 +30,7 @@ import binascii
 import logging
 import os
 import time
+from dataclasses import replace
 
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QSignalBlocker, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QFontMetrics
@@ -753,7 +754,8 @@ class MainWindow(QMainWindow):
             version=__version__,
             logo_path=_LOGO_PATH,
             parent=self,
-            repos_provider=lambda: [(r.path, r.display_name) for r in self._store.repos],
+            # Copies: the stats thread reads them while a rebind can change a row.
+            repos_provider=lambda: [replace(r) for r in self._store.repos],
         )
 
     def _ensure_terminal(self, repo: Repo,

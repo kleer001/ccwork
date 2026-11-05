@@ -307,7 +307,12 @@ Claude's worktrees stay in Claude's place, `<repo>/.claude/worktrees/<name>`.
 ## 8. Dashboard
 
 - `repo_stats.gather_stats` groups rows by common dir. Each repository gets
-  one card, with the main name.
+  one card.
+- With a linked worktree in the group, the card name is the main name with
+  the badge of the main checkout's row, or of the first row when no row is
+  on the main checkout, and no numeral. A chip under the stats says
+  `↳ N worktrees`, where N counts the linked worktree folders. With no
+  linked worktree, the card name is the first row's display name.
 - The card counts the commits of the window from the HEAD of each grouped
   folder, and counts each commit hash one time.
 - The card is dirty when any grouped folder is dirty.

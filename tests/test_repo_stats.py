@@ -13,6 +13,7 @@ import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from src.core.repo_store import Repo
 from src.core.repo_stats import (
     COOLER_PRIOR_FLOOR,
     RADAR_AXES,
@@ -80,7 +81,7 @@ def test_skips_non_git_path(tmp_path: Path) -> None:
     """A plain directory must be skipped silently, not raise."""
     plain = tmp_path / "notarepo"
     plain.mkdir()
-    stats = gather_stats([(str(plain), "notarepo")], now=NOW)
+    stats = gather_stats([Repo(path=str(plain))], now=NOW)
     assert stats.repo_count == 0
     assert stats.week_total == 0
     assert stats.weekly_totals == [0] * TREND_WEEKS
@@ -95,7 +96,7 @@ def test_rolling_window_and_prior_week(tmp_path: Path) -> None:
     _commit(repo, "b", "in window 2", _iso(1))
     (repo / "wip").write_text("dirty")               # uncommitted
 
-    stats = gather_stats([(str(repo), "r1")], now=NOW)
+    stats = gather_stats([Repo(path=str(repo))], now=NOW)
 
     assert stats.repo_count == 1
     assert len(stats.active) == 1
@@ -120,7 +121,7 @@ def test_churn_new_files_breadth_and_types(tmp_path: Path) -> None:
     _commit(repo, "two.md", "add two", _iso(2), content="m\n")             # +1, new
     _commit(repo, "base.py", "edit base", _iso(1), content="a\n")          # -2 (keep 1 of 3)
 
-    stats = gather_stats([(str(repo), "r")], now=NOW)
+    stats = gather_stats([Repo(path=str(repo))], now=NOW)
     r = stats.active[0]
     assert r.commits == 3
     assert r.insertions == 3      # 2 + 1 in the window
@@ -141,7 +142,7 @@ def test_new_from_zero_and_quiet_split(tmp_path: Path) -> None:
     _make_repo(idle)
     _commit(idle, "f", "long ago", _iso(30))
 
-    stats = gather_stats([(str(fresh), "fresh"), (str(idle), "idle")], now=NOW)
+    stats = gather_stats([Repo(path=str(fresh)), Repo(path=str(idle))], now=NOW)
     assert [r.name for r in stats.active] == ["fresh"]
     assert stats.active[0].new_from_zero is True
     assert [r.name for r in stats.quiet] == ["idle"]
@@ -153,7 +154,7 @@ def test_release_detected_only_within_window(tmp_path: Path) -> None:
     _make_repo(repo)
     _commit(repo, "f", "c1", _iso(3))
     _git(repo, "tag", "v1.1.0", env_date=_iso(2))
-    stats = gather_stats([(str(repo), "r")], now=NOW)
+    stats = gather_stats([Repo(path=str(repo))], now=NOW)
     assert stats.active[0].release == "v1.1.0"
     assert stats.releases and stats.releases[0].name == "r"
 
@@ -162,7 +163,7 @@ def test_release_detected_only_within_window(tmp_path: Path) -> None:
     _commit(old, "f", "c1", _iso(20))
     _git(old, "tag", "v0.9.0", env_date=_iso(20))
     _commit(old, "g", "c2", _iso(1))
-    stats = gather_stats([(str(old), "old")], now=NOW)
+    stats = gather_stats([Repo(path=str(old))], now=NOW)
     assert stats.active[0].release is None
 
 
@@ -178,7 +179,7 @@ def test_active_sorted_newest_first_quiet_by_lifetime(tmp_path: Path) -> None:
     _commit(q2, "g", "c2", _iso(30))
 
     stats = gather_stats(
-        [(str(a), "a"), (str(b), "b"), (str(q1), "q1"), (str(q2), "q2")], now=NOW)
+        [Repo(path=str(a)), Repo(path=str(b)), Repo(path=str(q1)), Repo(path=str(q2))], now=NOW)
     assert [r.name for r in stats.active] == ["b", "a"]
     assert [r.name for r in stats.quiet] == ["q2", "q1"]
 
@@ -194,7 +195,7 @@ def test_merge_commits_excluded(tmp_path: Path) -> None:
     _git(repo, "merge", "--no-ff", "-q", "-m", "merge feat", "feat",
          env_date=_iso(3))
 
-    stats = gather_stats([(str(repo), "r")], now=NOW)
+    stats = gather_stats([Repo(path=str(repo))], now=NOW)
     r = stats.active[0]
     assert r.commits == 3          # merge commit not counted
     assert r.lifetime_commits == 3
@@ -217,7 +218,7 @@ def test_malformed_timestamp_is_skipped_not_raised(monkeypatch) -> None:
     monkeypatch.setattr(rs, "_run_git", fake_run_git)
     monkeypatch.setattr(rs, "git_common_dir", lambda path: "/x/.git")
     monkeypatch.setattr(rs, "worktree_main_name", lambda path: "")
-    stats = rs.gather_stats([("/x", "x")], now=NOW)      # must not raise
+    stats = rs.gather_stats([Repo(path="/x")], now=NOW)      # must not raise
     assert stats.repo_count == 1
     assert stats.active[0].commits == 2                  # counted, stamps dropped
     assert stats.weekly_totals == [0] * TREND_WEEKS
@@ -228,7 +229,7 @@ def test_dedups_by_realpath(tmp_path: Path) -> None:
     repo = tmp_path / "r"
     _make_repo(repo)
     _commit(repo, "f", "c", _iso(1))
-    stats = gather_stats([(str(repo), "r"), (str(repo), "r (II)")], now=NOW)
+    stats = gather_stats([Repo(path=str(repo)), Repo(path=str(repo))], now=NOW)
     assert stats.repo_count == 1
     assert stats.week_total == 1
 

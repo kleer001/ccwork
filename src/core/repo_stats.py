@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Iterable
 
-from src.core.repo_store import git_common_dir, worktree_main_name
+from src.core.repo_store import Repo, git_common_dir, worktree_main_name
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +67,7 @@ class RepoWeek:
     new_from_zero: bool = False  # repo's first commit landed in the window
     release: str | None = None   # newest tag, if it was created in the window
     release_ts: int | None = None
+    worktrees: int = 0           # linked worktree folders in the card's rows
 
     @property
     def churn(self) -> int:
@@ -176,9 +177,9 @@ def _int_or_none(token: str) -> int | None:
         return None
 
 
-def gather_stats(repos: Iterable[tuple[str, str]], now: datetime | None = None) -> RepoStats:
-    """Aggregate git stats over `repos`, an iterable of (path, display_name),
-    one `RepoWeek` per repo (`_group_by_repository`). Each count runs
+def gather_stats(repos: Iterable[Repo], now: datetime | None = None) -> RepoStats:
+    """Aggregate git stats over the sidebar rows `repos`, one `RepoWeek` per
+    repo (`_group_by_repository`). Each count runs
     over the HEADs of all the repo's folders at once, so a shared
     commit counts one time. `now` defaults to the local current time and
     anchors every rolling window."""
@@ -190,7 +191,7 @@ def gather_stats(repos: Iterable[tuple[str, str]], now: datetime | None = None) 
     window_start_ts = now_ts - _WEEK_SECS
 
     stats = RepoStats(gathered_ts=now_ts)
-    for name, folders in _group_by_repository(repos):
+    for name, folders, worktrees in _group_by_repository(repos):
         # `status --porcelain` doubles as the "is this a readable git tree?"
         # probe — None means not-a-repo / gone, so skip the folder.
         statuses = {p: _run_git(p, ["status", "--porcelain"]) for p in folders}
@@ -198,7 +199,8 @@ def gather_stats(repos: Iterable[tuple[str, str]], now: datetime | None = None) 
         if not folders:
             continue
         path = folders[0]
-        rw = RepoWeek(name=name, path=path, dirty=any(statuses[p].strip() for p in folders))
+        rw = RepoWeek(name=name, path=path, dirty=any(statuses[p].strip() for p in folders),
+                      worktrees=worktrees)
         heads = sorted({h.strip() for h in (_run_git(p, ["rev-parse", "HEAD"]) for p in folders)
                         if h and h.strip()}) or ["HEAD"]
 
@@ -271,27 +273,51 @@ def gather_stats(repos: Iterable[tuple[str, str]], now: datetime | None = None) 
     return stats
 
 
-def _group_by_repository(repos: Iterable[tuple[str, str]]) -> list[tuple[str, list[str]]]:
-    """(card name, folders) per repo. Rows whose folders share a git common
-    dir make one group. Its name is the main name when a linked worktree is
-    in it, else the first row's name. Duplicate paths count once. A folder
-    with no common dir (outside git, or git before 2.31) is a group of its
-    own; `gather_stats` skips it when it is not a readable git tree."""
-    groups: dict[str, tuple[str, list[str]]] = {}
+@dataclass
+class _Group:
+    """The rows of one repository, in sidebar order."""
+
+    first: Repo
+    main_row: Repo | None = None     # the first row on the main checkout
+    main: str = ""                   # the main name, once a linked worktree joins
+    folders: list[str] = field(default_factory=list)
+    linked: int = 0                  # linked worktree folders
+
+    @property
+    def name(self) -> str:
+        """With a linked worktree: the main name with the badge of the main
+        checkout's row, else of the first row, and no numeral. Else the
+        first row's name."""
+        if not self.main:
+            return self.first.display_name
+        return (self.main_row or self.first).with_emoji(self.main)
+
+
+def _group_by_repository(repos: Iterable[Repo]) -> list[tuple[str, list[str], int]]:
+    """(card name, folders, linked worktree count) per repo. Rows whose
+    folders share a git common dir make one group (`_Group.name`).
+    Duplicate paths count once. A folder with no common dir (outside git,
+    or git before 2.31) is a group of its own; `gather_stats` skips it when
+    it is not a readable git tree."""
+    groups: dict[str, _Group] = {}
     seen: set[str] = set()
-    for path, name in repos:
+    for repo in repos:
         try:
-            key = os.path.realpath(path)
+            key = os.path.realpath(repo.path)
         except OSError:
             continue
         if key in seen:
             continue
         seen.add(key)
-        common = git_common_dir(path) or key
-        main = worktree_main_name(path)
-        card_name, folders = groups.get(common, (name, []))
-        groups[common] = (main or card_name, folders + [str(path)])
-    return list(groups.values())
+        group = groups.setdefault(git_common_dir(repo.path) or key, _Group(first=repo))
+        group.folders.append(repo.path)
+        main = worktree_main_name(repo.path)
+        if main:
+            group.main = main
+            group.linked += 1
+        elif group.main_row is None:
+            group.main_row = repo
+    return [(g.name, g.folders, g.linked) for g in groups.values()]
 
 
 def churn_tag(r: RepoWeek) -> str:

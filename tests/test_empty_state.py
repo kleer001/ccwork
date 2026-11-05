@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from src.core.repo_store import RepoStore
 from src.core.settings import Settings
@@ -283,3 +283,12 @@ def test_launch_button_emits_resume_requested(qapp: QApplication) -> None:
     es.show_recovery([{"path": "/r/a", "name": "alpha", "id": "sid-1"}])
     _row_button(es, 0, "Launch").click()
     assert got == [("/r/a", "sid-1")]
+
+
+def test_a_card_with_worktrees_shows_their_count(qapp: QApplication) -> None:
+    es = EmptyState(version="0.1.0")
+    es._apply_stats(_stats(active=[_active("one", "/one", worktrees=1), _active("two", "/two", worktrees=2),
+                                   _active("none", "/none")]))
+    chips = [sorted(l.text() for l in card.findChildren(QLabel) if "worktree" in l.text())
+             for card in es._cards]
+    assert chips == [["↳ 1 worktree"], ["↳ 2 worktrees"], []]
