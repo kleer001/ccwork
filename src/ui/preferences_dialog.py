@@ -151,6 +151,16 @@ class _PreviewLabel(QLabel):
         )
 
 
+def _form_row(form: QFormLayout, label: str) -> QHBoxLayout:
+    """Add a row with `label` to `form`, and give the row's box layout (no
+    margins) for its widgets."""
+    row = QWidget(form.parentWidget())
+    box = QHBoxLayout(row)
+    box.setContentsMargins(0, 0, 0, 0)
+    form.addRow(label, row)
+    return box
+
+
 # ── Dialog ──────────────────────────────────────────────────────────────────
 
 
@@ -248,16 +258,13 @@ class PreferencesDialog(QDialog):
         self._bg.setToolTip("Terminal background. Picking a custom color switches the preset to Custom.")
         self._fg.setToolTip("Terminal foreground (text). Picking a custom color switches the preset to Custom.")
 
-        swatch_row = QWidget(w)
-        lay = QHBoxLayout(swatch_row)
-        lay.setContentsMargins(0, 0, 0, 0)
+        lay = _form_row(form, "")
         lay.addWidget(QLabel("Background"))
         lay.addWidget(self._bg)
         lay.addSpacing(20)
         lay.addWidget(QLabel("Foreground"))
         lay.addWidget(self._fg)
         lay.addStretch(1)
-        form.addRow("", swatch_row)
 
         help_lbl = QLabel(
             "Picking a preset overwrites both colors. Click a swatch to "
@@ -382,17 +389,15 @@ class PreferencesDialog(QDialog):
         )
         form.addRow("", self._show_status_text)
 
-        expire_row = QWidget(w)
-        expire_box = QHBoxLayout(expire_row)
-        expire_box.setContentsMargins(0, 0, 0, 0)
-        self._expire_idle = QCheckBox("Remove idle repos from the sidebar after", expire_row)
+        expire_box = _form_row(form, "")
+        self._expire_idle = QCheckBox("Remove idle repos from the sidebar after", w)
         self._expire_idle.setChecked(ui.expire_idle_repos)
         self._expire_idle.setToolTip(
             "A repo with no Claude activity and no click for this many days "
             "moves to the Recent list, where one click brings it back. "
             "Repos with an open terminal never expire."
         )
-        self._expire_days = QSpinBox(expire_row)
+        self._expire_days = QSpinBox(w)
         self._expire_days.setRange(1, 3650)
         self._expire_days.setSuffix(" days")
         self._expire_days.setValue(ui.expire_idle_days)
@@ -401,22 +406,18 @@ class PreferencesDialog(QDialog):
         expire_box.addWidget(self._expire_idle)
         expire_box.addWidget(self._expire_days)
         expire_box.addStretch(1)
-        form.addRow("", expire_row)
 
-        folder_row = QWidget(w)
-        folder_box = QHBoxLayout(folder_row)
-        folder_box.setContentsMargins(0, 0, 0, 0)
-        self._worktree_folder = QLineEdit(ui.worktree_folder, folder_row)
+        folder_box = _form_row(form, "Worktree folder")
+        self._worktree_folder = QLineEdit(ui.worktree_folder, w)
         self._worktree_folder.setPlaceholderText("Beside the main checkout")
         self._worktree_folder.setToolTip(
             "Make worktree puts each new worktree in this folder, as "
             "<folder>/<repo>-<branch>. Empty puts it beside the main checkout."
         )
-        browse = QPushButton("Browse…", folder_row)
+        browse = QPushButton("Browse…", w)
         browse.clicked.connect(self._pick_worktree_folder)
         folder_box.addWidget(self._worktree_folder, 1)
         folder_box.addWidget(browse)
-        form.addRow("Worktree folder", folder_row)
 
         help_lbl = QLabel(
             "Tip: drag the splitter to resize the sidebar — the width persists.",

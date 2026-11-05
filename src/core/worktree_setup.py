@@ -40,7 +40,8 @@ def setup_commands(src: str, dst: str) -> str:
     if os.path.isdir(os.path.join(src, "node_modules")):
         node = _first_install(dst, NODE_INSTALLS)
         if node:
-            steps.append(node[1])
+            _lock_file, command = node
+            steps.append(command)
     return "\n".join(steps)
 
 
