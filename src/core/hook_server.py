@@ -55,8 +55,7 @@ EVENT_SESSION_START = "SessionStart"
 # detached agents) — the session is over, those signals are stale.
 EVENT_SESSION_END = "SessionEnd"
 # Sent by `bin/claude` when the claude process it started returns, however
-# it ended. Covers /exit, which sends no SessionEnd hook
-# (anthropics/claude-code#17885).
+# it ended. Covers a kill or a crash, which sends no SessionEnd hook.
 EVENT_CLAUDE_EXITED = "ClaudeExited"
 
 

@@ -543,15 +543,14 @@ clear rules: `docs/specs/hook-events.md`):
     still cascades, matching the pre-tracking behavior. The cascade is
     done inline in `_set_session_active(active=False)` rather than via the
     public mutators so the whole transition lands in a single dataChanged
-    emission. Claude Code does **not** deliver a `SessionEnd` hook for
-    the `/exit` slash command (only for Ctrl+D —
-    anthropics/claude-code#17885), so the same cascade runs on the
-    `ClaudeExited` event that `bin/claude` sends when the claude process
-    returns, and from `MainWindow._on_terminal_finished` via
+    emission. A claude process that is killed or crashes sends no
+    `SessionEnd` hook, so the same cascade runs on the `ClaudeExited`
+    event that `bin/claude` sends when the claude process returns,
+    however it ended, and from `MainWindow._on_terminal_finished` via
     `RepoListModel.clear_session(repo_id)` when the row's xterm process
     exits. `clear_session` drops the *whole* `_live_sessions[repo_id]` set (the
     xterm is gone, so every session it hosted is dead) before the
-    cascade, unlike the single-id `SessionEnd` drop. Otherwise an `/exit`
+    cascade, unlike the single-id `SessionEnd` drop. Otherwise a crash
     mid-turn (or with a subagent in flight) would leave the spinner /
     twinkle animating forever.
   • `RowRenamed` — sent by `ccwork-rename`: set the row's title and / or

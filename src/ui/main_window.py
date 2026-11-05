@@ -1027,9 +1027,9 @@ class MainWindow(QMainWindow):
         if host is not None:
             self._stack.removeWidget(host)
             host.deleteLater()
-        # Tear down this row's session state: `/exit` gets no SessionEnd
-        # hook (anthropics/claude-code#17885), so the process-exit is our
-        # only chance to clear a stuck spinner or leaked subagent twinkle.
+        # Tear down this row's session state: a session that dies with the
+        # xterm can send no SessionEnd hook, so the process exit is the only
+        # chance to clear a stuck spinner or a leaked subagent twinkle.
         self._sidebar.clear_session(repo.id)
         # Crash tracking is keyed by path, so keep it while another terminal
         # at this path is still alive.

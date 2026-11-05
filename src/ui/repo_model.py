@@ -625,10 +625,9 @@ class RepoListModel(QAbstractListModel):
 
         Same cascade as the SessionEnd hook (working spinner, DONE/
         ATTENTION dot, leftover subagent twinkle, session-active flag).
-        Called on terminal-process exit because Claude Code does not
-        deliver a SessionEnd hook for `/exit` (anthropics/claude-code
-        #17885), so a `/exit` would otherwise leave the spinner or
-        twinkle animating forever.
+        Called on terminal-process exit and on ClaudeExited: a claude
+        process that is killed or crashes sends no SessionEnd hook, so
+        the spinner or twinkle would otherwise animate forever.
         """
         # The xterm process is gone, so every session it hosted is dead —
         # drop the whole live-session set, not just one id, before the

@@ -4,10 +4,9 @@ Status: built. Needs `docs/specs/row-routing.md` (the row id).
 
 ## Problem
 
-Claude Code sends no `SessionEnd` hook for the `/exit` slash command
-(anthropics/claude-code#17885). ccwork clears session state only when the
-row's xterm exits. After an `/exit`, the shell stays open and the row keeps a
-stale session state.
+A claude process that is killed or crashes sends no `SessionEnd` hook.
+ccwork clears session state only when the row's xterm exits. After such an
+end, the shell stays open and the row keeps a stale session state.
 
 ## Design
 

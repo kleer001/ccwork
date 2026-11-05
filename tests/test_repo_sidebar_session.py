@@ -126,10 +126,10 @@ def test_session_end_clears_attention(qapp, tmp_path: Path) -> None:
 
 
 def test_clear_session_tears_down_on_exit(qapp, tmp_path: Path) -> None:
-    """`/exit` gets no SessionEnd hook (anthropics/claude-code#17885), so
+    """A session that dies with its xterm can send no SessionEnd hook, so
     the terminal-process exit calls clear_session directly. It must match
     the SessionEnd cascade: a stuck working spinner and a leaked subagent
-    twinkle both clear, so nothing animates forever after `/exit`."""
+    twinkle both clear, so nothing animates forever after the exit."""
     repo = tmp_path / "repo"
     repo.mkdir()
     store = _store_with(str(repo), tmp_path / "repos.json")
