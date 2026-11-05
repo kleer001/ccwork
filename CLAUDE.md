@@ -400,11 +400,11 @@ but no widgets):
   (`RepoSidebar.take_spawn_env`), which `bin/ccwork-bashrc` prints before
   the first prompt. `worktree_setup.setup_commands` builds
   `CCWORK_SETUP_CMD` the same way: a `uv venv` with the source venv's
-  Python version, then `uv sync --active` (with `uv.lock`) or `uv pip
-  install` of the source venv's freeze (kept in the worktree's git dir;
-  `rewrite_freeze` moves each editable path in the source folder, and each
-  `name @ file://` path that is in the worktree), and the `npm` / `pnpm` / `yarn`
-  install of the node lock file; the bashrc runs it once, in view.
+  Python version, then the install of the first file that the worktree
+  has: `uv.lock` (`uv sync --active`), `requirements.txt` or
+  `pyproject.toml` (`uv pip install -r`); with none, the venv stays empty.
+  Then the `npm` / `pnpm` / `yarn` install of the worktree's node lock file;
+  the bashrc runs it once, in view.
   *Remove from sidebar* on a worktree
   row opens `WorktreeRemoveDialog`: an opt-in box (off by default)
   deletes the folder and its branch with `git worktree remove` and `git

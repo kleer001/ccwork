@@ -107,9 +107,6 @@ Claude Code 2.1.314 in a temporary repository.
   worktree. Source: code.claude.com/docs/en/worktrees.
 - **F14.** A Python venv is not portable: its scripts hold absolute paths to
   its folder. Source: docs.python.org/3/library/venv.html.
-- **F15.** `uv pip freeze --python <venv>/bin/python` lists the exact
-  packages of a venv. An editable package shows as `-e file:///<path>`.
-  Tested.
 
 ## 4. Worktree row
 
@@ -211,25 +208,25 @@ first prompt. Ctrl+C stops it. ccwork passes the commands in
 **Python.** A venv is a folder `.venv` or `venv` in the source folder with a
 `pyvenv.cfg`. The new venv has the same folder name.
 
-| The source folder has | ccwork runs in the worktree |
+ccwork runs `uv venv --python <version> <venv>` in the worktree, then the
+install of the first file in this table that the worktree has. With none of
+them, the venv stays empty.
+
+| The worktree has | Install |
 |---|---|
-| a venv and `uv.lock` | `uv venv --python <version> <venv>`, then `uv sync --active` with `VIRTUAL_ENV=<venv>` |
-| a venv and no `uv.lock` | `uv venv --python <version> <venv>`, then `uv pip install --python <venv>/bin/python -r <freeze file>` |
+| `uv.lock` | `uv sync --active` with `VIRTUAL_ENV=<venv>` |
+| `requirements.txt` | `uv pip install --python <venv>/bin/python -r requirements.txt` |
+| `pyproject.toml` | `uv pip install --python <venv>/bin/python -r pyproject.toml --all-extras` |
 
 - `<version>` is the `version` line of the source `pyvenv.cfg`, or its
   `version_info` line, which `uv venv` writes instead.
-- The freeze file is the output of `uv pip freeze` on the source venv (F15).
-  It goes in the worktree's private git dir (`git rev-parse --git-dir`), so
-  `git worktree remove` deletes it. An editable entry (`-e file://…`) whose
-  path is in the source folder gets the worktree folder instead. A `name @
-  file://…` entry does too, when its path is in the worktree; a build output
-  that the worktree does not have, such as a wheel in an ignored `dist/`,
-  keeps the source path. Other entries do not change.
+- A package that is in the source venv but not in the declared
+  dependencies is not installed.
 - When `uv` is not on `PATH`, the terminal prints "uv not found: no venv
   made" and makes no venv.
 
 **Node.** When the source folder has `node_modules/`, the terminal runs the
-install command of its lock file:
+install command of the worktree's lock file:
 
 | Lock file | Command |
 |---|---|
@@ -353,7 +350,7 @@ Each item runs in a temporary git repository unless it names the live check.
 | Make a worktree from a row with an uncommitted edit. | The dialog shows the uncommitted-changes line. The new worktree has the committed text. |
 | Open the dialog, make the branch from a shell, then press OK. | `git worktree add` fails. ccwork shows git's message and adds no row. |
 | Make a worktree from a folder with an ignored `.env`, an ignored 2 MiB file and an ignored `tmp/` folder. | `.env` is copied. The terminal lists the 2 MiB file as not copied. `tmp/` is not in the worktree. |
-| Make a worktree from a folder with a `.venv` and `requirements.txt` (no `uv.lock`). | The terminal makes `.venv` with the same Python version and the same packages. The project's tests run in the new row with no manual install. |
+| Make a worktree from a folder with a `.venv` and `requirements.txt` (no `uv.lock`). | The terminal makes `.venv` with the same Python version and the packages of `requirements.txt`. The project's tests run in the new row with no manual install. |
 | `claude -w x` in a row, then exit with remove (live check). | The row shows `<main name> ↳ worktree-x` while Claude works, and its main checkout after exit, with no `(path missing)`. `recent` does not change. |
 | A row has a `home` and a missing folder at startup. | The row is on its `home`, and `home` is clear. |
 | A row first shows a folder under `.claude/worktrees/`. | `<common dir>/info/exclude` has `/.claude/worktrees/`, and the main checkout's `git status` is clean. |

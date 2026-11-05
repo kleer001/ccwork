@@ -124,8 +124,9 @@ Before its first prompt, the new row's terminal:
 
 - lists the ignored files that ccwork copied (each one of 1 MiB or less,
   for example `.env`) and the ones it did not copy;
-- makes the venv again with `uv` (the same Python version and the same
-  packages, or `uv sync` with a `uv.lock`);
+- makes the venv again with `uv`, with the same Python version, and
+  installs the dependencies from `uv.lock`, `requirements.txt` or
+  `pyproject.toml`, the first one that the repo has;
 - runs `npm ci`, `pnpm install` or `yarn install` when the repo has
   `node_modules/`.
 

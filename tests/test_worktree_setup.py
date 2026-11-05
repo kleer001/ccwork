@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QApplication, QLineEdit
 from src.core import worktree_setup
 from src.core.repo_store import Repo, RepoStore
 from src.core.worktree import make_worktree, worktree_plan, worktree_source
-from src.core.worktree_setup import FREEZE_FILE, UV_MISSING, rewrite_freeze, setup_commands
+from src.core.worktree_setup import UV_MISSING, setup_commands
 from src.ui.repo_sidebar import RepoSidebar
 from src.ui.worktree_dialog import WorktreeDialog
 
@@ -38,6 +38,12 @@ def main_repo(tmp_path: Path) -> Path:
     _git("-C", str(repo), "add", "-A")
     _git("-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed")
     return repo
+
+
+def _commit(repo: Path, name: str, text: str = "") -> None:
+    (repo / name).write_text(text)
+    _git("-C", str(repo), "add", name)
+    _git("-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", name)
 
 
 def _new_worktree(repo: Path) -> Path:
@@ -61,7 +67,8 @@ def test_nothing_installs_with_no_venv_and_no_node_modules(main_repo: Path) -> N
 
 def test_venv_with_uv_lock_runs_uv_sync(main_repo: Path, uv: str) -> None:
     _fake_venv(main_repo)
-    (main_repo / "uv.lock").write_text("")
+    _commit(main_repo, "uv.lock")
+    _commit(main_repo, "requirements.txt")
     wt = _new_worktree(main_repo)
     venv = shlex.quote(str(wt / ".venv"))
     assert setup_commands(str(main_repo), str(wt)) == (
@@ -70,7 +77,7 @@ def test_venv_with_uv_lock_runs_uv_sync(main_repo: Path, uv: str) -> None:
 
 def test_a_uv_made_venv_gives_its_version_info(main_repo: Path, uv: str) -> None:
     _fake_venv(main_repo, name="venv", key="version_info")
-    (main_repo / "uv.lock").write_text("")
+    _commit(main_repo, "uv.lock")
     wt = _new_worktree(main_repo)
     assert setup_commands(str(main_repo), str(wt)).startswith(
         f"/opt/uv venv --python 3.12.3 {shlex.quote(str(wt / 'venv'))} && ")
@@ -90,7 +97,7 @@ def test_no_uv_prints_the_line_and_makes_no_venv(main_repo: Path, monkeypatch) -
 ])
 def test_node_modules_install_by_lock_file(main_repo: Path, lock: str, command: str) -> None:
     (main_repo / "node_modules").mkdir()
-    (main_repo / lock).write_text("{}\n")
+    _commit(main_repo, lock, "{}\n")
     assert setup_commands(str(main_repo), str(_new_worktree(main_repo))) == command
 
 
@@ -99,22 +106,37 @@ def test_node_modules_with_no_lock_file_installs_nothing(main_repo: Path) -> Non
     assert setup_commands(str(main_repo), str(_new_worktree(main_repo))) == ""
 
 
-def test_editable_entries_in_the_source_folder_move_to_the_worktree() -> None:
-    text = ("-e file:///home/u/proj\n-e file:///home/u/proj/libs/a\n"
-            "-e file:///home/u/other\n-e file:///home/u/project2\nrequests==2.32.3\n")
-    assert rewrite_freeze(text, "/home/u/proj", "/home/u/proj-x") == (
-        "-e file:///home/u/proj-x\n-e file:///home/u/proj-x/libs/a\n"
-        "-e file:///home/u/other\n-e file:///home/u/project2\nrequests==2.32.3\n")
+@pytest.mark.parametrize("files, install", [
+    (["requirements.txt", "pyproject.toml"], "-r {wt}/requirements.txt"),
+    (["pyproject.toml"], "-r {wt}/pyproject.toml --all-extras"),
+])
+def test_a_venv_with_no_uv_lock_installs_the_declared_dependencies(
+    main_repo: Path, uv: str, files: list[str], install: str
+) -> None:
+    _fake_venv(main_repo)
+    for name in files:
+        _commit(main_repo, name)
+    wt = _new_worktree(main_repo)
+    venv = shlex.quote(str(wt / ".venv"))
+    assert setup_commands(str(main_repo), str(wt)) == (
+        f"/opt/uv venv --python 3.12.3 {venv} && /opt/uv pip install "
+        f"--python {shlex.quote(str(wt / '.venv' / 'bin' / 'python'))} {install.format(wt=wt)}")
+
+
+def test_a_venv_with_no_declaration_gets_an_empty_venv(main_repo: Path, uv: str) -> None:
+    _fake_venv(main_repo)
+    (main_repo / "requirements.txt").write_text("")  # uncommitted: not in the worktree
+    wt = _new_worktree(main_repo)
+    assert setup_commands(str(main_repo), str(wt)) == (
+        f"/opt/uv venv --python 3.12.3 {shlex.quote(str(wt / '.venv'))}")
 
 
 @pytest.mark.skipif(shutil.which("uv") is None, reason="needs uv")
-def test_freeze_install_makes_the_same_venv(main_repo: Path) -> None:
+def test_the_setup_makes_a_venv_with_the_source_python(main_repo: Path) -> None:
     subprocess.run(["uv", "venv", "-q", "--python", "3.12", str(main_repo / ".venv")], check=True)
+    _commit(main_repo, "requirements.txt")
     wt = _new_worktree(main_repo)
     cmd = setup_commands(str(main_repo), str(wt))
-    freeze = Path(_git("-C", str(wt), "rev-parse", "--absolute-git-dir")) / FREEZE_FILE
-    assert freeze.is_file()
-    assert f"-r {shlex.quote(str(freeze))}" in cmd
     subprocess.run(["bash", "-c", cmd], check=True, capture_output=True, timeout=60)
     version = [l for l in (wt / ".venv" / "pyvenv.cfg").read_text().splitlines()
                if l.startswith("version_info")]
@@ -127,7 +149,7 @@ def test_make_worktree_passes_the_setup_to_the_first_terminal(
     qapp: QApplication, tmp_path: Path, main_repo: Path, uv: str, monkeypatch
 ) -> None:
     (main_repo / "node_modules").mkdir()
-    (main_repo / "package-lock.json").write_text("{}\n")
+    _commit(main_repo, "package-lock.json", "{}\n")
     store = RepoStore(config_path=tmp_path / "repos.json")
     store.repos = [Repo(path=str(main_repo))]
     store.save()
@@ -144,27 +166,3 @@ def test_bashrc_runs_the_setup_once_in_view(tmp_path: Path) -> None:
     out = subprocess.run(["bash", "--rcfile", str(BASHRC), "-i", "-c", 'echo "[${CCWORK_SETUP_CMD:-}]"'],
                          env=env, capture_output=True, text=True, timeout=10).stdout
     assert out.splitlines()[-3:] == ["+ echo ran", "ran", "[]"]
-
-
-def test_a_failed_freeze_shows_in_the_terminal(main_repo: Path, uv: str, monkeypatch) -> None:
-    _fake_venv(main_repo)
-    wt = _new_worktree(main_repo)
-
-    def hang(*a, **k):
-        raise subprocess.TimeoutExpired(a[0], 30)
-
-    monkeypatch.setattr(worktree_setup.subprocess, "run", hang)
-    cmd = setup_commands(str(main_repo), str(wt))
-    assert cmd.startswith("echo 'Could not make the venv: ")
-
-
-def test_local_installs_in_the_worktree_move_to_it(tmp_path: Path) -> None:
-    src, dst = tmp_path / "my proj", tmp_path / "my proj-x"
-    (dst / "libs" / "a").mkdir(parents=True)
-    text = (f"pkg-a @ {(src / 'libs' / 'a').as_uri()}\n"
-            f"pkg-d @ {(src / 'dist' / 'd-1.0-py3-none-any.whl').as_uri()}\n"
-            "pkg-b @ file:///home/u/other/b\npkg-c @ https://example.com/c.whl\n")
-    assert rewrite_freeze(text, str(src), str(dst)) == (
-        f"pkg-a @ {(dst / 'libs' / 'a').as_uri()}\n"
-        f"pkg-d @ {(src / 'dist' / 'd-1.0-py3-none-any.whl').as_uri()}\n"
-        "pkg-b @ file:///home/u/other/b\npkg-c @ https://example.com/c.whl\n")

@@ -1,7 +1,8 @@
 """The dependency setup that a new worktree's first terminal runs
-(docs/specs/worktree.md 5.5): a venv like the source folder's, and the
-install command of its node lock file. ccwork passes the commands in
-`CCWORK_SETUP_CMD`, and `bin/ccwork-bashrc` runs them once, in view.
+(docs/specs/worktree.md 5.5): a venv like the source folder's, with the
+dependencies that the worktree declares, and the install command of its node
+lock file. ccwork passes the commands in `CCWORK_SETUP_CMD`, and
+`bin/ccwork-bashrc` runs them once, in view.
 """
 
 from __future__ import annotations
@@ -9,41 +10,44 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
-import subprocess
 from pathlib import Path
-from urllib.parse import unquote
-
-from src.core.worktree import GitError, git_dir
 
 VENV_NAMES = (".venv", "venv")
 # `python -m venv` writes `version`; `uv venv` writes `version_info`.
 VENV_VERSION_KEYS = ("version", "version_info")
+# The first file that the worktree has picks the install.
+PYTHON_INSTALLS = (
+    ("uv.lock", "VIRTUAL_ENV={venv} {uv} sync --active"),
+    ("requirements.txt", "{uv} pip install --python {python} -r {file}"),
+    ("pyproject.toml", "{uv} pip install --python {python} -r {file} --all-extras"),
+)
 NODE_INSTALLS = (
     ("package-lock.json", "npm ci"),
     ("pnpm-lock.yaml", "pnpm install --frozen-lockfile"),
     ("yarn.lock", "yarn install --frozen-lockfile"),
 )
 UV_MISSING = "uv not found: no venv made"
-FREEZE_FILE = "ccwork-freeze.txt"
-UV_FREEZE_TIMEOUT_S = 30
 
 
 def setup_commands(src: str, dst: str) -> str:
     """Shell commands that rebuild `src`'s venv and node_modules in `dst`,
-    one line per tool; "" when nothing installs. With a venv and no
-    `uv.lock`, it writes the source venv's freeze into `dst`'s git dir. It
-    does not raise: a failure becomes an `echo` of the error, so it shows in
-    the row's terminal (docs/specs/worktree.md 5.3)."""
+    one line per tool; "" when nothing installs. The files of `dst` pick
+    each install command."""
     steps = []
     venv = _source_venv(src)
     if venv:
-        steps.append(_venv_step(src, dst, *venv))
+        steps.append(_venv_step(dst, *venv))
     if os.path.isdir(os.path.join(src, "node_modules")):
-        node = next((cmd for lock, cmd in NODE_INSTALLS
-                     if os.path.isfile(os.path.join(src, lock))), None)
+        node = _first_install(dst, NODE_INSTALLS)
         if node:
-            steps.append(node)
+            steps.append(node[1])
     return "\n".join(steps)
+
+
+def _first_install(folder: str, installs: tuple[tuple[str, str], ...]) -> tuple[str, str] | None:
+    """(path, command) of the first file of `installs` that `folder` has."""
+    return next(((os.path.join(folder, name), cmd) for name, cmd in installs
+                 if os.path.isfile(os.path.join(folder, name))), None)
 
 
 def _source_venv(src: str) -> tuple[str, str] | None:
@@ -60,45 +64,18 @@ def _source_venv(src: str) -> tuple[str, str] | None:
     return None
 
 
-def _venv_step(src: str, dst: str, name: str, version: str) -> str:
+def _venv_step(dst: str, name: str, version: str) -> str:
+    """Make the venv, then install what `dst` declares. With no declaration,
+    the venv stays empty."""
     uv = shutil.which("uv")
     if uv is None:
         return f"echo {shlex.quote(UV_MISSING)}"
     q = shlex.quote
-    target = os.path.join(dst, name)
-    make = f"{q(uv)} venv --python {q(version)} {q(target)}"
-    if os.path.isfile(os.path.join(src, "uv.lock")):
-        return f"{make} && VIRTUAL_ENV={q(target)} {q(uv)} sync --active"
-    try:
-        r = subprocess.run([uv, "pip", "freeze", "--python", os.path.join(src, name, "bin", "python")],
-                           capture_output=True, text=True, timeout=UV_FREEZE_TIMEOUT_S)
-        if r.returncode != 0:
-            return f"echo {q('uv pip freeze failed: ' + r.stderr.strip())}"
-        # The worktree's private git dir: `git worktree remove` deletes it too.
-        freeze = os.path.join(git_dir(dst), FREEZE_FILE)
-        Path(freeze).write_text(rewrite_freeze(r.stdout, src, dst))
-    except (subprocess.TimeoutExpired, GitError, OSError) as e:
-        return f"echo {q(f'Could not make the venv: {e}')}"
-    return f"{make} && {q(uv)} pip install --python {q(os.path.join(target, 'bin', 'python'))} -r {q(freeze)}"
-
-
-def rewrite_freeze(text: str, src: str, dst: str) -> str:
-    """`uv pip freeze` output with each local entry inside `src` moved to the
-    same place in `dst`: an editable `-e file://…` always, and a `name @
-    file://…` when that path is in `dst`. A build output such as a wheel in an
-    ignored `dist/` is not copied to the worktree, so it keeps the `src` path.
-    Other lines do not change."""
-    src_url, dst_url = Path(src).as_uri(), Path(dst).as_uri()
-    lines = []
-    for line in text.splitlines():
-        if line.startswith("-e "):
-            head, url, needs_path = "-e ", line[3:], False
-        else:
-            name, sep, url = line.partition(" @ ")
-            head, needs_path = name + sep, True
-        rest = url[len(src_url):]
-        inside = url == src_url or url.startswith(src_url + "/")
-        if inside and (not needs_path or os.path.exists(dst + unquote(rest))):
-            line = head + dst_url + rest
-        lines.append(line)
-    return "".join(f"{line}\n" for line in lines)
+    venv = os.path.join(dst, name)
+    make = f"{q(uv)} venv --python {q(version)} {q(venv)}"
+    install = _first_install(dst, PYTHON_INSTALLS)
+    if install is None:
+        return make
+    path, cmd = install
+    return f"{make} && " + cmd.format(uv=q(uv), venv=q(venv), file=q(path),
+                                      python=q(os.path.join(venv, "bin", "python")))
