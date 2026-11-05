@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Run & test
 
-The project ships with `.venv/`. The `ccwork` launcher (`bin/ccwork`) prefers
-`.venv/bin/python` and falls back to `python3`.
+The project ships with `.venv/`. The `ccwork` launcher (`bin/ccwork`) runs the
+checkout that holds it, with its `.venv/bin/python`, else `python3`.
 
 ```bash
 # Launch the GUI

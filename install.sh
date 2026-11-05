@@ -170,39 +170,9 @@ else
     ok "python3, git, xterm, socat/nc, notify-send, libxcb-cursor0 present"
 fi
 
-# ── 1. Create bin/ccwork launcher ────────────────────────────────────────────
+# ── 1. Shell config ──────────────────────────────────────────────────────────
 
-section "1/4  ccwork launcher — $CCWORK_LAUNCHER"
-info "Launches the Qt GUI via the repo's .venv if present, else system python"
-
-LAUNCHER_BODY=$(cat << EOF
-#!/usr/bin/env bash
-# ccwork — launch the Qt GUI. Uses the repo's .venv/bin/python if present so
-# PySide6 stays isolated; otherwise falls back to \`python3\`.
-set -eu
-_root="$SCRIPT_DIR"
-if [ -x "\$_root/.venv/bin/python" ]; then
-    _py="\$_root/.venv/bin/python"
-else
-    _py=python3
-fi
-exec "\$_py" -m src.main "\$@"
-EOF
-)
-# Prepend the cd so python -m src.main finds the package root.
-LAUNCHER_BODY=$(printf '%s\n' "$LAUNCHER_BODY" | sed '/^exec "\$_py"/i cd "$_root"')
-
-if $DRY_RUN; then
-    dryrun "Would write $CCWORK_LAUNCHER"
-else
-    printf '%s\n' "$LAUNCHER_BODY" > "$CCWORK_LAUNCHER"
-    chmod +x "$CCWORK_LAUNCHER"
-    ok "Wrote $CCWORK_LAUNCHER"
-fi
-
-# ── 2. Shell config ──────────────────────────────────────────────────────────
-
-section "2/4  Shell config — $BASHRC"
+section "1/3  Shell config — $BASHRC"
 info "Prepends $SCRIPT_DIR/bin to PATH so ccwork + the claude wrapper are found first"
 
 HOOK_BLOCK=$(sed "s|__CCWORK_BIN__|$SCRIPT_DIR/bin|" << 'EOF'
@@ -249,9 +219,9 @@ else
     fi
 fi
 
-# ── 3. Claude Code hooks ──────────────────────────────────────────────────────
+# ── 2. Claude Code hooks ──────────────────────────────────────────────────────
 
-section "3/4  Claude Code hooks — $CLAUDE_SETTINGS"
+section "2/3  Claude Code hooks — $CLAUDE_SETTINGS"
 HOOK_NAMES="Stop, StopFailure, Notification, UserPromptSubmit, PermissionRequest, SubagentStart, SubagentStop, PreCompact, PostCompact, SessionStart, SessionEnd"
 info "Adds $HOOK_NAMES hooks that pipe the payload to ccwork-hook-sink"
 info "Appends to existing hook lists — does not overwrite user hooks"
@@ -336,9 +306,9 @@ PYEOF
     esac
 fi
 
-# ── 4. Desktop file ───────────────────────────────────────────────────────────
+# ── 3. Desktop file ───────────────────────────────────────────────────────────
 
-section "4/4  Desktop entry — $DESKTOP_FILE"
+section "3/3  Desktop entry — $DESKTOP_FILE"
 info "Adds a launcher entry so ccwork appears in your app menu"
 
 DESKTOP_BODY=$(cat << EOF

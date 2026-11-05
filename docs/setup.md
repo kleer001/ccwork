@@ -42,7 +42,6 @@ not supported — embedding an X-client terminal is X11 only.
   wrapper are found first. Marked with `# BEGIN ccwork` / `# END ccwork`.
 - `~/.claude/settings.json` — appends Stop and Notification hooks whose
   `command` is the path of `bin/ccwork-hook-sink`.
-- `<repo>/bin/ccwork` — generated launcher that runs `python -m src.main`.
 - `~/.local/share/applications/ccwork.desktop` — desktop-menu entry.
 
 ## Files ccwork creates at runtime

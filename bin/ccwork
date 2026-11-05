@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# ccwork — launch the Qt GUI of the checkout that holds this script (so the
+# copy in a worktree launches that worktree). Uses the checkout's
+# .venv/bin/python if present so PySide6 stays isolated; otherwise falls back
+# to `python3`.
+set -eu
+_root=$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")
+if [ -x "$_root/.venv/bin/python" ]; then
+    _py="$_root/.venv/bin/python"
+else
+    _py=python3
+fi
+cd "$_root"
+exec "$_py" -m src.main "$@"
