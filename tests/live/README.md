@@ -20,10 +20,12 @@ individually from the repo root:
 |---|---|
 | `run_on_xvfb()` | Runs the script again on its own Xvfb display with openbox, a temporary `XDG_RUNTIME_DIR` (so the launched ccwork owns its own hook socket) and the D-Bus session address `disabled:` (so no notification reaches the desktop). No key or focus change reaches your desktop, and your running ccwork is not touched. |
 | `evidence_dir()` | The run's evidence folder in the repo, `tmp/live-runs/<check>-<time>/`: the check's output (written line by line), the ccwork log and the screenshots. A new run removes the older runs of the check (`new_run_folder`). |
-| `new_sandbox(name)`, `seed_repo(path, ignore)`, `claude_worktrees(repo)` | A new folder `tmp/wt-sandbox/<name>-<time>/` (the older ones are removed), a git repo in it with one commit (a README, and a `.gitignore` with `ignore`), and the folder where Claude Code makes the repo's worktrees. Each run gets a new path because Claude Code keeps the folder trust of a path. |
+| `new_sandbox(name)`, `new_project(name, ignore)`, `claude_worktrees(repo)` | A new folder `tmp/wt-sandbox/<name>-<time>/` (the older ones are removed); that folder and the git repo `proj` in it, with one commit (a README, and a `.gitignore` with `ignore`); and the folder where Claude Code makes the repo's worktrees. Each run gets a new path because Claude Code keeps the folder trust of a path. |
+| `git(*args, date, check)`, `seed(path, files, message)` | From `tests/gitrepo.py`, which the unit tests use too: git with a fixed author and committer (its stdout, stripped), and a new repo on `main` with one commit of `files`. |
+| `wait_until(predicate, seconds, step)` | Calls `predicate` every `step` seconds until it holds (True), or until `seconds` pass (False). |
 | `CLAUDE`, `loads_ccwork_claude_md(folder)` | The `claude` command to type in a sandbox: its `--settings` give `claudeMdExcludes`, which keeps ccwork's CLAUDE.md (in a folder above each sandbox) out of the session. And whether a `CLAUDE` session in `folder` loads that file, from the memory files that `/context` lists. |
 | `with ccwork(sandbox, rows, settings) as app:` | Writes `rows` (paths or row dicts) to `<sandbox>/config/ccwork/repos.json` and `settings` (TOML text) to its `settings.toml`, starts ccwork with that `XDG_CONFIG_HOME`, waits for its window (matched by `WM_CLASS=main.py.ccwork`, not by a title: a shell prompt in a title often holds "ccwork") and focuses it. At the end it stops ccwork and removes the worktrees that Claude Code made in each row's repo. |
-| `app` (a `Ccwork`) | `proc`, `config` (its ccwork config folder), `log()`, `store()` (`repos.json`), `row()`, `row_path()`, `hook_events()`, `dispatches()`, `focus()`, `click(x, y, button)`, `open_terminal()` (Ctrl+Shift+1). |
+| `app` (a `Ccwork`) | `proc`, `config` (its ccwork config folder), `log()`, `store()` (`repos.json`), `row()`, `row_path()`, `recent()`, `hook_events()`, `dispatches()`, `focus()`, `click(x, y, button)`, `open_terminal()` (Ctrl+Shift+1). |
 | `key(*keys, pause)`, `type_text(text)`, `type_line(text)` | xdotool key names, text, and text then Enter. |
 | `windows()`, `screenshot(name)`, `with other_window(title):` | The `wmctrl -l` list, a PNG of the display in the evidence folder, and a plain xterm to focus away from ccwork. |
 | `watch_claude(app, worktree, tick)` | Samples the first row's path until `ClaudeExited`. |
@@ -64,7 +66,8 @@ skips them entirely.
 Follow the existing pattern:
 
 1. Call `harness.run_on_xvfb()` first in the `__main__` block.
-2. Make the sandbox and its repos (`harness.new_sandbox`, `harness.seed_repo`).
+2. Make the sandbox and its repos (`harness.new_project`, or `harness.new_sandbox`
+   and `harness.seed`).
 3. Do the check inside `with harness.ccwork(sandbox, rows) as app:`.
 4. Inject with `harness.key` and `harness.type_line`. Call `app.focus()`
    after a dialog closes, if the next key must reach ccwork's grab. Type

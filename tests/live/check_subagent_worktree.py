@@ -23,8 +23,7 @@ import harness
 
 
 def main() -> int:
-    sandbox = harness.new_sandbox("wtsub")
-    proj = harness.seed_repo(sandbox / "proj")
+    sandbox, proj = harness.new_project("wtsub")
     with harness.ccwork(sandbox, [proj]) as app:
         app.open_terminal()
         harness.type_line(f"{harness.CLAUDE} --allowedTools Agent -p 'Start one general-purpose subagent "
@@ -43,7 +42,7 @@ def main() -> int:
             "back home": app.row_path() == str(proj),
             # The row never changes, so ccwork may never rewrite repos.json.
             "no home": not app.row().get("home"),
-            "recent empty": not app.store().get("recent"),
+            "recent empty": app.recent() == [],
         })
 
 

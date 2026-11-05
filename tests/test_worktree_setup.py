@@ -22,28 +22,15 @@ from src.core.worktree_setup import UV_MISSING, setup_commands
 from src.ui.repo_sidebar import RepoSidebar
 from src.ui.worktree_dialog import WorktreeDialog
 
+from tests.gitrepo import commit, seed
+
 BASHRC = Path(__file__).resolve().parents[1] / "bin" / "ccwork-bashrc"
-
-
-def _git(*args: str) -> str:
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
 @pytest.fixture
 def main_repo(tmp_path: Path) -> Path:
-    repo = Path(os.path.realpath(tmp_path)) / "proj"
-    _git("init", "-q", "-b", "main", str(repo))
-    (repo / ".gitignore").write_text(".venv/\nvenv/\nnode_modules/\n")
-    (repo / "README").write_text("seed\n")
-    _git("-C", str(repo), "add", "-A")
-    _git("-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed")
-    return repo
-
-
-def _commit(repo: Path, name: str, text: str = "") -> None:
-    (repo / name).write_text(text)
-    _git("-C", str(repo), "add", name)
-    _git("-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", name)
+    return seed(Path(os.path.realpath(tmp_path)) / "proj",
+                {".gitignore": ".venv/\nvenv/\nnode_modules/\n", "README": "seed\n"})
 
 
 def _new_worktree(repo: Path) -> Path:
@@ -67,8 +54,8 @@ def test_nothing_installs_with_no_venv_and_no_node_modules(main_repo: Path) -> N
 
 def test_venv_with_uv_lock_runs_uv_sync(main_repo: Path, uv: str) -> None:
     _fake_venv(main_repo)
-    _commit(main_repo, "uv.lock")
-    _commit(main_repo, "requirements.txt")
+    commit(main_repo, {"uv.lock": ""}, "uv.lock")
+    commit(main_repo, {"requirements.txt": ""}, "requirements.txt")
     wt = _new_worktree(main_repo)
     venv = shlex.quote(str(wt / ".venv"))
     assert setup_commands(str(main_repo), str(wt)) == (
@@ -77,7 +64,7 @@ def test_venv_with_uv_lock_runs_uv_sync(main_repo: Path, uv: str) -> None:
 
 def test_a_uv_made_venv_gives_its_version_info(main_repo: Path, uv: str) -> None:
     _fake_venv(main_repo, name="venv", key="version_info")
-    _commit(main_repo, "uv.lock")
+    commit(main_repo, {"uv.lock": ""}, "uv.lock")
     wt = _new_worktree(main_repo)
     assert setup_commands(str(main_repo), str(wt)).startswith(
         f"/opt/uv venv --python 3.12.3 {shlex.quote(str(wt / 'venv'))} && ")
@@ -97,7 +84,7 @@ def test_no_uv_prints_the_line_and_makes_no_venv(main_repo: Path, monkeypatch) -
 ])
 def test_node_modules_install_by_lock_file(main_repo: Path, lock: str, command: str) -> None:
     (main_repo / "node_modules").mkdir()
-    _commit(main_repo, lock, "{}\n")
+    commit(main_repo, {lock: "{}\n"}, lock)
     assert setup_commands(str(main_repo), str(_new_worktree(main_repo))) == command
 
 
@@ -115,7 +102,7 @@ def test_a_venv_with_no_uv_lock_installs_the_declared_dependencies(
 ) -> None:
     _fake_venv(main_repo)
     for name in files:
-        _commit(main_repo, name)
+        commit(main_repo, {name: ""}, name)
     wt = _new_worktree(main_repo)
     venv = shlex.quote(str(wt / ".venv"))
     assert setup_commands(str(main_repo), str(wt)) == (
@@ -134,7 +121,7 @@ def test_a_venv_with_no_declaration_gets_an_empty_venv(main_repo: Path, uv: str)
 @pytest.mark.skipif(shutil.which("uv") is None, reason="needs uv")
 def test_the_setup_makes_a_venv_with_the_source_python(main_repo: Path) -> None:
     subprocess.run(["uv", "venv", "-q", "--python", "3.12", str(main_repo / ".venv")], check=True)
-    _commit(main_repo, "requirements.txt")
+    commit(main_repo, {"requirements.txt": ""}, "requirements.txt")
     wt = _new_worktree(main_repo)
     cmd = setup_commands(str(main_repo), str(wt))
     subprocess.run(["bash", "-c", cmd], check=True, capture_output=True, timeout=60)
@@ -149,7 +136,7 @@ def test_make_worktree_passes_the_setup_to_the_first_terminal(
     qapp: QApplication, tmp_path: Path, main_repo: Path, uv: str, monkeypatch
 ) -> None:
     (main_repo / "node_modules").mkdir()
-    _commit(main_repo, "package-lock.json", "{}\n")
+    commit(main_repo, {"package-lock.json": "{}\n"}, "package-lock.json")
     store = RepoStore(config_path=tmp_path / "repos.json")
     store.repos = [Repo(path=str(main_repo))]
     store.save()

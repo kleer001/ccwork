@@ -23,7 +23,6 @@ import harness
 
 
 def main() -> int:
-    sys.path.insert(0, str(harness.REPO))
     from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
     app = QApplication([])
     from src.core.settings import XtermSettings

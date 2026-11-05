@@ -33,9 +33,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO))  # for `src` and `tests`
+from tests.gitrepo import git, seed  # noqa: E402
+
 CHILD_FLAG = "_CCWORK_LIVE_CHILD"
 EVIDENCE_VAR = "_CCWORK_LIVE_EVIDENCE"
-REPO = Path(__file__).resolve().parents[2]
 RUNS = REPO / "tmp" / "live-runs"
 SANDBOXES = REPO / "tmp" / "wt-sandbox"
 # A session loads the CLAUDE.md files of the folders above it, and each
@@ -73,11 +76,9 @@ def run_on_xvfb() -> None:
     env.pop("WAYLAND_DISPLAY", None)
     wm = subprocess.Popen(["openbox"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        deadline = time.time() + 5
-        while subprocess.run(["wmctrl", "-m"], env=env, capture_output=True).returncode != 0:
-            if time.time() > deadline:
-                sys.exit("FAIL: openbox did not start on " + display)
-            time.sleep(0.1)
+        if not wait_until(lambda: subprocess.run(["wmctrl", "-m"], env=env, capture_output=True)
+                          .returncode == 0, 5, step=0.1):
+            sys.exit("FAIL: openbox did not start on " + display)
         print(f"display={display} runtime={runtime} evidence={evidence}", flush=True)
         with open(evidence / "output.txt", "w", buffering=1) as out:
             child = subprocess.Popen([sys.executable, *sys.argv], env=env, text=True,
@@ -93,6 +94,17 @@ def run_on_xvfb() -> None:
             p.wait()
         shutil.rmtree(runtime, ignore_errors=True)
     sys.exit(rc)
+
+
+def wait_until(predicate: Callable[[], bool], seconds: float, step: float = 0.2) -> bool:
+    """Call `predicate` every `step` seconds until it holds, and give True.
+    Give False when `seconds` pass first."""
+    deadline = time.time() + seconds
+    while not predicate():
+        if time.time() > deadline:
+            return False
+        time.sleep(step)
+    return True
 
 
 def new_run_folder(parent: Path, name: str) -> Path:
@@ -115,27 +127,19 @@ def screenshot(name: str) -> None:
     subprocess.run(["import", "-window", "root", str(evidence_dir() / name)], check=True)
 
 
-def git(*args: str) -> str:
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
-
-
 def new_sandbox(name: str) -> Path:
     """A new folder `tmp/wt-sandbox/<name>-<time>/`. A new path for each run
     keeps Claude Code's folder trust of an older run out of the check."""
     return new_run_folder(SANDBOXES, name)
 
 
-def seed_repo(path: Path, ignore: str = "") -> Path:
-    """A git repo at `path` on branch `main` with one commit of a README, and
-    of a `.gitignore` with the `ignore` text when it is given."""
-    path.mkdir(parents=True)
-    git("init", "-q", "-b", "main", str(path))
-    (path / "README").write_text("seed\n")
-    if ignore:
-        (path / ".gitignore").write_text(ignore)
-    git("-C", str(path), "add", "-A")
-    git("-C", str(path), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed")
-    return path
+def new_project(name: str, ignore: str = "") -> tuple[Path, Path]:
+    """A new sandbox (`new_sandbox(name)`) and the git repo `proj` in it, on
+    branch `main` with one commit of a README, and of a `.gitignore` with the
+    `ignore` text when it is given."""
+    sandbox = new_sandbox(name)
+    files = {"README": "seed\n"} | ({".gitignore": ignore} if ignore else {})
+    return sandbox, seed(sandbox / "proj", files)
 
 
 def claude_worktrees(repo: Path) -> Path:
@@ -172,11 +176,8 @@ def other_window(title: str) -> Iterator[None]:
     """A plain xterm with a known title, as "another app" to focus."""
     proc = subprocess.Popen(["xterm", "-T", title, "-e", "sleep", "600"])
     try:
-        deadline = time.time() + 5
-        while title not in windows():
-            if time.time() > deadline:
-                raise RuntimeError(f"window {title!r} did not appear")
-            time.sleep(0.1)
+        if not wait_until(lambda: title in windows(), 5, step=0.1):
+            raise RuntimeError(f"window {title!r} did not appear")
         yield
     finally:
         proc.kill()
@@ -206,6 +207,11 @@ class Ccwork:
 
     def row_path(self) -> str:
         return self.row().get("path", "")
+
+    def recent(self) -> list:
+        """The `recent` list of `repos.json`; empty while ccwork has not
+        written one."""
+        return self.store().get("recent", [])
 
     def hook_events(self) -> list[str]:
         """The name of each hook event in the log, in order."""
@@ -256,15 +262,15 @@ def ccwork(sandbox: Path, rows: Sequence[Path | dict] = (), settings: str = "") 
     print(f"pid={proc.pid} sandbox={sandbox}", flush=True)
     app = Ccwork(proc, config, log_path)
     try:
-        # The window is found by WM_CLASS (`main.py.ccwork`). A title match is
-        # not safe: a shell prompt in a title often holds "ccwork" as the cwd.
-        deadline = time.time() + STARTUP_S
-        while not (app.wid and "global keys:" in app.log()):
-            if time.time() > deadline:
-                raise RuntimeError(f"ccwork did not start within {STARTUP_S} s")
-            time.sleep(0.1)
+        def started() -> bool:
+            # The window is found by WM_CLASS (`main.py.ccwork`). A title match is
+            # not safe: a shell prompt in a title often holds "ccwork" as the cwd.
             out = subprocess.run(["wmctrl", "-lx"], capture_output=True, text=True).stdout
             app.wid = next((l.split()[0] for l in out.splitlines() if "main.py.ccwork" in l), "")
+            return bool(app.wid) and "global keys:" in app.log()
+
+        if not wait_until(started, STARTUP_S, step=0.1):
+            raise RuntimeError(f"ccwork did not start within {STARTUP_S} s")
         app.focus()
         yield app
     finally:
@@ -279,8 +285,7 @@ def ccwork(sandbox: Path, rows: Sequence[Path | dict] = (), settings: str = "") 
             worktrees = claude_worktrees(repo)
             for wt in (worktrees.iterdir() if worktrees.is_dir() else ()):
                 for step in (["unlock"], ["remove", "--force"]):
-                    subprocess.run(["git", "-C", str(repo), "worktree", *step, str(wt)],
-                                   capture_output=True)
+                    git("-C", str(repo), "worktree", *step, str(wt), check=False)
 
 
 def watch_claude(app: Ccwork, worktree: str = "", tick: Callable[[], None] | None = None) -> list[str]:
@@ -289,10 +294,8 @@ def watch_claude(app: Ccwork, worktree: str = "", tick: Callable[[], None] | Non
     each sample. Prints the paths, the end state of the row and the hook
     events, and gives the paths in the order seen."""
     seen: list[str] = []
-    deadline = time.time() + CLAUDE_TIMEOUT_S
-    while "ClaudeExited" not in app.hook_events():
-        if time.time() > deadline:
-            raise RuntimeError(f"no ClaudeExited within {CLAUDE_TIMEOUT_S} s")
+
+    def exited() -> bool:
         path = app.row_path()
         if path and (not seen or seen[-1] != path):
             seen.append(path)
@@ -301,10 +304,13 @@ def watch_claude(app: Ccwork, worktree: str = "", tick: Callable[[], None] | Non
                 screenshot("in-worktree.png")
         if tick:
             tick()
-        time.sleep(0.05)
+        return "ClaudeExited" in app.hook_events()
+
+    if not wait_until(exited, CLAUDE_TIMEOUT_S, step=0.05):
+        raise RuntimeError(f"no ClaudeExited within {CLAUDE_TIMEOUT_S} s")
     time.sleep(1.0)
     print("paths seen:", seen)
-    print("final:", {k: app.row().get(k) for k in ("path", "home")}, "recent:", app.store().get("recent"))
+    print("final:", {k: app.row().get(k) for k in ("path", "home")}, "recent:", app.recent())
     print("hook events:", app.hook_events())
     return seen
 
@@ -324,8 +330,7 @@ def check_follow(name: str, command: str) -> int:
     while Claude ran, and is back on the repo with no `home` and an empty
     `recent` after exit, and when a `CLAUDE` session in the repo does not
     load ccwork's CLAUDE.md."""
-    sandbox = new_sandbox(name)
-    proj = seed_repo(sandbox / "proj")
+    sandbox, proj = new_project(name)
     worktree = str(claude_worktrees(proj) / name)
     with ccwork(sandbox, [proj]) as app:
         app.open_terminal()
@@ -335,7 +340,7 @@ def check_follow(name: str, command: str) -> int:
             "followed in": worktree in seen,
             "back home": app.row_path() == str(proj),
             "home cleared": app.row().get("home") == "",
-            "recent empty": app.store().get("recent") == [],
+            "recent empty": app.recent() == [],
             "no ccwork CLAUDE.md": not loads_ccwork_claude_md(proj),
         })
 

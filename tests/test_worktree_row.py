@@ -4,7 +4,6 @@ the title tab. Spec: `docs/specs/worktree.md` section 4."""
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -22,25 +21,18 @@ from src.ui.repo_model import ROLE_WORKTREE_OF
 from src.ui.repo_sidebar import RepoSidebar
 from src.ui.title_tab import TitleTab
 
-
-def _git(*args: str) -> None:
-    subprocess.run(["git", *args], check=True, capture_output=True)
+from tests.gitrepo import git, seed
 
 
 @pytest.fixture
 def main_repo(tmp_path: Path) -> Path:
-    repo = Path(os.path.realpath(tmp_path)) / "proj"
-    _git("init", "-q", "-b", "main", str(repo))
-    (repo / "README").write_text("seed\n")
-    _git("-C", str(repo), "add", "README")
-    _git("-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed")
-    return repo
+    return seed(Path(os.path.realpath(tmp_path)) / "proj", {"README": "seed\n"})
 
 
 @pytest.fixture
 def sibling(main_repo: Path) -> Path:
     wt = main_repo.parent / "proj-fix-a"
-    _git("-C", str(main_repo), "worktree", "add", "-q", "-b", "fix/a", str(wt), "HEAD")
+    git("-C", str(main_repo), "worktree", "add", "-q", "-b", "fix/a", str(wt), "HEAD")
     return wt
 
 
@@ -77,7 +69,7 @@ def _sidebar(tmp_path: Path, paths: list[Path]) -> RepoSidebar:
 
 def test_main_name_of_a_linked_worktree(main_repo: Path, sibling: Path) -> None:
     claude_wt = main_repo / ".claude" / "worktrees" / "x"
-    _git("-C", str(main_repo), "worktree", "add", "-q", "-b", "worktree-x", str(claude_wt), "HEAD")
+    git("-C", str(main_repo), "worktree", "add", "-q", "-b", "worktree-x", str(claude_wt), "HEAD")
     (main_repo / "sub").mkdir()
 
     assert repo_store.worktree_main_name(sibling) == "proj"

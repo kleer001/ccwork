@@ -4,7 +4,6 @@ Spec: `docs/specs/worktree.md` 5.1 to 5.3."""
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -20,19 +19,12 @@ from src.ui.repo_model import ROLE_WORKTREE_OF
 from src.ui.repo_sidebar import RepoSidebar
 from src.ui.worktree_dialog import WorktreeDialog
 
-
-def _git(*args: str) -> str:
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
+from tests.gitrepo import git, seed
 
 
 @pytest.fixture
 def main_repo(tmp_path: Path) -> Path:
-    repo = Path(os.path.realpath(tmp_path)) / "proj"
-    _git("init", "-q", "-b", "main", str(repo))
-    (repo / "README").write_text("seed\n")
-    _git("-C", str(repo), "add", "README")
-    _git("-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed")
-    return repo
+    return seed(Path(os.path.realpath(tmp_path)) / "proj", {"README": "seed\n"})
 
 
 # ── plan ──
@@ -42,7 +34,7 @@ def test_plan_for_a_clean_main_row(main_repo: Path) -> None:
     assert plan.folder == str(main_repo.parent / "proj-fix-a")
     assert plan.name == "fix/a"
     assert plan.source.base == "main"
-    assert plan.source.commit == _git("-C", str(main_repo), "rev-parse", "--short", "HEAD")
+    assert plan.source.commit == git("-C", str(main_repo), "rev-parse", "--short", "HEAD")
     assert plan.source.dirty is False
     assert plan.problem == ""
 
@@ -57,7 +49,7 @@ def test_plan_refuses_bad_names(main_repo: Path, name: str, problem: str) -> Non
 
 
 def test_plan_refuses_an_existing_branch(main_repo: Path) -> None:
-    _git("-C", str(main_repo), "branch", "taken")
+    git("-C", str(main_repo), "branch", "taken")
     assert worktree_plan(worktree_source(str(main_repo)), "taken").problem == "The branch taken exists."
 
 
@@ -68,7 +60,7 @@ def test_plan_refuses_an_existing_folder(main_repo: Path) -> None:
 
 
 def test_plan_from_a_detached_head(main_repo: Path) -> None:
-    _git("-C", str(main_repo), "checkout", "-q", "--detach")
+    git("-C", str(main_repo), "checkout", "-q", "--detach")
     plan = worktree_plan(worktree_source(str(main_repo)), "x")
     assert plan.source.base is None
     assert plan.problem == ""
@@ -91,15 +83,14 @@ def test_plan_from_a_worktree_row_uses_the_main_name(main_repo: Path) -> None:
 def test_make_worktree_adds_folder_branch_and_base(main_repo: Path) -> None:
     folder = make_worktree(worktree_plan(worktree_source(str(main_repo)), "fix/a"))
     assert folder == str(main_repo.parent / "proj-fix-a")
-    assert _git("-C", folder, "branch", "--show-current") == "fix/a"
-    assert _git("-C", folder, "config", "branch.fix/a.ccworkBase") == "main"
+    assert git("-C", folder, "branch", "--show-current") == "fix/a"
+    assert git("-C", folder, "config", "branch.fix/a.ccworkBase") == "main"
 
 
 def test_make_worktree_from_detached_head_sets_no_base(main_repo: Path) -> None:
-    _git("-C", str(main_repo), "checkout", "-q", "--detach")
+    git("-C", str(main_repo), "checkout", "-q", "--detach")
     folder = make_worktree(worktree_plan(worktree_source(str(main_repo)), "x"))
-    r = subprocess.run(["git", "-C", folder, "config", "branch.x.ccworkBase"], capture_output=True)
-    assert r.returncode == 1
+    assert "branch.x.ccworkbase" not in git("-C", folder, "config", "--list")
 
 
 def test_make_worktree_leaves_uncommitted_changes_in_the_source(main_repo: Path) -> None:
@@ -111,7 +102,7 @@ def test_make_worktree_leaves_uncommitted_changes_in_the_source(main_repo: Path)
 
 def test_make_worktree_raises_with_git_message(main_repo: Path) -> None:
     plan = worktree_plan(worktree_source(str(main_repo)), "late")
-    _git("-C", str(main_repo), "branch", "late")
+    git("-C", str(main_repo), "branch", "late")
     with pytest.raises(GitError, match="already exists"):
         make_worktree(plan)
     assert not Path(plan.folder).exists()
@@ -162,7 +153,7 @@ def _dialog_state(dlg: WorktreeDialog) -> tuple[bool, str]:
 def test_dialog_keeps_ok_off_with_the_reason(
     qapp: QApplication, tmp_path: Path, main_repo: Path
 ) -> None:
-    _git("-C", str(main_repo), "branch", "taken")
+    git("-C", str(main_repo), "branch", "taken")
     (main_repo.parent / "proj-here").mkdir()
     dlg = WorktreeDialog(str(main_repo))
     field = dlg.findChild(QLineEdit)
@@ -182,7 +173,7 @@ def test_dialog_names_uncommitted_changes_and_detached_head(
     qapp: QApplication, tmp_path: Path, main_repo: Path
 ) -> None:
     (main_repo / "README").write_text("edited\n")
-    _git("-C", str(main_repo), "checkout", "-q", "--detach")
+    git("-C", str(main_repo), "checkout", "-q", "--detach")
     dlg = WorktreeDialog(str(main_repo))
     dlg.findChild(QLineEdit).setText("x")
     texts = " ".join(l.text() for l in dlg.findChildren(QLabel) if not l.isHidden())
@@ -219,7 +210,7 @@ def test_git_failure_shows_the_message_and_adds_no_row(
 
     def accept_after_a_shell_made_the_branch(self):
         self.findChild(QLineEdit).setText("late")
-        _git("-C", str(main_repo), "branch", "late")
+        git("-C", str(main_repo), "branch", "late")
         return 1
 
     monkeypatch.setattr(WorktreeDialog, "exec", accept_after_a_shell_made_the_branch)
@@ -233,8 +224,7 @@ def test_git_failure_shows_the_message_and_adds_no_row(
 
 
 def test_unborn_head_shows_the_message(qapp: QApplication, tmp_path: Path, monkeypatch) -> None:
-    empty = Path(os.path.realpath(tmp_path)) / "empty"
-    _git("init", "-q", "-b", "main", str(empty))
+    empty = seed(Path(os.path.realpath(tmp_path)) / "empty")
     sidebar = _sidebar(tmp_path, [str(empty)])
     shown = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: shown.append(a[2]))
@@ -291,4 +281,4 @@ def test_ok_makes_the_worktree_in_the_set_base_folder(
     sidebar._make_worktree(sidebar.model.repo_at(0))
 
     assert sidebar.model.repo_at(1).path == str(base / "proj-fix-a")
-    assert _git("-C", str(base / "proj-fix-a"), "branch", "--show-current") == "fix/a"
+    assert git("-C", str(base / "proj-fix-a"), "branch", "--show-current") == "fix/a"

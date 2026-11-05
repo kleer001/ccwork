@@ -11,15 +11,16 @@ from pathlib import Path
 import src.core.repo_stats as repo_stats
 from src.core.repo_stats import gather_stats
 from src.core.repo_store import Repo
-from tests.test_repo_stats import NOW, _commit, _git, _iso, _make_repo
+from tests.gitrepo import git, seed
+from tests.test_repo_stats import NOW, _commit, _iso
 
 
 def _repo_with_worktree(tmp_path: Path) -> tuple[Path, Path]:
     main = Path(os.path.realpath(tmp_path)) / "proj"
-    _make_repo(main)
+    seed(main)
     _commit(main, "a.py", "shared", _iso(2))
     wt = main.parent / "proj-fix-a"
-    _git(main, "worktree", "add", "-q", "-b", "fix/a", str(wt))
+    git("-C", str(main), "worktree", "add", "-q", "-b", "fix/a", str(wt))
     _commit(wt, "b.py", "only in the worktree", _iso(1))
     return main, wt
 
@@ -63,7 +64,7 @@ def test_a_main_checkout_alone_keeps_its_row_name(tmp_path: Path) -> None:
 def test_two_repositories_keep_two_cards(tmp_path: Path) -> None:
     main, wt = _repo_with_worktree(tmp_path)
     other = Path(os.path.realpath(tmp_path)) / "other"
-    _make_repo(other)
+    seed(other)
     _commit(other, "c.py", "other", _iso(1))
     stats = gather_stats([Repo(path=str(main)), Repo(path=str(other)), Repo(path=str(wt))], now=NOW)
     assert sorted((r.name, r.commits) for r in stats.active) == [("other", 1), ("proj", 2)]
@@ -92,7 +93,7 @@ def test_the_main_checkout_row_gives_the_badge_even_when_it_has_none(tmp_path: P
 def test_the_card_counts_each_linked_worktree_once(tmp_path: Path) -> None:
     main, wt = _repo_with_worktree(tmp_path)
     wt2 = main.parent / "proj-fix-b"
-    _git(main, "worktree", "add", "-q", "-b", "fix/b", str(wt2))
+    git("-C", str(main), "worktree", "add", "-q", "-b", "fix/b", str(wt2))
     rows = [Repo(path=str(main), emoji="🌱"), Repo(path=str(wt)), Repo(path=str(wt), instance=2),
             Repo(path=str(wt2))]
     assert gather_stats(rows, now=NOW).active[0].worktrees == 2

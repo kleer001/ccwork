@@ -9,7 +9,6 @@ path must be skipped, never raise — the splash depends on that.
 
 from __future__ import annotations
 
-import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -27,6 +26,8 @@ from src.core.repo_stats import (
     summarize,
 )
 
+from tests.gitrepo import commit, git, seed
+
 # Pinned "now" for every rolling window (a Wednesday noon).
 NOW = datetime(2026, 6, 3, 12, 0, 0)
 
@@ -36,31 +37,9 @@ def _iso(days_ago: float, hour: int = 9) -> str:
     return d.replace(hour=hour, minute=0, second=0).isoformat()
 
 
-def _git(cwd: Path, *args: str, env_date: str | None = None) -> None:
-    env = {
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@t",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@t",
-        "PATH": "/usr/bin:/bin",
-    }
-    if env_date is not None:
-        env["GIT_AUTHOR_DATE"] = env_date
-        env["GIT_COMMITTER_DATE"] = env_date
-    subprocess.run(["git", "-C", str(cwd), *args], check=True,
-                   capture_output=True, text=True, env=env)
-
-
-def _make_repo(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-    _git(path, "init", "-q")
-
-
 def _commit(repo: Path, name: str, msg: str, date: str, content: str | None = None) -> None:
-    (repo / name).parent.mkdir(parents=True, exist_ok=True)
-    (repo / name).write_text(content if content is not None else name)
-    _git(repo, "add", ".")
-    _git(repo, "commit", "-qm", msg, env_date=date)
+    """Commit `name` on `date`. Its text is `content`, else the file name."""
+    commit(repo, {name: content if content is not None else name}, msg, date)
 
 
 # ── relative_time ──
@@ -89,7 +68,7 @@ def test_skips_non_git_path(tmp_path: Path) -> None:
 
 def test_rolling_window_and_prior_week(tmp_path: Path) -> None:
     repo = tmp_path / "r1"
-    _make_repo(repo)
+    seed(repo)
     _commit(repo, "old", "prior week", _iso(10))     # prior window
     _commit(repo, "older", "prior week 2", _iso(9))  # prior window
     _commit(repo, "a", "in window", _iso(5))
@@ -115,7 +94,7 @@ def test_rolling_window_and_prior_week(tmp_path: Path) -> None:
 
 def test_churn_new_files_breadth_and_types(tmp_path: Path) -> None:
     repo = tmp_path / "r"
-    _make_repo(repo)
+    seed(repo)
     _commit(repo, "base.py", "pre-window", _iso(20), content="a\nb\nc\n")
     _commit(repo, "one.py", "add one", _iso(3), content="x\ny\n")          # +2, new
     _commit(repo, "two.md", "add two", _iso(2), content="m\n")             # +1, new
@@ -135,11 +114,11 @@ def test_churn_new_files_breadth_and_types(tmp_path: Path) -> None:
 
 def test_new_from_zero_and_quiet_split(tmp_path: Path) -> None:
     fresh = tmp_path / "fresh"
-    _make_repo(fresh)
+    seed(fresh)
     _commit(fresh, "f", "first ever", _iso(4))
 
     idle = tmp_path / "idle"
-    _make_repo(idle)
+    seed(idle)
     _commit(idle, "f", "long ago", _iso(30))
 
     stats = gather_stats([Repo(path=str(fresh)), Repo(path=str(idle))], now=NOW)
@@ -151,30 +130,30 @@ def test_new_from_zero_and_quiet_split(tmp_path: Path) -> None:
 
 def test_release_detected_only_within_window(tmp_path: Path) -> None:
     repo = tmp_path / "r"
-    _make_repo(repo)
+    seed(repo)
     _commit(repo, "f", "c1", _iso(3))
-    _git(repo, "tag", "v1.1.0", env_date=_iso(2))
+    git("-C", str(repo), "tag", "v1.1.0", date=_iso(2))
     stats = gather_stats([Repo(path=str(repo))], now=NOW)
     assert stats.active[0].release == "v1.1.0"
     assert stats.releases and stats.releases[0].name == "r"
 
     old = tmp_path / "old"
-    _make_repo(old)
+    seed(old)
     _commit(old, "f", "c1", _iso(20))
-    _git(old, "tag", "v0.9.0", env_date=_iso(20))
+    git("-C", str(old), "tag", "v0.9.0", date=_iso(20))
     _commit(old, "g", "c2", _iso(1))
     stats = gather_stats([Repo(path=str(old))], now=NOW)
     assert stats.active[0].release is None
 
 
 def test_active_sorted_newest_first_quiet_by_lifetime(tmp_path: Path) -> None:
-    a = tmp_path / "a"; _make_repo(a)
+    a = tmp_path / "a"; seed(a)
     _commit(a, "f", "c", _iso(5))
-    b = tmp_path / "b"; _make_repo(b)
+    b = tmp_path / "b"; seed(b)
     _commit(b, "f", "c", _iso(1))
-    q1 = tmp_path / "q1"; _make_repo(q1)
+    q1 = tmp_path / "q1"; seed(q1)
     _commit(q1, "f", "c", _iso(30))
-    q2 = tmp_path / "q2"; _make_repo(q2)
+    q2 = tmp_path / "q2"; seed(q2)
     _commit(q2, "f", "c1", _iso(31))
     _commit(q2, "g", "c2", _iso(30))
 
@@ -186,14 +165,13 @@ def test_active_sorted_newest_first_quiet_by_lifetime(tmp_path: Path) -> None:
 
 def test_merge_commits_excluded(tmp_path: Path) -> None:
     repo = tmp_path / "r"
-    _make_repo(repo)
+    seed(repo)
     _commit(repo, "f", "base", _iso(6))
-    _git(repo, "checkout", "-q", "-b", "feat")
+    git("-C", str(repo), "checkout", "-q", "-b", "feat")
     _commit(repo, "g", "feature", _iso(5))
-    _git(repo, "checkout", "-q", "-")
+    git("-C", str(repo), "checkout", "-q", "-")
     _commit(repo, "h", "mainline", _iso(4))
-    _git(repo, "merge", "--no-ff", "-q", "-m", "merge feat", "feat",
-         env_date=_iso(3))
+    git("-C", str(repo), "merge", "--no-ff", "-q", "-m", "merge feat", "feat", date=_iso(3))
 
     stats = gather_stats([Repo(path=str(repo))], now=NOW)
     r = stats.active[0]
@@ -227,7 +205,7 @@ def test_malformed_timestamp_is_skipped_not_raised(monkeypatch) -> None:
 def test_dedups_by_realpath(tmp_path: Path) -> None:
     """Two sidebar rows on one path must count once."""
     repo = tmp_path / "r"
-    _make_repo(repo)
+    seed(repo)
     _commit(repo, "f", "c", _iso(1))
     stats = gather_stats([Repo(path=str(repo)), Repo(path=str(repo))], now=NOW)
     assert stats.repo_count == 1

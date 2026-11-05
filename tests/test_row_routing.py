@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -28,12 +27,7 @@ from src.ui.main_window import MainWindow
 from src.ui.repo_sidebar import ROLE_SESSION_ACTIVE, ROLE_STATUS, STATUS_DONE
 
 from tests.conftest import StubHookServer
-
-
-def _git_init(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
-    return path
+from tests.gitrepo import seed
 
 
 def _event(event: str, row: str | None, cwd: str, session_id: str | None = None) -> dict:
@@ -59,7 +53,7 @@ def _make_window(
 
 @pytest.fixture
 def repo_dir(tmp_path: Path) -> Path:
-    return _git_init(tmp_path / "repo")
+    return seed(tmp_path / "repo")
 
 
 @pytest.fixture
@@ -160,7 +154,7 @@ def test_session_start_outside_git_does_not_rebind(
 def test_session_start_in_another_repo_rebinds_the_row(
     window: MainWindow, repo_dir: Path, tmp_path: Path
 ) -> None:
-    other = _git_init(tmp_path / "other")
+    other = seed(tmp_path / "other")
     row = window._store.repos[0]
     row_id = row.id
 

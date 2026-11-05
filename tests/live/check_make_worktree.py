@@ -35,8 +35,7 @@ def venv_version(folder: Path) -> str:
 
 
 def main() -> int:
-    sandbox = harness.new_sandbox("mkwt")
-    proj = harness.seed_repo(sandbox / "proj", ignore=".env\nmodel.bin\ntmp/\n.venv/\n")
+    sandbox, proj = harness.new_project("mkwt", ignore=".env\nmodel.bin\ntmp/\n.venv/\n")
     (proj / ".env").write_text("KEY=1\n")
     (proj / "model.bin").write_bytes(b"\0" * (2 * 1024 * 1024))
     (proj / "tmp").mkdir()
@@ -54,9 +53,7 @@ def main() -> int:
         harness.screenshot("dialog.png")
         harness.key("Return", pause=0)
 
-        deadline = time.time() + 10
-        while len(app.store().get("repos", [])) != 2 and time.time() < deadline:
-            time.sleep(0.2)
+        harness.wait_until(lambda: len(app.store().get("repos", [])) == 2, 10)
         time.sleep(3.0)  # the new row is selected and its terminal starts
         # No click: the new terminal takes the keyboard focus when it maps.
         harness.type_line(f"pwd > {out}; git branch --show-current >> {out}")
@@ -66,8 +63,7 @@ def main() -> int:
         lines = out.read_text().split() if out.exists() else []
         rows = app.store().get("repos", [])
         new = rows[1] if len(rows) == 2 else {}
-        base = subprocess.run(["git", "-C", str(folder), "config", "branch.fix/a.ccworkBase"],
-                              capture_output=True, text=True).stdout.strip()
+        base = harness.git("-C", str(folder), "config", "branch.fix/a.ccworkBase", check=False)
         return harness.report({
             "second row on the folder": new.get("path") == str(folder),
             "badge copied": new.get("emoji") == "🌱",

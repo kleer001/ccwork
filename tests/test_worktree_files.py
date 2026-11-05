@@ -20,23 +20,17 @@ from src.core.worktree_files import COPY_MAX_BYTES, CopyReport, copy_ignored
 from src.ui.repo_sidebar import RepoSidebar
 from src.ui.worktree_dialog import WorktreeDialog
 
+from tests.gitrepo import seed
+
 BASHRC = Path(__file__).resolve().parents[1] / "bin" / "ccwork-bashrc"
-
-
-def _git(*args: str) -> str:
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
 @pytest.fixture
 def main_repo(tmp_path: Path) -> Path:
-    repo = Path(os.path.realpath(tmp_path)) / "proj"
-    _git("init", "-q", "-b", "main", str(repo))
-    (repo / ".gitignore").write_text(".env\n*.bin\ntmp/\nlocal.cfg\nlink\n.claude/settings.local.json\n")
-    (repo / "src").mkdir()
-    (repo / "src" / "app.py").write_text("print()\n")
-    _git("-C", str(repo), "add", "-A")
-    _git("-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed")
-    return repo
+    return seed(Path(os.path.realpath(tmp_path)) / "proj", {
+        ".gitignore": ".env\n*.bin\ntmp/\nlocal.cfg\nlink\n.claude/settings.local.json\n",
+        "src/app.py": "print()\n",
+    })
 
 
 def _new_worktree(repo: Path, name: str = "x") -> Path:

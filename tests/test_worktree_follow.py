@@ -10,7 +10,6 @@ section 6.
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -30,17 +29,7 @@ from src.ui.main_window import MainWindow
 from src.ui.repo_sidebar import ROLE_PATH_MISSING
 
 from tests.conftest import StubHookServer
-from tests.test_row_routing import _git_init
-
-
-def _git(*args: str) -> str:
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
-
-
-def _commit(repo: Path) -> None:
-    (repo / "README").write_text("seed\n")
-    _git("-C", str(repo), "add", "README")
-    _git("-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed")
+from tests.gitrepo import git, seed
 
 
 def _event(event: str, row: str, sink_cwd: Path, payload_cwd: Path) -> dict:
@@ -50,16 +39,14 @@ def _event(event: str, row: str, sink_cwd: Path, payload_cwd: Path) -> dict:
 
 @pytest.fixture
 def main_repo(tmp_path: Path) -> Path:
-    repo = _git_init(tmp_path / "proj")
-    _commit(repo)
-    return Path(os.path.realpath(repo))
+    return Path(os.path.realpath(seed(tmp_path / "proj", {"README": "seed\n"})))
 
 
 @pytest.fixture
 def claude_wt(main_repo: Path) -> Path:
     """A worktree where Claude Code puts one: `.claude/worktrees/<name>`."""
     wt = main_repo / ".claude" / "worktrees" / "x"
-    _git("-C", str(main_repo), "worktree", "add", "-q", "-b", "worktree-x", str(wt), "HEAD")
+    git("-C", str(main_repo), "worktree", "add", "-q", "-b", "worktree-x", str(wt), "HEAD")
     return wt
 
 
@@ -99,7 +86,7 @@ def test_claude_w_follows_in_and_returns_home_on_exit(
     assert _on_disk(window).repos[0].home == str(main_repo)
 
     # Claude removes a clean worktree at exit, then bin/claude sends ClaudeExited.
-    _git("-C", str(main_repo), "worktree", "remove", str(claude_wt))
+    git("-C", str(main_repo), "worktree", "remove", str(claude_wt))
     _emit(window, _event(EVENT_CLAUDE_EXITED, row.id, main_repo, main_repo))
 
     assert row.path == str(main_repo)
@@ -136,7 +123,7 @@ def test_exit_worktree_with_remove_follows_back_on_the_same_stop(
     assert row.path == str(claude_wt)
 
     # ExitWorktree with action remove deletes the folder before the turn's Stop.
-    _git("-C", str(main_repo), "worktree", "remove", str(claude_wt))
+    git("-C", str(main_repo), "worktree", "remove", str(claude_wt))
     _emit(window, _event(EVENT_STOP, row.id, main_repo, main_repo))
     assert row.path == str(main_repo)
     assert row.home == ""
@@ -147,7 +134,7 @@ def test_follow_into_a_sibling_worktree(
     window: MainWindow, main_repo: Path
 ) -> None:
     sibling = main_repo.parent / "proj-fix"
-    _git("-C", str(main_repo), "worktree", "add", "-q", "-b", "fix", str(sibling), "HEAD")
+    git("-C", str(main_repo), "worktree", "add", "-q", "-b", "fix", str(sibling), "HEAD")
     row = window._store.repos[0]
 
     _emit(window, _event(EVENT_USER_PROMPT_SUBMIT, row.id, sibling, sibling))
@@ -160,13 +147,13 @@ def test_a_row_whose_home_is_gone_still_follows_in_its_repository(
     window: MainWindow, main_repo: Path, claude_wt: Path
 ) -> None:
     sibling = main_repo.parent / "proj-fix"
-    _git("-C", str(main_repo), "worktree", "add", "-q", "-b", "fix", str(sibling), "HEAD")
+    git("-C", str(main_repo), "worktree", "add", "-q", "-b", "fix", str(sibling), "HEAD")
     row = window._store.repos[0]
     window._sidebar.rebind(row.id, str(sibling))
     _emit(window, _event(EVENT_STOP, row.id, sibling, claude_wt))
     assert row.home == str(sibling)
 
-    _git("-C", str(main_repo), "worktree", "remove", str(sibling))
+    git("-C", str(main_repo), "worktree", "remove", str(sibling))
     _emit(window, _event(EVENT_STOP, row.id, sibling, main_repo))
     assert row.path == str(main_repo)
 
@@ -175,7 +162,7 @@ def test_home_stays_the_first_folder_across_two_worktrees(
     window: MainWindow, main_repo: Path, claude_wt: Path
 ) -> None:
     second = main_repo / ".claude" / "worktrees" / "y"
-    _git("-C", str(main_repo), "worktree", "add", "-q", "-b", "worktree-y", str(second), "HEAD")
+    git("-C", str(main_repo), "worktree", "add", "-q", "-b", "worktree-y", str(second), "HEAD")
     row = window._store.repos[0]
 
     _emit(window, _event(EVENT_STOP, row.id, main_repo, claude_wt))
@@ -199,7 +186,7 @@ def test_subagent_event_never_moves_the_row(
 def test_prompt_in_another_repo_does_not_rebind(
     window: MainWindow, main_repo: Path, tmp_path: Path
 ) -> None:
-    other = _git_init(tmp_path / "other")
+    other = seed(tmp_path / "other")
     row = window._store.repos[0]
 
     _emit(window, _event(EVENT_USER_PROMPT_SUBMIT, row.id, other, other))
@@ -210,7 +197,7 @@ def test_prompt_in_another_repo_does_not_rebind(
 def test_session_start_in_another_repo_rebinds_without_home(
     window: MainWindow, tmp_path: Path
 ) -> None:
-    other = Path(os.path.realpath(_git_init(tmp_path / "other")))
+    other = Path(os.path.realpath(seed(tmp_path / "other")))
     row = window._store.repos[0]
 
     _emit(window, _event(EVENT_SESSION_START, row.id, other, other))
@@ -223,7 +210,7 @@ def test_follow_in_adds_the_exclude_line_once(
     window: MainWindow, main_repo: Path, claude_wt: Path
 ) -> None:
     row = window._store.repos[0]
-    assert "?? .claude/" in _git("-C", str(main_repo), "status", "--porcelain")
+    assert "?? .claude/" in git("-C", str(main_repo), "status", "--porcelain")
 
     _emit(window, _event(EVENT_STOP, row.id, main_repo, claude_wt))
     _emit(window, _event(EVENT_USER_PROMPT_SUBMIT, row.id, main_repo, main_repo))
@@ -231,7 +218,7 @@ def test_follow_in_adds_the_exclude_line_once(
 
     exclude = (main_repo / ".git" / "info" / "exclude").read_text().splitlines()
     assert exclude.count("/.claude/worktrees/") == 1
-    assert _git("-C", str(main_repo), "status", "--porcelain") == ""
+    assert git("-C", str(main_repo), "status", "--porcelain") == ""
 
 
 def test_startup_returns_a_row_on_a_missing_folder_home(

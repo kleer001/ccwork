@@ -21,11 +21,10 @@ import harness
 
 
 def main() -> int:
-    sandbox = harness.new_sandbox("rmwt")
-    proj = harness.seed_repo(sandbox / "proj", ignore=".env\n")
+    sandbox, proj = harness.new_project("rmwt", ignore=".env\n")
     clean, dirty = sandbox / "proj-clean", sandbox / "proj-dirty"
-    for wt in (clean, dirty):
-        harness.git("-C", str(proj), "worktree", "add", "-q", "-b", wt.name[5:], str(wt), "HEAD")
+    for branch, wt in (("clean", clean), ("dirty", dirty)):
+        harness.git("-C", str(proj), "worktree", "add", "-q", "-b", branch, str(wt), "HEAD")
     (clean / ".env").write_text("KEY=1\n")
     (dirty / "README").write_text("edited\n")
 
@@ -61,7 +60,7 @@ def main() -> int:
             "clean folder gone": not clean.exists(),
             "clean branch gone": "clean" not in branches,
             "clean row gone": [r["id"] for r in after_clean["repos"]] == ["row1"],
-            "recent empty": after_clean.get("recent") == [],
+            "recent empty": app.recent() == [],
             "dirty refused with a message": refused,
             "dirty folder stays": dirty.is_dir() and "dirty" in branches,
             "dirty row stays": [r["id"] for r in after_dirty["repos"]] == ["row1", "row2"],

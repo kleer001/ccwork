@@ -32,20 +32,16 @@ NAME = "live-crash"
 
 
 def main() -> int:
-    sandbox = harness.new_sandbox("wtcrash")
-    proj = harness.seed_repo(sandbox / "proj")
+    sandbox, proj = harness.new_project("wtcrash")
     worktree = str(harness.claude_worktrees(proj) / NAME)
     with harness.ccwork(sandbox, [proj]) as app:
         app.open_terminal()
         harness.type_line(f"{harness.CLAUDE} --allowedTools EnterWorktree 'Bash(sleep:*)' -p 'Call the "
                           f"EnterWorktree tool with the name {NAME}. Then run the shell command "
                           f"sleep 40. Then reply with the word ok.'")
-        deadline = time.time() + 90
-        while app.row_path() != worktree:
-            if time.time() > deadline:
-                print("FAIL: the row did not reach the worktree within 90 s")
-                return 2
-            time.sleep(0.2)
+        if not harness.wait_until(lambda: app.row_path() == worktree, 90):
+            print("FAIL: the row did not reach the worktree within 90 s")
+            return 2
         time.sleep(2.0)   # Claude runs `sleep 40` now
         app.proc.kill()
         app.proc.wait(timeout=5)

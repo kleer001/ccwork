@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 
 import pytest
 
 from src.core import repo_store
 from src.core.repo_store import Repo, RepoStore
+
+from tests.gitrepo import git, seed
 
 
 @pytest.fixture
@@ -310,13 +311,7 @@ def test_default_config_path_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def git_repo(tmp_path: Path) -> Path:
-    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
-    (tmp_path / "f").write_text("x")
-    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "commit", "-q", "-m", "init"], check=True)
-    return tmp_path
+    return seed(tmp_path, {"f": "x"}, "init")
 
 
 def test_is_git_root_true(git_repo: Path) -> None:
@@ -339,11 +334,8 @@ def test_current_branch(git_repo: Path) -> None:
 
 
 def test_current_branch_detached(git_repo: Path) -> None:
-    sha = subprocess.run(
-        ["git", "-C", str(git_repo), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    subprocess.run(["git", "-C", str(git_repo), "checkout", "-q", sha], check=True)
+    sha = git("-C", str(git_repo), "rev-parse", "HEAD")
+    git("-C", str(git_repo), "checkout", "-q", sha)
     assert repo_store.current_branch(git_repo) is None
 
 

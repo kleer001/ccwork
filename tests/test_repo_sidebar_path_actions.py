@@ -9,7 +9,6 @@ directly so no real right-click event has to be synthesized.
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -23,6 +22,8 @@ from PySide6.QtWidgets import QApplication
 from src.core.repo_store import Repo, RepoStore
 from src.ui import repo_sidebar
 from src.ui.repo_sidebar import ROLE_PATH_MISSING, RepoSidebar
+
+from tests.gitrepo import commit, seed
 
 
 @pytest.fixture(scope="session")
@@ -140,17 +141,6 @@ def test_context_menu_path_actions_appear_between_clone_and_badge(
 # ── Rebind + path-missing ────────────────────────────────────────────────
 
 
-def _git_init(path: Path) -> None:
-    """Initialize a real git repo at `path` so is_git_root() succeeds.
-    Tests that exercise the rebind validation gate need an honest git
-    working tree, not a mocked one — otherwise we'd be testing the mock."""
-    path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        ["git", "init", "-q", "-b", "main", str(path)],
-        check=True, capture_output=True,
-    )
-
-
 def _persisted_sidebar(repo_paths: list[str], cfg_path: Path) -> tuple[RepoSidebar, RepoStore]:
     """Build a sidebar from a store whose contents are persisted to disk
     first. RepoSidebar.__init__ calls model.reload(), which reads the
@@ -171,7 +161,7 @@ def test_path_missing_role_flips_when_dir_disappears(
     """The whole point of the new role: a row whose stored path no longer
     exists must paint as '(path missing)', not '(detached)'."""
     repo_dir = tmp_path / "alive"
-    _git_init(repo_dir)
+    seed(repo_dir)
     sidebar, store = _persisted_sidebar([str(repo_dir)], tmp_path / "repos.json")
     sidebar.model.refresh_branches()
     idx = sidebar.model.index(0)
@@ -189,8 +179,8 @@ def test_rebind_repo_swaps_path_and_persists(
 ) -> None:
     old_dir = tmp_path / "old_name"
     new_dir = tmp_path / "new_name"
-    _git_init(old_dir)
-    _git_init(new_dir)
+    seed(old_dir)
+    seed(new_dir)
 
     cfg = tmp_path / "repos.json"
     sidebar, store = _persisted_sidebar([str(old_dir)], cfg)
@@ -221,7 +211,7 @@ def test_rebind_repo_noop_when_same_path(
     reason and breaks any 'mtime unchanged → no work to do' assumptions a
     future external sync might rely on."""
     repo_dir = tmp_path / "stable"
-    _git_init(repo_dir)
+    seed(repo_dir)
     sidebar, store = _persisted_sidebar([str(repo_dir)], tmp_path / "repos.json")
     repo_id = store.repos[0].id
 
@@ -240,17 +230,11 @@ def test_rebind_repo_updates_caches_for_new_path(
     the row sub-line would stay stale until the next refresh_branches()."""
     old_dir = tmp_path / "old"
     new_dir = tmp_path / "new"
-    _git_init(old_dir)
-    _git_init(new_dir)
+    seed(old_dir)
+    seed(new_dir)
     # Make a commit on `new` so `git symbolic-ref --short HEAD` resolves
     # to "main" instead of None (empty repo has no HEAD ref yet).
-    (new_dir / "README").write_text("hi\n")
-    subprocess.run(["git", "-C", str(new_dir), "add", "README"], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(new_dir), "-c", "user.email=t@t", "-c", "user.name=t",
-         "commit", "-q", "-m", "init"],
-        check=True, capture_output=True,
-    )
+    commit(new_dir, {"README": "hi\n"}, "init")
 
     sidebar, store = _persisted_sidebar([str(old_dir)], tmp_path / "repos.json")
     repo_id = store.repos[0].id

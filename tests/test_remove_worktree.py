@@ -5,7 +5,6 @@ Spec: `docs/specs/worktree.md` section 7."""
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -22,24 +21,12 @@ from src.core.worktree import (
 from src.ui.repo_sidebar import RepoSidebar
 from src.ui.worktree_dialog import WorktreeRemoveDialog
 
-
-def _git(*args: str) -> str:
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
-
-
-def _commit(repo: Path, msg: str) -> None:
-    _git("-C", str(repo), "add", "-A")
-    _git("-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg)
+from tests.gitrepo import commit, git, seed
 
 
 @pytest.fixture
 def main_repo(tmp_path: Path) -> Path:
-    repo = Path(os.path.realpath(tmp_path)) / "proj"
-    _git("init", "-q", "-b", "main", str(repo))
-    (repo / "README").write_text("seed\n")
-    (repo / ".gitignore").write_text(".env\ntmp/\n")
-    _commit(repo, "seed")
-    return repo
+    return seed(Path(os.path.realpath(tmp_path)) / "proj", {"README": "seed\n", ".gitignore": ".env\ntmp/\n"})
 
 
 @pytest.fixture
@@ -49,7 +36,7 @@ def wt(main_repo: Path) -> Path:
 
 
 def _branches(repo: Path) -> list[str]:
-    return _git("-C", str(repo), "branch", "--format=%(refname:short)").split()
+    return git("-C", str(repo), "branch", "--format=%(refname:short)").split()
 
 
 # ── core ──
@@ -88,8 +75,7 @@ def test_remove_refuses_a_dirty_worktree(main_repo: Path, wt: Path) -> None:
 
 
 def test_remove_keeps_an_unmerged_branch(main_repo: Path, wt: Path) -> None:
-    (wt / "new.txt").write_text("work\n")
-    _commit(wt, "work")
+    commit(wt, {"new.txt": "work\n"}, "work")
     note = remove_worktree(str(wt), "fix/a")
     assert not wt.exists()
     assert "fix/a" in _branches(main_repo)
@@ -98,14 +84,7 @@ def test_remove_keeps_an_unmerged_branch(main_repo: Path, wt: Path) -> None:
 
 
 def test_submodules_are_detected(main_repo: Path, tmp_path: Path) -> None:
-    lib = Path(os.path.realpath(tmp_path)) / "lib"
-    _git("init", "-q", "-b", "main", str(lib))
-    (lib / "x").write_text("x\n")
-    _commit(lib, "lib")
-    _git("-C", str(main_repo), "-c", "protocol.file.allow=always", "submodule", "add", "-q",
-         str(lib), "lib")
-    _commit(main_repo, "add lib")
-    folder = make_worktree(worktree_plan(worktree_source(str(main_repo)), "sub"))
+    folder = _worktree_with_submodule(main_repo, tmp_path)
     assert has_submodules(folder) is True
     assert has_submodules(str(main_repo)) is True
 
@@ -135,8 +114,7 @@ def test_dialog_box_is_off_and_lists_ignored_entries(qapp: QApplication, wt: Pat
 def test_dialog_lists_ten_names_and_the_count_of_the_rest(qapp: QApplication, wt: Path) -> None:
     for i in range(13):
         (wt / f"f{i:02}.env").write_text("x\n")
-    (wt / ".gitignore").write_text(".env\ntmp/\n*.env\n")
-    _commit(wt, "ignore more")
+    commit(wt, {".gitignore": ".env\ntmp/\n*.env\n"}, "ignore more")
     dlg = WorktreeRemoveDialog(str(wt))
     assert "f09.env" in _texts(dlg) and "f10.env" not in _texts(dlg)
     assert "and 3 more" in _texts(dlg)
@@ -154,13 +132,10 @@ def test_dialog_box_is_disabled_with_the_reason(qapp: QApplication, wt: Path) ->
 
 
 def _worktree_with_submodule(main_repo: Path, tmp_path: Path) -> str:
-    lib = Path(os.path.realpath(tmp_path)) / "lib"
-    _git("init", "-q", "-b", "main", str(lib))
-    (lib / "x").write_text("x\n")
-    _commit(lib, "lib")
-    _git("-C", str(main_repo), "-c", "protocol.file.allow=always", "submodule", "add", "-q",
-         str(lib), "lib")
-    _commit(main_repo, "add lib")
+    lib = seed(Path(os.path.realpath(tmp_path)) / "lib", {"x": "x\n"}, "lib")
+    git("-C", str(main_repo), "-c", "protocol.file.allow=always", "submodule", "add", "-q",
+        str(lib), "lib")
+    commit(main_repo, message="add lib")
     return make_worktree(worktree_plan(worktree_source(str(main_repo)), "sub"))
 
 
@@ -240,8 +215,7 @@ def test_git_refusal_shows_the_message_and_keeps_the_row(
 def test_unmerged_branch_note_is_shown_and_the_row_goes(
     qapp: QApplication, tmp_path: Path, main_repo: Path, wt: Path, monkeypatch
 ) -> None:
-    (wt / "new.txt").write_text("work\n")
-    _commit(wt, "work")
+    commit(wt, {"new.txt": "work\n"}, "work")
     sidebar = _sidebar(tmp_path, [str(main_repo), str(wt)])
     _answer(monkeypatch, delete=True)
     shown = []
@@ -291,7 +265,7 @@ def test_the_branch_comes_from_git_not_the_row_cache(
     qapp: QApplication, tmp_path: Path, main_repo: Path, wt: Path, monkeypatch
 ) -> None:
     sidebar = _sidebar(tmp_path, [str(main_repo), str(wt)])
-    _git("-C", str(wt), "switch", "-q", "-c", "fix/b")
+    git("-C", str(wt), "switch", "-q", "-c", "fix/b")
     _answer(monkeypatch, delete=True)
     sidebar._confirm_remove(sidebar.model.repo_at(1), 1)
     assert "fix/b" not in _branches(main_repo)
@@ -300,29 +274,26 @@ def test_the_branch_comes_from_git_not_the_row_cache(
 
 def test_a_branch_used_elsewhere_stays_with_a_note(main_repo: Path, wt: Path) -> None:
     other = main_repo.parent / "other"
-    _git("-C", str(main_repo), "worktree", "add", "-q", "-b", "o", str(other))
-    _git("-C", str(other), "checkout", "-q", "--detach")
-    _git("-C", str(wt), "checkout", "-q", "--detach")
-    _git("-C", str(other), "checkout", "-q", "fix/a")
+    git("-C", str(main_repo), "worktree", "add", "-q", "-b", "o", str(other))
+    git("-C", str(other), "checkout", "-q", "--detach")
+    git("-C", str(wt), "checkout", "-q", "--detach")
+    git("-C", str(other), "checkout", "-q", "fix/a")
     note = remove_worktree(str(wt), "fix/a")
     assert not wt.exists()
     assert note.startswith("The folder is deleted. The branch fix/a stays: ")
 
 
 def test_the_unlock_command_quotes_a_folder_with_a_space(tmp_path: Path) -> None:
-    repo = Path(os.path.realpath(tmp_path)) / "my proj"
-    _git("init", "-q", "-b", "main", str(repo))
-    (repo / "README").write_text("seed\n")
-    _commit(repo, "seed")
+    repo = seed(Path(os.path.realpath(tmp_path)) / "my proj", {"README": "seed\n"})
     folder = make_worktree(worktree_plan(worktree_source(str(repo)), "x"))
-    _git("-C", str(repo), "worktree", "lock", folder)
+    git("-C", str(repo), "worktree", "lock", folder)
     with pytest.raises(GitError) as e:
         remove_worktree(folder, "x")
     assert str(e.value).endswith(f"run: git worktree unlock '{folder}'")
 
 
 def test_a_locked_worktree_refusal_names_the_unlock_command(main_repo: Path, wt: Path) -> None:
-    _git("-C", str(main_repo), "worktree", "lock", "--reason", "claude session", str(wt))
+    git("-C", str(main_repo), "worktree", "lock", "--reason", "claude session", str(wt))
     with pytest.raises(GitError) as e:
         remove_worktree(str(wt), "fix/a")
     assert "locked" in str(e.value)

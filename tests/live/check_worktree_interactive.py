@@ -44,8 +44,7 @@ ENTER_NAME = "live-enter"
 
 
 def main() -> int:
-    sandbox = harness.new_sandbox("wtinter")
-    proj = harness.seed_repo(sandbox / "proj")
+    sandbox, proj = harness.new_project("wtinter")
     exit_wt = harness.claude_worktrees(proj) / EXIT_NAME
     enter_wt = harness.claude_worktrees(proj) / ENTER_NAME
     events: list[tuple[str, str]] = []  # (hook event, row path just after it)
@@ -57,17 +56,17 @@ def main() -> int:
     with harness.ccwork(sandbox, [proj]) as app:
 
         def wait_for(event: str, count: int) -> bool:
-            deadline = time.time() + harness.CLAUDE_TIMEOUT_S
-            while sum(1 for e, _ in events if e == event) < count:
-                if time.time() > deadline:
-                    print(f"FAIL: no {event} number {count} within {harness.CLAUDE_TIMEOUT_S} s")
-                    harness.screenshot(f"timeout-{event}-{count}.png")
-                    return False
+            def seen() -> bool:
                 for name in app.hook_events()[len(events):]:
                     time.sleep(0.4)  # the handler writes repos.json after the log line
                     events.append((name, app.row_path()))
-                time.sleep(0.1)
-            return True
+                return sum(1 for e, _ in events if e == event) >= count
+
+            if harness.wait_until(seen, harness.CLAUDE_TIMEOUT_S, step=0.1):
+                return True
+            print(f"FAIL: no {event} number {count} within {harness.CLAUDE_TIMEOUT_S} s")
+            harness.screenshot(f"timeout-{event}-{count}.png")
+            return False
 
         def path_after(event: str, count: int) -> str:
             return [p for e, p in events if e == event][count - 1]
@@ -132,7 +131,7 @@ def main() -> int:
         for e, p in events:
             print(f"  {e:<18} {p}")
         print("final:", {k: app.row().get(k) for k in ("path", "home")},
-              "recent:", app.store().get("recent"))
+              "recent:", app.recent())
         return harness.report({
             "claude -w: row on the worktree after SessionStart": path_after("SessionStart", 2) == str(exit_wt),
             "claude -w: row back on the repo after exit": exit_back == str(proj),
@@ -144,7 +143,7 @@ def main() -> int:
             "ExitWorktree: worktree folder removed": not enter_wt.exists(),
             "ExitWorktree: worktree branch removed": branches[ENTER_NAME] and not has_branch(ENTER_NAME),
             "home cleared": not app.row().get("home"),
-            "recent empty": not app.store().get("recent"),
+            "recent empty": app.recent() == [],
         })
 
 
