@@ -1,22 +1,8 @@
-"""Run a live check on its own X display, away from the desktop.
+"""The shared parts of the live checks in `tests/live/`.
 
-`run_on_xvfb()` starts Xvfb on a free display (`-displayfd`) with openbox as
-the window manager, then runs the calling script again inside it. The child
-gets a temporary `XDG_RUNTIME_DIR`, so a ccwork that the script launches owns
-its own hook socket and never talks to the ccwork on the desktop. The D-Bus
-session address is `disabled:`, so desktop notifications stay off the
-desktop. Call it first in the script's `__main__` block.
-
-The latest run of each check keeps its evidence in the repo, in
-`tmp/live-runs/<check>-<time>/` (`evidence_dir()`): the check's output, the
-ccwork log and the screenshots. The check works in its sandbox folder,
-`tmp/wt-sandbox/<name>-<time>/` (`new_sandbox()`), and types `CLAUDE` to
-start a Claude Code session there.
-
-`with ccwork(sandbox, rows) as app:` launches a real ccwork with a sandboxed
-config, waits for its window, focuses it, and stops it at the end. Keys and
-text go in through xdotool (XTEST), so they reach the focused window like a
-real keypress.
+A check runs a real ccwork on its own X display, away from the desktop, and
+drives it through xdotool (XTEST), so each key and text reaches the focused
+window like a real keypress.
 """
 from __future__ import annotations
 
@@ -50,6 +36,14 @@ CLAUDE_TIMEOUT_S = 120
 
 
 def run_on_xvfb() -> None:
+    """Start Xvfb on a free display (`-displayfd`) with openbox as the window
+    manager, then run the calling script again inside it, and exit with its
+    exit code. The child gets a temporary `XDG_RUNTIME_DIR`, so a ccwork that
+    the script launches owns its own hook socket and never talks to the
+    ccwork on the desktop. The D-Bus session address is `disabled:`, so
+    desktop notifications stay off the desktop. The child's output also goes
+    to `output.txt` in the evidence folder, line by line. Call it first in the
+    script's `__main__` block."""
     if os.environ.get(CHILD_FLAG) == "1":
         return
     evidence = new_run_folder(RUNS, Path(sys.argv[0]).stem)
@@ -118,7 +112,8 @@ def new_run_folder(parent: Path, name: str) -> Path:
 
 
 def evidence_dir() -> Path:
-    """The repo folder that keeps this run's output, ccwork log and screenshots."""
+    """The run's folder in the repo, `tmp/live-runs/<check>-<time>/`: the
+    check's output, the ccwork log and the screenshots."""
     return Path(os.environ[EVIDENCE_VAR])
 
 

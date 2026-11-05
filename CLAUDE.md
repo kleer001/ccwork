@@ -23,41 +23,10 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_settings.py::tes
 # Increase log verbosity for the running app
 CCWORK_LOG=DEBUG ./bin/ccwork
 
-# Live integration scripts (Xvfb + openbox; these aren't pytest tests)
-.venv/bin/python tests/live/check_focus_scoping.py   # load-bearing
-.venv/bin/python tests/live/check_keys_dispatch.py
-.venv/bin/python tests/live/check_f1_cheatsheet.py
-.venv/bin/python tests/live/check_window_geometry.py
-.venv/bin/python tests/live/check_terminal_input.py   # typing, paste, Ctrl+Z in one TerminalHost
-.venv/bin/python tests/live/check_worktree_follow.py  # one real claude -w prompt
-.venv/bin/python tests/live/check_enter_worktree.py   # one real EnterWorktree prompt
-.venv/bin/python tests/live/check_subagent_worktree.py  # one real isolation: worktree subagent
-.venv/bin/python tests/live/check_worktree_crash.py   # kill ccwork in an EnterWorktree session
-.venv/bin/python tests/live/check_worktree_interactive.py  # interactive claude -w exit, Enter/ExitWorktree
-.venv/bin/python tests/live/check_make_worktree.py    # row menu → Make worktree…
-.venv/bin/python tests/live/check_remove_worktree.py  # delete box on a clean and a dirty worktree
-.venv/bin/python tests/live/probe_xgrabkey.py        # diagnostic only
+# Live checks: a real ccwork on its own Xvfb display (not pytest tests).
+# tests/live/README.md lists them. Run this one after a change to the key grab:
+.venv/bin/python tests/live/check_focus_scoping.py
 ```
-
-`tests/live/` holds end-to-end verification scripts that launch a real
-ccwork in a sandboxed `XDG_CONFIG_HOME`. `harness.run_on_xvfb()` runs
-each check on its own Xvfb display with openbox and a temporary
-`XDG_RUNTIME_DIR`, so no key reaches the desktop and the desktop
-ccwork keeps its hook socket. `with harness.ccwork(sandbox, rows) as
-app:` launches ccwork, focuses its window (matched by
-`WM_CLASS=main.py.ccwork`) and stops it at the end. The latest run of
-each check keeps its output, ccwork log and screenshots in
-`tmp/live-runs/<check>-<time>/`, and its sandbox in
-`tmp/wt-sandbox/<name>-<time>/`. A check types `harness.CLAUDE` to start
-Claude Code: its `claudeMdExcludes` setting keeps this CLAUDE.md out of
-the sandbox session.
-The checks inject keys and text with xdotool (XTEST) and assert on log
-output, the sandboxed config files and `wmctrl -l`. They are NOT
-pytest tests — names are deliberately off the `*_test.py` glob so
-pytest discovery skips them. Run individually. The README in that dir
-documents each one's purpose; `check_focus_scoping.py` is the
-load-bearing guard against the "shortcuts leak globally" regression
-the user caught after the keybinding rework.
 
 There is no separate lint/format step configured. Dependencies are pinned in
 `requirements.txt` (`PySide6>=6.6`, `pytest`, `pytest-cov`).
