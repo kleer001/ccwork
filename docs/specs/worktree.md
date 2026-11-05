@@ -145,8 +145,11 @@ folder.
   same repository."
 - One field: the name. The name is the branch name.
 - Under the field, the dialog shows what it will make:
-  - the folder: `<parent of main checkout>/<main name>-<name>`, with each `/`
-    in the name changed to `-`;
+  - the folder: `<base>/<main name>-<name>`, with each `/` in the name
+    changed to `-`. The base is the Preferences setting "Worktree folder"
+    (`ui.worktree_folder`), or the parent of the main checkout when it is
+    empty. A base that is not an absolute path is a reason that keeps OK
+    off;
   - the branch: `<name>`;
   - the start commit: `from <source branch> at <short hash>`, or
     `from detached HEAD at <short hash>`;
@@ -344,7 +347,7 @@ Each item runs in a temporary git repository unless it names the live check.
 
 | Step | Expected result |
 |---|---|
-| Make worktree `fix/a` from a clean `main` row. | Folder `<parent>/<main name>-fix-a`, branch `fix/a`, `branch.fix/a.ccworkBase = main`. The new row is selected, and line 2 is `<main name> ↳ fix/a`. In its terminal, `pwd` prints the folder and `git branch --show-current` prints `fix/a`. |
+| Make worktree `fix/a` from a clean `main` row, with the Worktree folder setting at `<sandbox>/worktrees`. | Folder `<sandbox>/worktrees/<main name>-fix-a`, branch `fix/a`, `branch.fix/a.ccworkBase = main`. The new row is selected, and line 2 is `<main name> ↳ fix/a`. In its terminal, `pwd` prints the folder and `git branch --show-current` prints `fix/a`. |
 | In the dialog, type nothing, then `bad..name`, then `@{-1}`, then an existing branch name, then a name whose folder exists. | OK stays off each time, and the dialog names the reason. |
 | Make a worktree from a row with a detached HEAD. | The preview says `from detached HEAD at <hash>`. The worktree is made with no `ccworkBase`. |
 | Make a worktree from a row with an uncommitted edit. | The dialog shows the uncommitted-changes line. The new worktree has the committed text. |

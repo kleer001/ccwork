@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QColorDialog,
     QComboBox,
     QDialog,
+    QFileDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFontComboBox,
@@ -402,6 +403,21 @@ class PreferencesDialog(QDialog):
         expire_box.addStretch(1)
         form.addRow("", expire_row)
 
+        folder_row = QWidget(w)
+        folder_box = QHBoxLayout(folder_row)
+        folder_box.setContentsMargins(0, 0, 0, 0)
+        self._worktree_folder = QLineEdit(ui.worktree_folder, folder_row)
+        self._worktree_folder.setPlaceholderText("Beside the main checkout")
+        self._worktree_folder.setToolTip(
+            "Make worktree puts each new worktree in this folder, as "
+            "<folder>/<repo>-<branch>. Empty puts it beside the main checkout."
+        )
+        browse = QPushButton("Browse…", folder_row)
+        browse.clicked.connect(self._pick_worktree_folder)
+        folder_box.addWidget(self._worktree_folder, 1)
+        folder_box.addWidget(browse)
+        form.addRow("Worktree folder", folder_row)
+
         help_lbl = QLabel(
             "Tip: drag the splitter to resize the sidebar — the width persists.",
             w,
@@ -734,6 +750,12 @@ class PreferencesDialog(QDialog):
 
     # ── button handlers ──
 
+    def _pick_worktree_folder(self) -> None:
+        picked = QFileDialog.getExistingDirectory(self, "Worktree folder",
+                                                  self._worktree_folder.text())
+        if picked:
+            self._worktree_folder.setText(picked)
+
     def _on_restore_defaults(self) -> None:
         d = XtermSettings()
         du = UISettings()
@@ -748,6 +770,7 @@ class PreferencesDialog(QDialog):
         self._show_status_text.setChecked(du.show_status_text)
         self._expire_idle.setChecked(du.expire_idle_repos)
         self._expire_days.setValue(du.expire_idle_days)
+        self._worktree_folder.setText(du.worktree_folder)
         self._font.setCurrentText(d.font_family)
         self._font_size.setValue(d.font_size)
         self._scrollback.setValue(d.scrollback)
@@ -799,6 +822,7 @@ class PreferencesDialog(QDialog):
             show_status_text=bool(self._show_status_text.isChecked()),
             expire_idle_repos=bool(self._expire_idle.isChecked()),
             expire_idle_days=int(self._expire_days.value()),
+            worktree_folder=self._worktree_folder.text().strip(),
         )
 
         try:

@@ -95,11 +95,15 @@ def worktree_source(path: str) -> WorktreeSource:
     )
 
 
-def worktree_plan(src: WorktreeSource, name: str) -> WorktreePlan:
-    """The folder for branch `name`, `<parent>/<main name>-<name>` with each
-    `/` as `-`, and the first reason the plan cannot run."""
-    folder = os.path.join(src.parent, f"{src.main_name}-{name.replace('/', '-')}")
-    if not name:
+def worktree_plan(src: WorktreeSource, name: str, base: str = "") -> WorktreePlan:
+    """The folder for branch `name`, `<base>/<main name>-<name>` with each
+    `/` as `-`, and the first reason the plan cannot run. An empty `base`
+    is the parent of the main checkout."""
+    folder = os.path.join(os.path.expanduser(base) or src.parent,
+                          f"{src.main_name}-{name.replace('/', '-')}")
+    if not os.path.isabs(folder):
+        problem = "The worktree folder in Preferences must be an absolute path."
+    elif not name:
         problem = "Type a name for the branch."
     elif not _git_ok(src.path, "check-ref-format", f"refs/heads/{name}"):
         problem = "Git does not accept this branch name."

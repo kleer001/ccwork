@@ -246,3 +246,20 @@ def test_rows_tab_keeps_a_font_this_machine_lacks(qapp) -> None:
     dlg = PD.PreferencesDialog(S.Settings(ui=S.UISettings(rows=rows)))
     dlg._line_list.setCurrentRow(rows.order.index("title"))
     assert dlg._ln_family.currentData() == "No Such Font 9000"
+
+
+def test_ui_tab_worktree_folder_round_trip_via_save(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tmp = tempfile.mkdtemp()
+    try:
+        monkeypatch.setenv("XDG_CONFIG_HOME", tmp)
+        dlg = PD.PreferencesDialog(Settings(ui=UISettings(worktree_folder="~/old")))
+        assert dlg._worktree_folder.text() == "~/old"
+        dlg._worktree_folder.setText("  ~/worktrees ")
+        dlg._on_save()
+        assert load_settings().ui.worktree_folder == "~/worktrees"
+        dlg._on_restore_defaults()
+        assert dlg._worktree_folder.text() == ""
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

@@ -115,10 +115,11 @@ session and renames itself to that repo.
 
 A git worktree is a second folder on a new branch, in the same repository.
 Right-click a row → *Make worktree…* and type a branch name. ccwork shows
-the folder (`<parent of the main checkout>/<repo>-<name>`), the start
-commit, and a warning when uncommitted changes stay behind. OK makes the
-folder and the branch from the row's HEAD, and adds a row for it with the
-same row icon.
+the folder (`<parent of the main checkout>/<repo>-<name>`, or the
+*Worktree folder* of Preferences in place of the parent), the start commit,
+and a warning when uncommitted changes stay behind. OK makes the folder and
+the branch from the row's HEAD, and adds a row for it with the same row
+icon.
 
 Before its first prompt, the new row's terminal:
 
@@ -268,6 +269,10 @@ Open with the gear button or `Ctrl+Shift+P`. Settings persist to
 - **Show status text in sidebar rows**: line 3 of each row. On by default.
 - **Remove idle repos from the sidebar after N days**: off by default. The
   day count is greyed out while it is off.
+- **Worktree folder**: where *Make worktree…* puts new worktrees, as
+  `<folder>/<repo>-<branch>`. Empty (the default) puts each one beside the
+  main checkout. Set it to a folder outside a synced folder, such as
+  Dropbox, to keep worktrees and their venvs out of the sync.
 
 Sidebar width isn't in the dialog. Drag the splitter, and the new width
 persists. The narrowest width is about 6 characters; the badge hides before

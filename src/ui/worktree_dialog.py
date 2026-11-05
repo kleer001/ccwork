@@ -23,10 +23,11 @@ class WorktreeDialog(QDialog):
     OK stays off, with the reason, while the plan cannot run
     (docs/specs/worktree.md 5.2)."""
 
-    def __init__(self, source_path: str, parent: QWidget | None = None) -> None:
+    def __init__(self, source_path: str, base: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Make worktree")
         self._source = worktree_source(source_path)
+        self._base = base
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("A worktree is a second folder on a new branch, in the same repository."))
         self._name = QLineEdit(self)
@@ -55,7 +56,7 @@ class WorktreeDialog(QDialog):
         self._update()
 
     def plan(self) -> WorktreePlan:
-        return worktree_plan(self._source, self._name.text().strip())
+        return worktree_plan(self._source, self._name.text().strip(), self._base)
 
     def _update(self) -> None:
         try:

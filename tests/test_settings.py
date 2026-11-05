@@ -404,3 +404,13 @@ def test_rows_reject_bad_values(tmp_path: Path) -> None:
     assert rows.title.opacity == 100
     assert rows.title.size == 4.0
 
+
+
+def test_worktree_folder_defaults_empty() -> None:
+    assert S.UISettings().worktree_folder == ""
+
+
+def test_worktree_folder_round_trip(tmp_path: Path) -> None:
+    p = tmp_path / "settings.toml"
+    S.save_settings(S.Settings(ui=S.UISettings(worktree_folder="~/worktrees")), p)
+    assert S.load_settings(p).ui.worktree_folder == "~/worktrees"

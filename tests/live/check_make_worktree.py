@@ -2,9 +2,11 @@
 
 Runs on its own Xvfb display (`harness.run_on_xvfb`). Makes a git repo in a
 temporary folder, with an ignored `.env`, an ignored 2 MiB `model.bin`, an
-ignored `tmp/` folder and a `.venv` made by `uv venv`. Launches ccwork with one row on it, right-clicks the row,
-picks "Make worktree…" with the keyboard, types `fix/a` and presses Enter.
-Passes when `repos.json` has a second row on `<parent>/proj-fix-a` with the
+ignored `tmp/` folder and a `.venv` made by `uv venv`. Launches ccwork with one
+row on it and the worktree folder setting at `<sandbox>/worktrees`,
+right-clicks the row, picks "Make worktree…" with the keyboard, types
+`fix/a` and presses Enter. Passes when `repos.json` has a second row on
+`<sandbox>/worktrees/proj-fix-a` with the
 first row's badge, the folder is on branch `fix/a` with
 `branch.fix/a.ccworkBase = main`, the new row's terminal prints that
 folder for `pwd` and `fix/a` for `git branch --show-current`, and only
@@ -40,10 +42,11 @@ def main() -> int:
     (proj / "tmp").mkdir()
     (proj / "tmp" / "result.csv").write_text("1\n")
     subprocess.run(["uv", "venv", "-q", "--python", "3.12", str(proj / ".venv")], check=True)
-    folder = sandbox / "proj-fix-a"
+    folder = sandbox / "worktrees" / "proj-fix-a"
     out = sandbox / "terminal.txt"
 
-    with harness.ccwork(sandbox, [{"path": str(proj), "emoji": "🌱"}]) as app:
+    with harness.ccwork(sandbox, [{"path": str(proj), "emoji": "🌱"}],
+                        settings=f'[ui]\nworktree_folder = "{sandbox / "worktrees"}"\n') as app:
         # Row 1 sits at the top of the sidebar. Menu: Reload, Clone, Make worktree…
         app.click(100, 95, button=3)
         harness.key("Down", "Down", "Down", "Return", pause=1.0)

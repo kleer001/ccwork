@@ -14,6 +14,7 @@ import pytest
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel, QLineEdit, QMessageBox
 
 from src.core.repo_store import Repo, RepoStore
+from src.core.settings import Settings, UISettings
 from src.core.worktree import GitError, make_worktree, worktree_plan, worktree_source
 from src.ui.repo_model import ROLE_WORKTREE_OF
 from src.ui.repo_sidebar import RepoSidebar
@@ -118,11 +119,11 @@ def test_make_worktree_raises_with_git_message(main_repo: Path) -> None:
 
 # ── menu and dialog ──
 
-def _sidebar(tmp_path: Path, paths: list[str]) -> RepoSidebar:
+def _sidebar(tmp_path: Path, paths: list[str], settings: Settings | None = None) -> RepoSidebar:
     store = RepoStore(config_path=tmp_path / "repos.json")
     store.repos = [Repo(path=p) for p in paths]
     store.save()
-    sidebar = RepoSidebar(store)
+    sidebar = RepoSidebar(store, settings=settings)
     sidebar.refresh_branches()
     return sidebar
 
@@ -260,3 +261,34 @@ def test_failure_after_worktree_add_still_adds_the_row(
     sidebar._make_worktree(sidebar.model.repo_at(0))
     assert shown == ["error: could not lock config file"]
     assert sidebar.model.repo_at(1).path == str(main_repo.parent / "proj-x")
+
+
+# ── the worktree folder setting ──
+
+def test_plan_puts_the_folder_in_the_set_base_folder(main_repo: Path, tmp_path: Path) -> None:
+    plan = worktree_plan(worktree_source(str(main_repo)), "fix/a", str(tmp_path / "wt"))
+    assert plan.folder == str(tmp_path / "wt" / "proj-fix-a")
+    assert plan.problem == ""
+
+
+def test_plan_expands_the_home_folder(main_repo: Path) -> None:
+    plan = worktree_plan(worktree_source(str(main_repo)), "x", "~/wt")
+    assert plan.folder == os.path.join(os.path.expanduser("~"), "wt", "proj-x")
+
+
+def test_plan_refuses_a_relative_base_folder(main_repo: Path) -> None:
+    plan = worktree_plan(worktree_source(str(main_repo)), "x", "wt")
+    assert plan.problem == "The worktree folder in Preferences must be an absolute path."
+
+
+def test_ok_makes_the_worktree_in_the_set_base_folder(
+    qapp: QApplication, tmp_path: Path, main_repo: Path, monkeypatch
+) -> None:
+    base = tmp_path / "elsewhere"
+    sidebar = _sidebar(tmp_path, [str(main_repo)], Settings(ui=UISettings(worktree_folder=str(base))))
+    monkeypatch.setattr(WorktreeDialog, "exec", lambda self: (self.findChild(QLineEdit).setText("fix/a"), 1)[1])
+
+    sidebar._make_worktree(sidebar.model.repo_at(0))
+
+    assert sidebar.model.repo_at(1).path == str(base / "proj-fix-a")
+    assert _git("-C", str(base / "proj-fix-a"), "branch", "--show-current") == "fix/a"

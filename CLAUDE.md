@@ -388,8 +388,10 @@ but no widgets):
   `src/ui/worktree_dialog.py`). `worktree_source` reads the source row's
   branch, short HEAD and uncommitted state once; `worktree_plan` checks a
   branch name (`check-ref-format refs/heads/<name>`, branch exists,
-  folder exists) for the folder `<parent of main checkout>/<main
-  name>-<name with / as ->`; `make_worktree` runs `git worktree add -b`
+  folder exists) for the folder `<base>/<main name>-<name with / as ->`,
+  where the base is `ui.worktree_folder` (Preferences, `~` expanded, must
+  be absolute) or, when empty, the parent of the main checkout;
+  `make_worktree` runs `git worktree add -b`
   and records the source branch as `branch.<name>.ccworkBase`. Each git
   failure raises `GitError` with git's stderr, and the sidebar shows it
   and adds no row (unless the worktree folder was made). On success the new row is added at once, selected,

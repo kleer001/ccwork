@@ -26,6 +26,7 @@ group_active_repos = true
 show_status_text = true
 expire_idle_repos = false
 expire_idle_days = 30
+worktree_folder = ""
 
 [ui.layout]
 padding_x = 10
@@ -312,6 +313,9 @@ class UISettings:
     # never expire.
     expire_idle_repos: bool = False
     expire_idle_days: int = 30
+    # The folder that Make worktree puts new worktrees in, as
+    # `<folder>/<main name>-<name>`. Empty: beside the main checkout.
+    worktree_folder: str = ""
     layout: LayoutSettings = field(default_factory=LayoutSettings)
     rows: RowSettings = field(default_factory=RowSettings)
     animation: AnimationSettings = field(default_factory=AnimationSettings)
@@ -459,6 +463,7 @@ def _coerce_ui(raw: dict | None) -> UISettings:
         show_status_text=bool(raw.get("show_status_text", d.show_status_text)),
         expire_idle_repos=bool(raw.get("expire_idle_repos", d.expire_idle_repos)),
         expire_idle_days=max(1, int(raw.get("expire_idle_days", d.expire_idle_days))),
+        worktree_folder=str(raw.get("worktree_folder", d.worktree_folder)),
         layout=_coerce_layout(raw.get("layout") if isinstance(raw.get("layout"), dict) else None),
         rows=_coerce_rows(raw.get("rows") if isinstance(raw.get("rows"), dict) else None),
         animation=_coerce_animation(raw.get("animation") if isinstance(raw.get("animation"), dict) else None),
@@ -579,6 +584,7 @@ def _ui_to_toml(ui: UISettings) -> dict[str, Any]:
         "show_status_text": ui.show_status_text,
         "expire_idle_repos": ui.expire_idle_repos,
         "expire_idle_days": ui.expire_idle_days,
+        "worktree_folder": ui.worktree_folder,
         "layout": asdict(ui.layout),
         "rows": asdict(ui.rows),
         "animation": asdict(ui.animation),

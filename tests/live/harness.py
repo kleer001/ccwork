@@ -214,10 +214,10 @@ class Ccwork:
 
 
 @contextmanager
-def ccwork(sandbox: Path, rows: Sequence[Path | dict] = ()) -> Iterator[Ccwork]:
+def ccwork(sandbox: Path, rows: Sequence[Path | dict] = (), settings: str = "") -> Iterator[Ccwork]:
     """Launch ccwork with its config in `<sandbox>/config` and `rows` in its
     `repos.json`: a path, or a row dict. A row with no `id` gets `row1`,
-    `row2`, and so on. ccwork logs to `ccwork.log` in the evidence folder.
+    `row2`, and so on. `settings` is the text of its `settings.toml`. ccwork logs to `ccwork.log` in the evidence folder.
     When the window shows, it is focused and yielded. At the end ccwork
     stops, and the worktrees that Claude Code made in each row's repo
     (`.claude/worktrees/`) are unlocked and removed: a session that dies
@@ -228,6 +228,8 @@ def ccwork(sandbox: Path, rows: Sequence[Path | dict] = ()) -> Iterator[Ccwork]:
                for i, r in enumerate(rows, 1)]
     config.mkdir(parents=True)
     (config / "repos.json").write_text(json.dumps({"version": 1, "repos": entries}))
+    if settings:
+        (config / "settings.toml").write_text(settings)
     log_path = evidence_dir() / "ccwork.log"
     env = dict(os.environ, XDG_CONFIG_HOME=str(xdg_config), CCWORK_LOG="INFO")
     with open(log_path, "wb") as log:

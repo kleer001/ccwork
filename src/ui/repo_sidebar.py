@@ -1116,7 +1116,8 @@ class RepoSidebar(QWidget):
         a selected row with the source row's badge and a blank title. On a
         git error, show git's message and add no row."""
         try:
-            dlg = WorktreeDialog(source.path, self)
+            base = self._settings.ui.worktree_folder if self._settings is not None else ""
+            dlg = WorktreeDialog(source.path, base, self)
         except GitError as e:
             QMessageBox.warning(self, "Make worktree", str(e))
             return
