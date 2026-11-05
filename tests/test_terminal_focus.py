@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from PySide6.QtCore import QProcess
 from PySide6.QtWidgets import QApplication
 
 from src.core import x11
@@ -45,6 +46,14 @@ def test_the_filter_calls_back_once_on_the_map_of_its_window() -> None:
     assert _send(filt, x11.XCB_MAP_NOTIFY | 0x80, 0x400001) == (False, 0)  # a SendEvent copy counts
     _send(filt, x11.XCB_MAP_NOTIFY, 0x400001)
     assert calls == [1]
+
+
+def test_the_filter_goes_when_the_xterm_exits(qapp: QApplication) -> None:
+    host = TerminalHost(argv=[])
+    host._map_filter = _MapNotifyFilter(0x400001, lambda: None)
+    qapp.installNativeEventFilter(host._map_filter)
+    host._on_finished(0, QProcess.NormalExit)
+    assert host._map_filter is None
 
 
 @pytest.fixture

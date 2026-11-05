@@ -424,6 +424,7 @@ class TerminalHost(QWidget):
         self._fit_child_to_self()
 
     def _on_finished(self, exit_code: int, _status: QProcess.ExitStatus) -> None:
+        self._unwatch_map()  # an xterm that exits before it maps
         self.finished.emit(int(exit_code))
 
     def _on_error(self, error: QProcess.ProcessError) -> None:
