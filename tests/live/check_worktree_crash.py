@@ -1,8 +1,8 @@
 """Live check: after a crash in an EnterWorktree session, crash recovery
 records the folder that `claude --resume` needs.
 
-Runs on its own Xvfb display (`harness.run_on_xvfb`). Makes a git repo in a
-temporary folder, launches ccwork with one row on it, and types a `claude
+Runs on its own Xvfb display (`harness.run_on_xvfb`). Makes a git repo in its
+sandbox folder, launches ccwork with one row on it, and types a `claude
 -p` prompt that calls EnterWorktree and then runs `sleep 40`. This runs one
 real Claude Code prompt. When the row is on the worktree, the script kills
 ccwork (SIGKILL). It then reads the sandboxed `open_sessions.json`, and
@@ -37,7 +37,7 @@ def main() -> int:
     worktree = str(harness.claude_worktrees(proj) / NAME)
     with harness.ccwork(sandbox, [proj]) as app:
         app.open_terminal()
-        harness.type_line(f"claude --allowedTools EnterWorktree 'Bash(sleep:*)' -p 'Call the "
+        harness.type_line(f"{harness.CLAUDE} --allowedTools EnterWorktree 'Bash(sleep:*)' -p 'Call the "
                           f"EnterWorktree tool with the name {NAME}. Then run the shell command "
                           f"sleep 40. Then reply with the word ok.'")
         deadline = time.time() + 90

@@ -45,8 +45,12 @@ each check on its own Xvfb display with openbox and a temporary
 `XDG_RUNTIME_DIR`, so no key reaches the desktop and the desktop
 ccwork keeps its hook socket. `with harness.ccwork(sandbox, rows) as
 app:` launches ccwork, focuses its window (matched by
-`WM_CLASS=main.py.ccwork`) and stops it at the end. Each run keeps its
-output, ccwork log and screenshots in `tmp/live-runs/<check>-<time>/`.
+`WM_CLASS=main.py.ccwork`) and stops it at the end. The latest run of
+each check keeps its output, ccwork log and screenshots in
+`tmp/live-runs/<check>-<time>/`, and its sandbox in
+`tmp/wt-sandbox/<name>-<time>/`. A check types `harness.CLAUDE` to start
+Claude Code: its `claudeMdExcludes` setting keeps this CLAUDE.md out of
+the sandbox session.
 The checks inject keys and text with xdotool (XTEST) and assert on log
 output, the sandboxed config files and `wmctrl -l`. They are NOT
 pytest tests — names are deliberately off the `*_test.py` glob so

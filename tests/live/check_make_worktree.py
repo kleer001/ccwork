@@ -1,7 +1,7 @@
 """Live check: "Make worktree…" from the row menu makes a worktree row.
 
-Runs on its own Xvfb display (`harness.run_on_xvfb`). Makes a git repo in a
-temporary folder, with an ignored `.env`, an ignored 2 MiB `model.bin`, an
+Runs on its own Xvfb display (`harness.run_on_xvfb`). Makes a git repo in its
+sandbox folder, with an ignored `.env`, an ignored 2 MiB `model.bin`, an
 ignored `tmp/` folder and a `.venv` made by `uv venv`. Launches ccwork with one
 row on it and the worktree folder setting at `<sandbox>/worktrees`,
 right-clicks the row, picks "Make worktree…" with the keyboard, types

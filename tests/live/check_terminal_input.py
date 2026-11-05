@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import tempfile
 import time
 
 import harness
@@ -30,7 +29,7 @@ def main() -> int:
     from src.core.settings import XtermSettings
     from src.ui.terminal_host import TerminalHost
 
-    work = tempfile.mkdtemp()
+    work = str(harness.new_sandbox("terminal"))
     argv = [*XtermSettings().to_xterm_args(), "-e", "bash", "--norc", "-i"]
     win = QWidget()
     lay = QVBoxLayout(win)

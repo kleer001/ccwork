@@ -7,8 +7,11 @@ its own hook socket and never talks to the ccwork on the desktop. The D-Bus
 session address is `disabled:`, so desktop notifications stay off the
 desktop. Call it first in the script's `__main__` block.
 
-Each run keeps its evidence in the repo, in `tmp/live-runs/<check>-<time>/`
-(`evidence_dir()`): the check's output, the ccwork log and the screenshots.
+The latest run of each check keeps its evidence in the repo, in
+`tmp/live-runs/<check>-<time>/` (`evidence_dir()`): the check's output, the
+ccwork log and the screenshots. The check works in its sandbox folder,
+`tmp/wt-sandbox/<name>-<time>/` (`new_sandbox()`), and types `CLAUDE` to
+start a Claude Code session there.
 
 `with ccwork(sandbox, rows) as app:` launches a real ccwork with a sandboxed
 config, waits for its window, focuses it, and stops it at the end. Keys and
@@ -19,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -32,6 +36,11 @@ from pathlib import Path
 CHILD_FLAG = "_CCWORK_LIVE_CHILD"
 EVIDENCE_VAR = "_CCWORK_LIVE_EVIDENCE"
 REPO = Path(__file__).resolve().parents[2]
+RUNS = REPO / "tmp" / "live-runs"
+SANDBOXES = REPO / "tmp" / "wt-sandbox"
+# A session loads the CLAUDE.md files of the folders above it, and each
+# sandbox is under the ccwork folder: the setting keeps ccwork's CLAUDE.md out.
+CLAUDE = "claude --settings " + shlex.quote(json.dumps({"claudeMdExcludes": [str(REPO / "CLAUDE.md")]}))
 SCREEN = "1280x900x24"  # MainWindow opens at 1280x820, plus the title bar
 STARTUP_S = 10
 CLAUDE_TIMEOUT_S = 120
@@ -40,8 +49,7 @@ CLAUDE_TIMEOUT_S = 120
 def run_on_xvfb() -> None:
     if os.environ.get(CHILD_FLAG) == "1":
         return
-    evidence = REPO / "tmp" / "live-runs" / f"{Path(sys.argv[0]).stem}-{time.strftime('%Y%m%d-%H%M%S')}"
-    evidence.mkdir(parents=True)
+    evidence = new_run_folder(RUNS, Path(sys.argv[0]).stem)
     read_fd, write_fd = os.pipe()
     xvfb = subprocess.Popen(
         ["Xvfb", "-displayfd", str(write_fd), "-screen", "0", SCREEN, "-nolisten", "tcp"],
@@ -71,7 +79,7 @@ def run_on_xvfb() -> None:
                 sys.exit("FAIL: openbox did not start on " + display)
             time.sleep(0.1)
         print(f"display={display} runtime={runtime} evidence={evidence}", flush=True)
-        with open(evidence / "output.txt", "w") as out:
+        with open(evidence / "output.txt", "w", buffering=1) as out:
             child = subprocess.Popen([sys.executable, *sys.argv], env=env, text=True,
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             for line in child.stdout:
@@ -85,6 +93,16 @@ def run_on_xvfb() -> None:
             p.wait()
         shutil.rmtree(runtime, ignore_errors=True)
     sys.exit(rc)
+
+
+def new_run_folder(parent: Path, name: str) -> Path:
+    """A new folder `<parent>/<name>-<time>/`. The folders of the older runs
+    of `name` are removed first."""
+    for old in parent.glob(f"{name}-[0-9]*"):
+        shutil.rmtree(old)
+    folder = parent / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
+    folder.mkdir(parents=True)
+    return folder
 
 
 def evidence_dir() -> Path:
@@ -102,9 +120,9 @@ def git(*args: str) -> str:
 
 
 def new_sandbox(name: str) -> Path:
-    """A new temporary folder `ccwork-<name>-*`, as a real path: hook payloads
-    and `repos.json` hold real paths."""
-    return Path(os.path.realpath(tempfile.mkdtemp(prefix=f"ccwork-{name}-")))
+    """A new folder `tmp/wt-sandbox/<name>-<time>/`. A new path for each run
+    keeps Claude Code's folder trust of an older run out of the check."""
+    return new_run_folder(SANDBOXES, name)
 
 
 def seed_repo(path: Path, ignore: str = "") -> Path:
@@ -291,11 +309,21 @@ def watch_claude(app: Ccwork, worktree: str = "", tick: Callable[[], None] | Non
     return seen
 
 
+def loads_ccwork_claude_md(folder: Path) -> bool:
+    """Whether a `CLAUDE` session in `folder` loads ccwork's CLAUDE.md, from
+    the memory files that `/context` lists."""
+    out = subprocess.run(["bash", "-c", f"{CLAUDE} -p /context"], cwd=folder, check=True,
+                         capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_S).stdout
+    memory = out.split("### Memory Files", 1)[1].split("###", 1)[0]
+    return str(REPO / "CLAUDE.md") in memory
+
+
 def check_follow(name: str, command: str) -> int:
     """Run one `claude` command in the row's terminal that puts the session
     in `.claude/worktrees/<name>`. Passes when the row was on that worktree
     while Claude ran, and is back on the repo with no `home` and an empty
-    `recent` after exit."""
+    `recent` after exit, and when a `CLAUDE` session in the repo does not
+    load ccwork's CLAUDE.md."""
     sandbox = new_sandbox(name)
     proj = seed_repo(sandbox / "proj")
     worktree = str(claude_worktrees(proj) / name)
@@ -308,6 +336,7 @@ def check_follow(name: str, command: str) -> int:
             "back home": app.row_path() == str(proj),
             "home cleared": app.row().get("home") == "",
             "recent empty": app.store().get("recent") == [],
+            "no ccwork CLAUDE.md": not loads_ccwork_claude_md(proj),
         })
 
 

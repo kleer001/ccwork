@@ -1,7 +1,7 @@
 """Live check: a row follows the EnterWorktree tool and comes back.
 
-Runs on its own Xvfb display (`harness.run_on_xvfb`). Makes a git repo in a
-temporary folder, launches ccwork with one row on it, opens the row's
+Runs on its own Xvfb display (`harness.run_on_xvfb`). Makes a git repo in its
+sandbox folder, launches ccwork with one row on it, opens the row's
 terminal with Ctrl+Shift+1 and types a `claude -p` prompt that asks Claude
 to call EnterWorktree, then to reply. This runs one real Claude Code
 prompt, through the installed hook sink and the `bin/claude` wrapper, with
@@ -21,6 +21,6 @@ NAME = "live-enter"
 
 if __name__ == "__main__":
     harness.run_on_xvfb()
-    sys.exit(harness.check_follow(NAME, f"claude --allowedTools EnterWorktree -p 'Call the "
+    sys.exit(harness.check_follow(NAME, f"{harness.CLAUDE} --allowedTools EnterWorktree -p 'Call the "
                                         f"EnterWorktree tool with the name {NAME}. Then reply "
                                         f"with the word ok.'"))

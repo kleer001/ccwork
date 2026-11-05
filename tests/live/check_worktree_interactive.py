@@ -1,14 +1,15 @@
 """Live check: interactive Claude Code sessions move a row into a worktree
 and back.
 
-Runs on its own Xvfb display (`harness.run_on_xvfb`). Makes a git repo in a
-temporary folder, launches ccwork with one row on it and opens the row's
+Runs on its own Xvfb display (`harness.run_on_xvfb`). Makes a git repo in its
+sandbox folder, launches ccwork with one row on it and opens the row's
 terminal with Ctrl+Shift+1. Then it types into the interactive Claude Code
 screen, through the installed hook sink and the `bin/claude` wrapper:
 
 1. `claude`, to accept the folder trust prompt (Down, Enter), then `/exit`.
-   An interactive `claude -w` refuses a folder that is not trusted. Claude
-   Code records the trust of the temporary folder in `~/.claude.json`.
+   An interactive `claude -w` refuses a repo folder that is not trusted;
+   the trust of the ccwork folder above the sandbox does not count. Claude
+   Code records the trust of the sandbox repo in `~/.claude.json`.
 2. `claude -w live-exit`. The script writes a file into the worktree, types
    `/exit` and picks "Remove worktree" in Claude's exit dialog. A worktree
    with no changes is removed with no dialog.
@@ -74,7 +75,7 @@ def main() -> int:
         app.open_terminal()
 
         # 1. Accept the folder trust prompt. Its default is "No, exit".
-        harness.type_line("claude --model haiku")
+        harness.type_line(f"{harness.CLAUDE} --model haiku")
         time.sleep(8)
         harness.screenshot("trust.png")
         harness.key("Down")
@@ -88,7 +89,7 @@ def main() -> int:
 
         # 2. claude -w, then exit with remove.
         time.sleep(1)
-        harness.type_line(f"claude --model haiku -w {EXIT_NAME}")
+        harness.type_line(f"{harness.CLAUDE} --model haiku -w {EXIT_NAME}")
         if not wait_for("SessionStart", 2):
             return 1
         time.sleep(4)
@@ -106,7 +107,7 @@ def main() -> int:
         exit_back = app.row_path()
 
         # 3. EnterWorktree, then ExitWorktree, in one session.
-        harness.type_line("claude --model haiku --allowedTools EnterWorktree ExitWorktree")
+        harness.type_line(f"{harness.CLAUDE} --model haiku --allowedTools EnterWorktree ExitWorktree")
         if not wait_for("SessionStart", 3):
             return 1
         time.sleep(4)

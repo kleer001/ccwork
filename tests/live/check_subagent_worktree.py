@@ -1,7 +1,7 @@
 """Live check: a subagent in its own worktree does not move the row.
 
-Runs on its own Xvfb display (`harness.run_on_xvfb`). Makes a git repo in a
-temporary folder, launches ccwork with one row on it, opens the row's
+Runs on its own Xvfb display (`harness.run_on_xvfb`). Makes a git repo in its
+sandbox folder, launches ccwork with one row on it, opens the row's
 terminal with Ctrl+Shift+1 and types a `claude -p` prompt that asks Claude
 to start a subagent with `isolation: worktree`. This runs one real Claude
 Code prompt, through the installed hook sink and the `bin/claude` wrapper.
@@ -27,7 +27,7 @@ def main() -> int:
     proj = harness.seed_repo(sandbox / "proj")
     with harness.ccwork(sandbox, [proj]) as app:
         app.open_terminal()
-        harness.type_line("claude --allowedTools Agent -p 'Start one general-purpose subagent "
+        harness.type_line(f"{harness.CLAUDE} --allowedTools Agent -p 'Start one general-purpose subagent "
                           "with the Agent tool and isolation set to worktree. Its task: reply "
                           "with the word ok. Then reply with the word ok.'")
         counts: list[int] = []  # the worktrees listed at each sample
