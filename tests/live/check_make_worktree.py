@@ -18,17 +18,12 @@ result, which shows the copy report and the setup commands. Docs:
 
 from __future__ import annotations
 
-import json
-import os
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
 import harness
-
-REPO = Path(__file__).resolve().parents[2]
 
 
 def venv_version(folder: Path) -> str:
@@ -37,19 +32,9 @@ def venv_version(folder: Path) -> str:
         if cfg.exists() else ""
 
 
-def key(*keys: str) -> None:
-    subprocess.run(["xdotool", "key", "--delay", "60", *keys], check=True)
-
-
 def main() -> int:
-    sandbox = Path(os.path.realpath(tempfile.mkdtemp(prefix="ccwork-mkwt-")))
-    proj = sandbox / "proj"
-    proj.mkdir()
-    harness.git("init", "-q", "-b", "main", str(proj))
-    (proj / "README").write_text("seed\n")
-    (proj / ".gitignore").write_text(".env\nmodel.bin\ntmp/\n.venv/\n")
-    harness.git("-C", str(proj), "add", "README", ".gitignore")
-    harness.git("-C", str(proj), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed")
+    sandbox = harness.new_sandbox("mkwt")
+    proj = harness.seed_repo(sandbox / "proj", ignore=".env\nmodel.bin\ntmp/\n.venv/\n")
     (proj / ".env").write_text("KEY=1\n")
     (proj / "model.bin").write_bytes(b"\0" * (2 * 1024 * 1024))
     (proj / "tmp").mkdir()
@@ -58,62 +43,30 @@ def main() -> int:
     folder = sandbox / "proj-fix-a"
     out = sandbox / "terminal.txt"
 
-    cfg = sandbox / "config"
-    repos_json = cfg / "ccwork" / "repos.json"
-    repos_json.parent.mkdir(parents=True)
-    repos_json.write_text(json.dumps(
-        {"version": 1, "repos": [{"path": str(proj), "id": "row1", "emoji": "🌱"}]}))
-    log_path = harness.evidence_dir() / "ccwork.log"
-    env = dict(os.environ, XDG_CONFIG_HOME=str(cfg), CCWORK_LOG="INFO")
-    proc = subprocess.Popen([str(REPO / ".venv/bin/python"), "-m", "src.main"], cwd=str(REPO),
-                            env=env, stdout=open(log_path, "wb"), stderr=subprocess.STDOUT)
-    print(f"pid={proc.pid} sandbox={sandbox}")
-
-    try:
-        deadline = time.time() + 10
-        while "global keys:" not in (log_path.read_text(errors="replace") if log_path.exists() else ""):
-            if time.time() > deadline:
-                print("FAIL: startup")
-                return 1
-            time.sleep(0.1)
-        wid = harness.ccwork_window()
-        subprocess.run(["wmctrl", "-ia", wid], check=True)
-        time.sleep(0.8)
+    with harness.ccwork(sandbox, [{"path": str(proj), "emoji": "🌱"}]) as app:
         # Row 1 sits at the top of the sidebar. Menu: Reload, Clone, Make worktree…
-        subprocess.run(["xdotool", "mousemove", "--window", str(int(wid, 16)), "100", "95",
-                        "click", "3"], check=True)
-        time.sleep(0.8)
-        key("Down", "Down", "Down", "Return")
-        time.sleep(1.0)
-        subprocess.run(["xdotool", "type", "--delay", "40", "fix/a"], check=True)
-        time.sleep(0.5)
-        harness.screenshot(harness.evidence_dir() / "dialog.png")
-        key("Return")
+        app.click(100, 95, button=3)
+        harness.key("Down", "Down", "Down", "Return", pause=1.0)
+        harness.type_text("fix/a")
+        harness.screenshot("dialog.png")
+        harness.key("Return", pause=0)
 
         deadline = time.time() + 10
-        rows: list = []
-        while time.time() < deadline:
-            rows = json.loads(repos_json.read_text()).get("repos", [])
-            if len(rows) == 2:
-                break
+        while len(app.store().get("repos", [])) != 2 and time.time() < deadline:
             time.sleep(0.2)
         time.sleep(3.0)  # the new row is selected and its terminal starts
         # The dialog leaves keyboard focus off the xterm: click into it.
-        subprocess.run(["xdotool", "mousemove", "--window", str(int(wid, 16)), "700", "400",
-                        "click", "1"], check=True)
+        app.click(700, 400)
+        harness.type_line(f"pwd > {out}; git branch --show-current >> {out}")
         time.sleep(1.0)
-        subprocess.run(["xdotool", "type", "--delay", "20",
-                        f"pwd > {out}; git branch --show-current >> {out}"], check=True)
-        key("Return")
-        time.sleep(1.5)
-        harness.screenshot(harness.evidence_dir() / "result.png")
+        harness.screenshot("result.png")
 
         lines = out.read_text().split() if out.exists() else []
-        rows = json.loads(repos_json.read_text()).get("repos", [])
+        rows = app.store().get("repos", [])
         new = rows[1] if len(rows) == 2 else {}
         base = subprocess.run(["git", "-C", str(folder), "config", "branch.fix/a.ccworkBase"],
                               capture_output=True, text=True).stdout.strip()
-        checks = {
+        return harness.report({
             "second row on the folder": new.get("path") == str(folder),
             "badge copied": new.get("emoji") == "🌱",
             "title blank": new.get("title") == "",
@@ -125,20 +78,7 @@ def main() -> int:
             "model.bin and tmp/ not copied": not (folder / "model.bin").exists()
                                              and not (folder / "tmp").exists(),
             "venv made, same version": venv_version(folder) == venv_version(proj) != "",
-        }
-        for k, v in checks.items():
-            print(f"  {k}: {'OK' if v else 'FAIL'}")
-        print(f"screenshots: {harness.evidence_dir()}/*.png")
-        result = all(checks.values())
-        print(f"\nresult: {'PASS' if result else 'FAIL'}")
-        return 0 if result else 2
-    finally:
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+        })
 
 
 if __name__ == "__main__":

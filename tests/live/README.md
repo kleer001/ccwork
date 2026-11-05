@@ -1,8 +1,9 @@
 # Live integration tests
 
 End-to-end verification scripts that launch a real ccwork instance,
-inject synthetic keypresses via `libXtst`, and assert on log output
-and (where applicable) `wmctrl -l` window appearance. **These need a
+inject keys and text with xdotool (XTEST), and assert on log output,
+the sandboxed config files and (where applicable) `wmctrl -l` window
+appearance. **These need a
 real X11 display** — they will not work under `QT_QPA_PLATFORM=offscreen`
 and are excluded from the pytest sweep on purpose.
 
@@ -13,34 +14,20 @@ individually from the repo root:
 .venv/bin/python tests/live/check_focus_scoping.py
 ```
 
-`harness.py` holds the shared parts. `harness.run_on_xvfb()` runs the
-script again on its own Xvfb display with openbox, a temporary
-`XDG_RUNTIME_DIR` (so the launched ccwork owns its own hook socket) and
-the D-Bus session address `disabled:` (so no notification reaches the
-desktop). No key or focus change reaches your desktop, and your running
-ccwork is not touched. Each run keeps its evidence in the repo, in
-`tmp/live-runs/<check>-<time>/` (`harness.evidence_dir()`): the check's
-output, the ccwork log and the screenshots. `harness.screenshot(path)`
-saves the display as a PNG (ImageMagick `import`);
-`harness.open_other_window(title)` starts a plain xterm to focus away from
-ccwork; `harness.ccwork_window()` waits for the ccwork window and gives its id, and
-`harness.focus_ccwork()` focuses it;
-`harness.git(*args)` runs git and returns its output; `harness.seed_repo(path)`
-makes a repo with one commit.
-`check_terminal_input.py` keeps its own Xvfb code: it launches no ccwork
-and needs no window manager.
+`harness.py` holds the shared parts:
 
-Each script:
-
-- Spawns ccwork as a subprocess in a sandbox `XDG_CONFIG_HOME` so the
-  user's real `~/.config/ccwork/settings.toml` and `repos.json` are
-  untouched.
-- Forces focus to ccwork (or away from it, depending on the check) via
-  `wmctrl -ia <window-id>` — matched by `WM_CLASS=main.py.ccwork`
-  rather than title substring (a shell prompt in a title often contains
-  "ccwork" as the cwd, which would mis-match a title search).
-- Cleans up the spawned ccwork process on exit. Stray xterm children
-  from inside ccwork stop with it.
+| Part | What it does |
+|---|---|
+| `run_on_xvfb()` | Runs the script again on its own Xvfb display with openbox, a temporary `XDG_RUNTIME_DIR` (so the launched ccwork owns its own hook socket) and the D-Bus session address `disabled:` (so no notification reaches the desktop). No key or focus change reaches your desktop, and your running ccwork is not touched. |
+| `evidence_dir()` | The run's evidence folder in the repo, `tmp/live-runs/<check>-<time>/`: the check's output, the ccwork log and the screenshots. |
+| `new_sandbox(name)`, `seed_repo(path, ignore)`, `claude_worktrees(repo)` | A temporary folder `ccwork-<name>-*`, a git repo in it with one commit (a README, and a `.gitignore` with `ignore`), and the folder where Claude Code makes the repo's worktrees. |
+| `with ccwork(sandbox, rows) as app:` | Writes `rows` (paths or row dicts) to `<sandbox>/config/ccwork/repos.json`, starts ccwork with that `XDG_CONFIG_HOME`, waits for its window (matched by `WM_CLASS=main.py.ccwork`, not by a title: a shell prompt in a title often holds "ccwork") and focuses it. At the end it stops ccwork and removes the worktrees that Claude Code made in each row's repo. |
+| `app` (a `Ccwork`) | `proc`, `config` (its ccwork config folder), `log()`, `store()` (`repos.json`), `row()`, `row_path()`, `hook_events()`, `dispatches()`, `focus()`, `click(x, y, button)`, `open_terminal()` (Ctrl+Shift+1). |
+| `key(*keys, pause)`, `type_text(text)`, `type_line(text)` | xdotool key names, text, and text then Enter. |
+| `windows()`, `screenshot(name)`, `with other_window(title):` | The `wmctrl -l` list, a PNG of the display in the evidence folder, and a plain xterm to focus away from ccwork. |
+| `watch_claude(app, worktree, tick)` | Samples the first row's path until `ClaudeExited`. |
+| `check_follow(name, command)` | The whole check that a row follows a `claude` command into `.claude/worktrees/<name>` and back. |
+| `report(checks)` | Prints each check and `result: PASS` or `FAIL`, and gives the exit code. |
 
 ## Why they live outside the pytest tree
 
@@ -59,7 +46,7 @@ skips them entirely.
 | `check_keys_dispatch.py` | Smoke-checks every shipped shortcut combo (Ctrl+Shift+P/O, Ctrl+Tab/Shift+Tab, Ctrl+Shift+1) — each should produce a `KeyGrabFilter DISPATCH` log line and (where applicable) a visible dialog window. |
 | `check_f1_cheatsheet.py` | F1 opens the keyboard-shortcuts dialog. Visible-window check via wmctrl matching `"Keyboard shortcuts"`. |
 | `check_window_geometry.py` | A clean Ctrl+Shift+Q quit writes a non-empty base64 `geometry` blob into the sandboxed `settings.toml`. |
-| `check_terminal_input.py` | Runs on its own Xvfb display. A typed command (`type_text`) and a pasted command (`paste_clipboard`) each run in a real embedded xterm, and `send_suspend` stops a foreground `sleep`. Guards the XTEST input path, since PTY-slave writes never reach the shell. |
+| `check_terminal_input.py` | Launches no ccwork: it embeds one `TerminalHost` in a plain window. A typed command (`type_text`) and a pasted command (`paste_clipboard`) each run in a real embedded xterm, and `send_suspend` stops a foreground `sleep`. Guards the XTEST input path, since PTY-slave writes never reach the shell. |
 | `check_worktree_follow.py` | Runs one real `claude -w <name> -p` prompt in a ccwork terminal on the harness display. Passes when the row follows Claude into `.claude/worktrees/<name>` and returns to the repo on `ClaudeExited`, with no `home` and an empty `recent`. Needs `install.sh` hooks and a Claude login. |
 | `check_enter_worktree.py` | Runs one real `claude -p` prompt that calls the EnterWorktree tool (allowed with `--allowedTools`). Passes when the row moves to `.claude/worktrees/<name>` during the turn and returns to the repo on `ClaudeExited`, with no `home` and an empty `recent`. Needs `install.sh` hooks and a Claude login. |
 | `check_subagent_worktree.py` | Runs one real `claude -p` prompt that starts a subagent with `isolation: worktree`. Samples `git worktree list` during the run. Passes when SubagentStart and SubagentStop arrive, a second worktree exists during the run, and the row never leaves the repo. Needs `install.sh` hooks and a Claude login. |
@@ -76,13 +63,10 @@ skips them entirely.
 Follow the existing pattern:
 
 1. Call `harness.run_on_xvfb()` first in the `__main__` block.
-2. Open an `XDG_CONFIG_HOME=<tmp>` subprocess running `python -m src.main`,
-   with its log at `harness.evidence_dir() / "ccwork.log"`.
-3. Wait for the `global keys:` startup line in the log.
-4. `harness.focus_ccwork()` before injecting if you need the grab to
-   activate.
-5. Inject via `XTestFakeKeyEvent` (see existing scripts for the
-   ctypes wiring).
-6. Read the log and/or `wmctrl -l` to verify the side effect.
-7. Kill the subprocess in a `finally` block.
-8. Print `result: PASS` / `result: FAIL` and exit 0/non-zero.
+2. Make the sandbox and its repos (`harness.new_sandbox`, `harness.seed_repo`).
+3. Do the check inside `with harness.ccwork(sandbox, rows) as app:`.
+4. Inject with `harness.key` and `harness.type_line`. Call `app.focus()`
+   after a dialog closes, if the next key must reach ccwork's grab.
+5. Read `app.log()`, `app.store()` or `harness.windows()` to verify the
+   side effect.
+6. Return `harness.report(checks)` as the exit code.

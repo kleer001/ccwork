@@ -17,110 +17,34 @@ and `home` and `recent` stay empty. Docs: `docs/specs/worktree.md` sections
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
 import sys
-import tempfile
-import time
-from pathlib import Path
 
 import harness
 
-REPO = Path(__file__).resolve().parents[2]
-
-
 
 def main() -> int:
-    sandbox = Path(tempfile.mkdtemp(prefix="ccwork-wtsub-"))
+    sandbox = harness.new_sandbox("wtsub")
     proj = harness.seed_repo(sandbox / "proj")
-    worktrees = proj / ".claude" / "worktrees"
-
-    cfg = sandbox / "config"
-    repos_json = cfg / "ccwork" / "repos.json"
-    repos_json.parent.mkdir(parents=True)
-    repos_json.write_text(json.dumps({"version": 1, "repos": [{"path": str(proj), "id": "row1"}]}))
-    log_path = harness.evidence_dir() / "ccwork.log"
-    env = dict(os.environ, XDG_CONFIG_HOME=str(cfg), CCWORK_LOG="INFO")
-    proc = subprocess.Popen([str(REPO / ".venv/bin/python"), "-m", "src.main"], cwd=str(REPO),
-                            env=env, stdout=open(log_path, "wb"), stderr=subprocess.STDOUT)
-    print(f"pid={proc.pid} sandbox={sandbox}")
-
-    def log_text() -> str:
-        return log_path.read_text(errors="replace") if log_path.exists() else ""
-
-    def row() -> dict:
-        try:
-            return json.loads(repos_json.read_text())
-        except (json.JSONDecodeError, FileNotFoundError):
-            return {}
-
-    try:
-        deadline = time.time() + 10
-        while "global keys:" not in log_text():
-            if time.time() > deadline:
-                print("FAIL: startup")
-                return 1
-            time.sleep(0.1)
-        wid = harness.ccwork_window()
-        subprocess.run(["wmctrl", "-ia", wid], check=True)
-        time.sleep(0.8)
-        subprocess.run(["xdotool", "key", "ctrl+shift+1"], check=True)
-        time.sleep(3.0)
-        subprocess.run(["xdotool", "type", "--delay", "20",
-                        "claude --allowedTools Agent -p 'Start one general-purpose subagent "
-                        "with the Agent tool and isolation set to worktree. Its task: reply "
-                        "with the word ok. Then reply with the word ok.'"], check=True)
-        subprocess.run(["xdotool", "key", "Return"], check=True)
-
-        seen: list[str] = []
-        most_worktrees = 0
-        deadline = time.time() + 120
-        while "event=ClaudeExited" not in log_text():
-            if time.time() > deadline:
-                print("FAIL: no ClaudeExited within 120 s")
-                break
-            path = row().get("repos", [{}])[0].get("path")
-            if path and (not seen or seen[-1] != path):
-                seen.append(path)
-            listed = subprocess.run(["git", "-C", str(proj), "worktree", "list", "--porcelain"],
-                                    capture_output=True, text=True).stdout
-            most_worktrees = max(most_worktrees, listed.count("worktree "))
-            time.sleep(0.2)
-        time.sleep(1.0)
-        end = row()
-        final = end.get("repos", [{}])[0]
-        print("paths seen:", seen)
-        print("final:", {k: final.get(k) for k in ("path", "home")}, "recent:", end.get("recent"))
-        print("hook events:", [l.split("hook event=")[1].split()[0]
-                               for l in log_text().splitlines() if "hook event=" in l])
-        events = [l.split("hook event=")[1].split()[0]
-                  for l in log_text().splitlines() if "hook event=" in l]
-        print("most worktrees at one time:", most_worktrees)
-        checks = {
+    with harness.ccwork(sandbox, [proj]) as app:
+        app.open_terminal()
+        harness.type_line("claude --allowedTools Agent -p 'Start one general-purpose subagent "
+                          "with the Agent tool and isolation set to worktree. Its task: reply "
+                          "with the word ok. Then reply with the word ok.'")
+        counts: list[int] = []  # the worktrees listed at each sample
+        seen = harness.watch_claude(app, tick=lambda: counts.append(
+            harness.git("-C", str(proj), "worktree", "list", "--porcelain").count("worktree ")))
+        events = app.hook_events()
+        most = max(counts, default=0)
+        print("most worktrees at one time:", most)
+        return harness.report({
             "subagent ran": "SubagentStart" in events and "SubagentStop" in events,
-            "subagent worktree existed": most_worktrees >= 2,
+            "subagent worktree existed": most >= 2,
             "row stayed": seen == [str(proj)],
-            "back home": final.get("path") == str(proj),
+            "back home": app.row_path() == str(proj),
             # The row never changes, so ccwork may never rewrite repos.json.
-            "no home": not final.get("home"),
-            "recent empty": not end.get("recent"),
-        }
-        for k, v in checks.items():
-            print(f"  {k}: {'OK' if v else 'FAIL'}")
-        result = all(checks.values())
-        print(f"\nresult: {'PASS' if result else 'FAIL'}")
-        return 0 if result else 2
-    finally:
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        for wt in (worktrees.iterdir() if worktrees.is_dir() else []):
-            subprocess.run(["git", "-C", str(proj), "worktree", "remove", "--force", str(wt)],
-                           capture_output=True)
+            "no home": not app.row().get("home"),
+            "recent empty": not app.store().get("recent"),
+        })
 
 
 if __name__ == "__main__":

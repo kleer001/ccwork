@@ -33,156 +33,106 @@ Docs: `docs/specs/worktree.md` sections 6 and 9.
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
 import sys
-import tempfile
 import time
-from pathlib import Path
 
 import harness
 
-REPO = Path(__file__).resolve().parents[2]
 EXIT_NAME = "live-exit"
 ENTER_NAME = "live-enter"
 
 
-def key(name: str) -> None:
-    subprocess.run(["xdotool", "key", name], check=True)
-    time.sleep(0.5)
-
-
-def type_line(text: str) -> None:
-    subprocess.run(["xdotool", "type", "--delay", "30", text], check=True)
-    time.sleep(0.5)
-    key("Return")
-
-
 def main() -> int:
-    sandbox = Path(tempfile.mkdtemp(prefix="ccwork-wtinter-"))
+    sandbox = harness.new_sandbox("wtinter")
     proj = harness.seed_repo(sandbox / "proj")
-    exit_wt = proj / ".claude" / "worktrees" / EXIT_NAME
-    enter_wt = proj / ".claude" / "worktrees" / ENTER_NAME
-    evidence = harness.evidence_dir()
-
-    cfg = sandbox / "config"
-    repos_json = cfg / "ccwork" / "repos.json"
-    repos_json.parent.mkdir(parents=True)
-    repos_json.write_text(json.dumps({"version": 1, "repos": [{"path": str(proj), "id": "row1"}]}))
-    log_path = evidence / "ccwork.log"
-    env = dict(os.environ, XDG_CONFIG_HOME=str(cfg), CCWORK_LOG="INFO")
-    proc = subprocess.Popen([str(REPO / ".venv/bin/python"), "-m", "src.main"], cwd=str(REPO),
-                            env=env, stdout=open(log_path, "wb"), stderr=subprocess.STDOUT)
-    print(f"pid={proc.pid} sandbox={sandbox}")
-
-    def store() -> dict:
-        try:
-            return json.loads(repos_json.read_text())
-        except json.JSONDecodeError:  # a read during ccwork's write
-            return {}
-
-    def row_path() -> str:
-        return store().get("repos", [{}])[0].get("path", "")
-
+    exit_wt = harness.claude_worktrees(proj) / EXIT_NAME
+    enter_wt = harness.claude_worktrees(proj) / ENTER_NAME
     events: list[tuple[str, str]] = []  # (hook event, row path just after it)
-
-    def wait_for(event: str, count: int, timeout: float = 120) -> bool:
-        deadline = time.time() + timeout
-        while sum(1 for e, _ in events if e == event) < count:
-            if time.time() > deadline:
-                print(f"FAIL: no {event} number {count} within {timeout:.0f} s")
-                harness.screenshot(evidence / f"timeout-{event}-{count}.png")
-                return False
-            text = log_path.read_text(errors="replace") if log_path.exists() else ""
-            lines = [l for l in text.splitlines() if "hook event=" in l]
-            for line in lines[len(events):]:
-                time.sleep(0.4)  # the handler writes repos.json after the log line
-                events.append((line.split("hook event=")[1].split()[0], row_path()))
-            time.sleep(0.1)
-        return True
-
-    def path_after(event: str, count: int) -> str:
-        return [p for e, p in events if e == event][count - 1]
+    branches: dict[str, bool] = {}  # worktree name -> its branch existed in the session
 
     def has_branch(name: str) -> bool:
         return harness.git("-C", str(proj), "branch", "--list", f"worktree-{name}") != ""
 
-    branches: dict[str, bool] = {}  # worktree name -> its branch existed in the session
+    with harness.ccwork(sandbox, [proj]) as app:
 
-    try:
-        deadline = time.time() + 10
-        while "global keys:" not in (log_path.read_text(errors="replace") if log_path.exists() else ""):
-            if time.time() > deadline:
-                print("FAIL: startup")
-                return 1
-            time.sleep(0.1)
-        harness.focus_ccwork()
-        time.sleep(0.8)
-        key("ctrl+shift+1")
-        time.sleep(3.0)
+        def wait_for(event: str, count: int) -> bool:
+            deadline = time.time() + harness.CLAUDE_TIMEOUT_S
+            while sum(1 for e, _ in events if e == event) < count:
+                if time.time() > deadline:
+                    print(f"FAIL: no {event} number {count} within {harness.CLAUDE_TIMEOUT_S} s")
+                    harness.screenshot(f"timeout-{event}-{count}.png")
+                    return False
+                for name in app.hook_events()[len(events):]:
+                    time.sleep(0.4)  # the handler writes repos.json after the log line
+                    events.append((name, app.row_path()))
+                time.sleep(0.1)
+            return True
+
+        def path_after(event: str, count: int) -> str:
+            return [p for e, p in events if e == event][count - 1]
+
+        app.open_terminal()
 
         # 1. Accept the folder trust prompt. Its default is "No, exit".
-        type_line("claude --model haiku")
+        harness.type_line("claude --model haiku")
         time.sleep(8)
-        harness.screenshot(evidence / "trust.png")
-        key("Down")
-        key("Return")
+        harness.screenshot("trust.png")
+        harness.key("Down")
+        harness.key("Return")
         if not wait_for("SessionStart", 1):
             return 1
         time.sleep(4)
-        type_line("/exit")
+        harness.type_line("/exit")
         if not wait_for("ClaudeExited", 1):
             return 1
 
         # 2. claude -w, then exit with remove.
         time.sleep(1)
-        type_line(f"claude --model haiku -w {EXIT_NAME}")
+        harness.type_line(f"claude --model haiku -w {EXIT_NAME}")
         if not wait_for("SessionStart", 2):
             return 1
         time.sleep(4)
-        harness.screenshot(evidence / "exit-in-worktree.png")
+        harness.screenshot("exit-in-worktree.png")
         branches[EXIT_NAME] = has_branch(EXIT_NAME)
         (exit_wt / "note.txt").write_text("ok\n")
-        type_line("/exit")
+        harness.type_line("/exit")
         time.sleep(3)
-        harness.screenshot(evidence / "exit-dialog.png")
-        key("Down")
-        key("Return")
+        harness.screenshot("exit-dialog.png")
+        harness.key("Down")
+        harness.key("Return")
         if not wait_for("ClaudeExited", 2):
             return 1
         time.sleep(1)
-        exit_back = row_path()
+        exit_back = app.row_path()
 
         # 3. EnterWorktree, then ExitWorktree, in one session.
-        type_line("claude --model haiku --allowedTools EnterWorktree ExitWorktree")
+        harness.type_line("claude --model haiku --allowedTools EnterWorktree ExitWorktree")
         if not wait_for("SessionStart", 3):
             return 1
         time.sleep(4)
-        type_line(f"Call the EnterWorktree tool with the name {ENTER_NAME}. "
-                  "Then reply with the word ok.")
+        harness.type_line(f"Call the EnterWorktree tool with the name {ENTER_NAME}. "
+                          "Then reply with the word ok.")
         if not wait_for("Stop", 1):
             return 1
-        harness.screenshot(evidence / "enter-in-worktree.png")
+        harness.screenshot("enter-in-worktree.png")
         branches[ENTER_NAME] = has_branch(ENTER_NAME)
         time.sleep(2)
-        type_line("Call the ExitWorktree tool with action remove. Then reply with the word ok.")
+        harness.type_line("Call the ExitWorktree tool with action remove. Then reply with the word ok.")
         if not wait_for("Stop", 2):
             return 1
         exits_at_stop = sum(1 for e, _ in events if e == "ClaudeExited")
-        harness.screenshot(evidence / "enter-back.png")
-        type_line("/exit")
+        harness.screenshot("enter-back.png")
+        harness.type_line("/exit")
         if not wait_for("ClaudeExited", 3):
             return 1
         time.sleep(1)
 
-        saved = store()
-        final = saved.get("repos", [{}])[0]
         print("events and row paths:")
         for e, p in events:
             print(f"  {e:<18} {p}")
-        print("final:", {k: final.get(k) for k in ("path", "home")}, "recent:", saved.get("recent"))
-        checks = {
+        print("final:", {k: app.row().get(k) for k in ("path", "home")},
+              "recent:", app.store().get("recent"))
+        return harness.report({
             "claude -w: row on the worktree after SessionStart": path_after("SessionStart", 2) == str(exit_wt),
             "claude -w: row back on the repo after exit": exit_back == str(proj),
             "claude -w: worktree folder removed": not exit_wt.exists(),
@@ -192,26 +142,9 @@ def main() -> int:
             "ExitWorktree: before ClaudeExited": exits_at_stop == 2,
             "ExitWorktree: worktree folder removed": not enter_wt.exists(),
             "ExitWorktree: worktree branch removed": branches[ENTER_NAME] and not has_branch(ENTER_NAME),
-            "home cleared": not final.get("home"),
-            "recent empty": not saved.get("recent"),
-        }
-        for k, v in checks.items():
-            print(f"  {k}: {'OK' if v else 'FAIL'}")
-        print(f"screenshots: {evidence}/*.png")
-        result = all(checks.values())
-        print(f"\nresult: {'PASS' if result else 'FAIL'}")
-        return 0 if result else 2
-    finally:
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        for wt in (exit_wt, enter_wt):
-            if wt.is_dir():
-                subprocess.run(["git", "-C", str(proj), "worktree", "remove", "--force", str(wt)],
-                               capture_output=True)
+            "home cleared": not app.row().get("home"),
+            "recent empty": not app.store().get("recent"),
+        })
 
 
 if __name__ == "__main__":

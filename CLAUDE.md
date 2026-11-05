@@ -28,7 +28,7 @@ CCWORK_LOG=DEBUG ./bin/ccwork
 .venv/bin/python tests/live/check_keys_dispatch.py
 .venv/bin/python tests/live/check_f1_cheatsheet.py
 .venv/bin/python tests/live/check_window_geometry.py
-.venv/bin/python tests/live/check_terminal_input.py   # own Xvfb; typing, paste, Ctrl+Z
+.venv/bin/python tests/live/check_terminal_input.py   # typing, paste, Ctrl+Z in one TerminalHost
 .venv/bin/python tests/live/check_worktree_follow.py  # one real claude -w prompt
 .venv/bin/python tests/live/check_enter_worktree.py   # one real EnterWorktree prompt
 .venv/bin/python tests/live/check_subagent_worktree.py  # one real isolation: worktree subagent
@@ -41,12 +41,14 @@ CCWORK_LOG=DEBUG ./bin/ccwork
 
 `tests/live/` holds end-to-end verification scripts that launch a real
 ccwork in a sandboxed `XDG_CONFIG_HOME`. `harness.run_on_xvfb()` runs
-each ccwork check on its own Xvfb display with openbox and a temporary
+each check on its own Xvfb display with openbox and a temporary
 `XDG_RUNTIME_DIR`, so no key reaches the desktop and the desktop
-ccwork keeps its hook socket. Each run keeps its output, ccwork log and
-screenshots in `tmp/live-runs/<check>-<time>/`. The checks focus ccwork via `wmctrl -ia
-<wid>` (matched by `WM_CLASS=main.py.ccwork`), inject keystrokes via
-`libXtst`, and assert on log output and `wmctrl -l`. They are NOT
+ccwork keeps its hook socket. `with harness.ccwork(sandbox, rows) as
+app:` launches ccwork, focuses its window (matched by
+`WM_CLASS=main.py.ccwork`) and stops it at the end. Each run keeps its
+output, ccwork log and screenshots in `tmp/live-runs/<check>-<time>/`.
+The checks inject keys and text with xdotool (XTEST) and assert on log
+output, the sandboxed config files and `wmctrl -l`. They are NOT
 pytest tests — names are deliberately off the `*_test.py` glob so
 pytest discovery skips them. Run individually. The README in that dir
 documents each one's purpose; `check_focus_scoping.py` is the
