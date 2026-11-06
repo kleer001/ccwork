@@ -40,7 +40,8 @@ Built. Each spec records the design behind the code.
 - [`hook-events.md`](docs/specs/hook-events.md) — StopFailure, PermissionRequest, SubagentStart, compaction, and a badge for each stop reason.
 - [`claude-exit.md`](docs/specs/claude-exit.md) — a `ClaudeExited` event from `bin/claude`.
 - [`idle-row-expiry.md`](docs/specs/idle-row-expiry.md) — remove rows that have been idle for N days.
+- [`worktree.md`](docs/specs/worktree.md) — phase 1 of git worktree rows: make a worktree with its files and dependencies, mark its row, follow Claude's own worktrees, and remove with an opt-in delete.
 
 Planned.
 
-- [`worktree.md`](docs/specs/worktree.md) — git worktree rows: make a worktree with its files and dependencies, mark its row, follow Claude's own worktrees, and remove with an opt-in delete. Phase 2 (merge, diff review, pull request) gets its own spec.
+- Worktree phase 2: merge a worktree back, diff review and pull request. It gets its own spec.

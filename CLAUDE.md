@@ -415,8 +415,11 @@ but no widgets):
   the xterm's PTY slave (`/dev/pts/N`). Settings xterm reads only at
   startup (scrollback, scrollbar, `-xrm`) require respawn; `apply_live()`
   returns the list of knobs that couldn't be applied.
-- `x11.py` — minimal `ctypes` wrapper around libX11 for window-geometry
-  ops. Everything else goes through Qt.
+- `x11.py` — minimal `ctypes` wrapper around libX11 and libXtst: window
+  geometry and map state, event selection, input focus, key and button
+  grabs and XTEST key events, on its own X connection or on Qt's
+  (`XDisplay.qt`). `xcb_event` reads an xcb event that Qt passes to a
+  native event filter. Everything else goes through Qt.
 - `session_recovery.py` — tracks which Claude sessions are open so the
   splash can offer `claude --resume` IDs after a crash. State is
   `~/.config/ccwork/open_sessions.json` (atomic writes, corrupt-tolerant)
@@ -659,9 +662,10 @@ events never touch it; user navigation never touches `_status`.
   `model.is_working(repo_id)` rather than maintaining a parallel set.
   Path-keyed state is limited to the branch / path-missing / worktree caches, the
   last-focused bookmark, and crash recovery.
-- Tests use `QT_QPA_PLATFORM=offscreen`. The shared `qapp` fixture and
-  `StubHookServer` stand-in live in `tests/conftest.py` — depend on those
-  rather than re-rolling them per file.
+- Tests use `QT_QPA_PLATFORM=offscreen`. `tests/gitrepo.py` makes the git
+  repos and commits for the unit tests and the live checks. The shared
+  `qapp` fixture and `StubHookServer` stand-in live in `tests/conftest.py`
+  — depend on those rather than re-rolling them per file.
 
 ## Install / packaging
 

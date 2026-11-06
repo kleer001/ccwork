@@ -1,8 +1,11 @@
-"""Thin ctypes wrapper over libX11 for window geometry operations.
+"""Thin ctypes wrapper over libX11 for the X calls that Qt does not make.
 
-We only need: open display, query child windows of a window, resize a window,
-flush, key grabs, and XTEST key injection (libXtst) for typing into the
-embedded xterm. All other X calls go through Qt.
+We only need: open a display or wrap Qt's own (`XDisplay.qt`), query child
+windows of a window, read a window's map state, resize a window, select its
+events, set the input focus, flush, key and button grabs, and XTEST key
+injection (libXtst) for typing into the embedded xterm. `xcb_event` reads an
+xcb event that Qt passes to a native event filter. All other X calls go
+through Qt.
 
 If libX11 is unavailable (`load()` raises), callers should treat this as a
 fatal environment error — embedding xterm is Linux/X11-only by design.

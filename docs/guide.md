@@ -247,6 +247,9 @@ Open with the gear button or `Ctrl+Shift+P`. Settings persist to
 - **Scrollbar**: `right`, `left`, or `none`.
 - **Jump scroll**: xterm's fast-redraw mode for bursts of output.
 
+xterm reads the Scrolling and Advanced settings only when it starts.
+Right-click a row → *Reload terminal* to apply them to its open terminal.
+
 **UI tab**
 
 - **Sidebar position**: left or right.

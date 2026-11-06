@@ -40,35 +40,25 @@ not supported — embedding an X-client terminal is X11 only.
 
 - `~/.bashrc` — adds `<repo>/bin` to PATH so `ccwork` and the `claude`
   wrapper are found first. Marked with `# BEGIN ccwork` / `# END ccwork`.
-- `~/.claude/settings.json` — appends Stop and Notification hooks whose
-  `command` is the path of `bin/ccwork-hook-sink`.
+- `~/.claude/settings.json` — adds one hook entry for each Claude Code
+  event that ccwork uses (`new_hooks` in `install.sh`). Each `command` runs
+  `bin/ccwork-hook-sink`.
 - `~/.local/share/applications/ccwork.desktop` — desktop-menu entry.
 
 ## Files ccwork creates at runtime
 
 - `~/.config/ccwork/repos.json` — the sidebar's repo list. Auto-created
   on first add; safe to edit by hand.
-- `~/.config/ccwork/settings.json` — Preferences dialog output (xterm
-  font / scrollback / scrollbar / colors / extra args). Auto-created on
-  first launch with defaults.
+- `~/.config/ccwork/settings.toml` — the Preferences settings.
+  Auto-created on first launch with defaults.
+- `~/.config/ccwork/open_sessions.json` — the open Claude sessions, for
+  crash recovery.
 - `$XDG_RUNTIME_DIR/ccwork/ccwork.sock` — Unix socket for hook IPC.
   Removed on clean shutdown.
 
 ## Tuning the terminal
 
-Open the app → **File → Preferences…** (`Ctrl+,`). Tabs:
-
-- **Text** — font family, font size.
-- **Colors** — scheme preset combo (3 dark / 3 light / Custom) plus
-  independent bg/fg color pickers.
-- **Scrolling** — scrollback lines, scrollbar position, jump scroll.
-- **Advanced** — raw xterm flags (shlex-parsed).
-
-On Save, ccwork pushes color + font-face changes to every running
-terminal immediately via OSC escape sequences written to the child
-PTY (`/dev/pts/N`). For settings xterm only reads at startup (font
-size, scrollback, scrollbar), right-click the repo in the sidebar →
-**Reload terminal** to respawn xterm.
+The [guide](guide.md#preferences) lists each Preferences setting.
 
 ## Uninstall
 
@@ -88,13 +78,13 @@ The installer is a thin wrapper. If you prefer to wire it up yourself:
 1. **PATH:** prepend `<repo>/bin` to your shell rc so `ccwork` and the
    `claude` wrapper take precedence.
 
-2. **Hooks:** add to `~/.claude/settings.json`:
+2. **Hooks:** add to `~/.claude/settings.json` the entries of `new_hooks`
+   in `install.sh`, one for each event. Each one has this shape:
 
     ```json
     {
       "hooks": {
-        "Stop":         [{"matcher": "*", "hooks": [{"type": "command", "command": "CCWORK_EVENT=Stop /path/to/ccwork/bin/ccwork-hook-sink"}]}],
-        "Notification": [{"matcher": "*", "hooks": [{"type": "command", "command": "CCWORK_EVENT=Notification /path/to/ccwork/bin/ccwork-hook-sink"}]}]
+        "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "CCWORK_EVENT=Stop /path/to/ccwork/bin/ccwork-hook-sink"}]}]
       }
     }
     ```
