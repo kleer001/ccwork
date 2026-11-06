@@ -6,10 +6,12 @@ sandbox folder, launches ccwork with one row on it and opens the row's
 terminal with Ctrl+Shift+1. Then it types into the interactive Claude Code
 screen, through the installed hook sink and the `bin/claude` wrapper:
 
-1. `claude`, to accept the folder trust prompt (Down, Enter), then `/exit`.
-   An interactive `claude -w` refuses a repo folder that is not trusted;
-   the trust of the ccwork folder above the sandbox does not count. Claude
-   Code records the trust of the sandbox repo in `~/.claude.json`.
+1. `claude`, then Down, Enter, then `/exit`. In a folder that it has not
+   seen, Claude Code first asks "Is this a project you created or one you
+   trust?", and Down, Enter picks "Yes, I trust this folder". An
+   interactive `claude -w` refuses a repo folder with no such yes; the yes
+   for the ccwork folder above the sandbox does not count. Claude Code
+   records the yes for the sandbox repo in `~/.claude.json`.
 2. `claude -w live-exit`. The script writes a file into the worktree, types
    `/exit` and picks "Remove worktree" in Claude's exit dialog. A worktree
    with no changes is removed with no dialog.
@@ -73,7 +75,8 @@ def main() -> int:
 
         app.open_terminal()
 
-        # 1. Accept the folder trust prompt. Its default is "No, exit".
+        # 1. Answer "Yes, I trust this folder" to the question that Claude
+        # Code asks in a folder that it has not seen. Its default is "No, exit".
         harness.type_line(f"{harness.CLAUDE} --model haiku")
         time.sleep(8)
         harness.screenshot("trust.png")
