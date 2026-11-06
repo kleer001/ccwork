@@ -114,7 +114,7 @@ curl -fsSL https://raw.githubusercontent.com/kleer001/ccwork/main/bootstrap.sh |
 git clone https://github.com/kleer001/ccwork ~/ccwork
 cd ~/ccwork
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -e '.[dev]'
 ./install.sh --dry-run   # preview
 ./install.sh             # apply
 source ~/.bashrc         # pick up PATH change

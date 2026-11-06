@@ -136,7 +136,7 @@ _main() {
     _say "About to:"
     _say "  clone   $repo_url${branch:+ (branch $branch)} → $dest"
     _say "  venv    $dest/.venv (create if missing)"
-    _say "  deps    pip install -r $dest/requirements.txt"
+    _say "  deps    pip install -e ${dest}[dev]"
     _say "  wire    $dest/install.sh (PATH, hooks, .desktop launcher)"
     echo
 
@@ -182,7 +182,7 @@ _main() {
     fi
     _say "installing Python dependencies"
     "$dest/.venv/bin/python" -m pip install --upgrade pip >/dev/null
-    "$dest/.venv/bin/pip" install -r "$dest/requirements.txt"
+    "$dest/.venv/bin/pip" install -e "${dest}[dev]"
 
     # ── Shell + hook wiring ──────────────────────────────────────
     _say "running install.sh"

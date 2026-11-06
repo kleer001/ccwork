@@ -344,7 +344,7 @@ else
     echo ""
     echo "Next:"
     echo "  source ~/.bashrc          # pick up PATH change"
-    echo "  pip install -r requirements.txt  # install PySide6 (use a venv)"
+    echo "  pip install -e '.[dev]'   # install the Python packages (use a venv)"
     echo "  ccwork                    # launch the GUI"
     echo ""
     echo "Undo: ./install.sh --uninstall"

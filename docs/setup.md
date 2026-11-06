@@ -6,7 +6,7 @@
 git clone https://github.com/kleer001/ccwork
 cd ccwork
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -e '.[dev]'
 ./install.sh --dry-run   # preview every change before it happens
 ./install.sh             # apply
 source ~/.bashrc
@@ -99,6 +99,6 @@ The installer is a thin wrapper. If you prefer to wire it up yourself:
     }
     ```
 
-3. **Python deps:** `pip install -r requirements.txt` inside a venv.
+3. **Python deps:** `pip install -e '.[dev]'` inside a venv.
 
 4. **Launcher:** `python -m src.main` from the repo root.

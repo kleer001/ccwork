@@ -28,8 +28,8 @@ CCWORK_LOG=DEBUG ./bin/ccwork
 .venv/bin/python tests/live/check_focus_scoping.py
 ```
 
-There is no separate lint/format step configured. Dependencies are pinned in
-`requirements.txt` (`PySide6>=6.6`, `pytest`, `pytest-cov`).
+There is no separate lint/format step configured. `pyproject.toml` holds the
+dependencies; `.venv/bin/pip install -e '.[dev]'` installs them.
 
 ## Platform constraint
 
